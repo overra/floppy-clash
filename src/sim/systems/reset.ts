@@ -1,7 +1,8 @@
 import type { Entity, World } from 'koota';
-import { builtInMatchLevels } from '../../levels/catalog';
+import { matchLevelPool } from '../../levels/catalog';
 import { getContext } from '../context';
 import { loadLevel } from '../level/loader';
+import type { LevelDef } from '../level/schema';
 import { createPlayerCapsule } from '../physics/bodies';
 import {
   Combat,
@@ -26,9 +27,7 @@ export function nextMatchLevel(world: World): void {
   const ctx = getContext(world);
   const match = world.get(MatchState);
   if (!match) return;
-  const pool = builtInMatchLevels().filter(
-    (l) => ctx.settings.enabledLevels === 'all' || ctx.settings.enabledLevels.includes(l.id),
-  );
+  const pool = matchLevelPool(ctx.settings.enabledLevels, ctx.extraLevels);
   if (pool.length === 0) return;
   if (match.rotation === 1) {
     match.levelIndex = (match.levelIndex + 1) % pool.length;
@@ -41,7 +40,7 @@ export function nextMatchLevel(world: World): void {
   reloadLevel(world, level);
 }
 
-export function reloadLevel(world: World, level: ReturnType<typeof builtInMatchLevels>[number]): void {
+export function reloadLevel(world: World, level: LevelDef): void {
   const ctx = getContext(world);
   const doomed: Entity[] = [];
   world.query(Hazard).updateEach((_, e) => doomed.push(e));

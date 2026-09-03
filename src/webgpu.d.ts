@@ -35,7 +35,9 @@ interface GPURenderPass {
 interface GPUCanvasContext {
   configure(desc: unknown): void;
   getCurrentTexture(): { createView(): unknown };
+  canvas?: HTMLCanvasElement;
 }
+type GPUTextureFormat = string;
 interface GPU {
   requestAdapter(): Promise<GPUAdapter | null>;
   getPreferredCanvasFormat(): string;

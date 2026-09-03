@@ -3,6 +3,8 @@ import { sdDisk, sdLine, sdRoundedBox2d, opSmoothUnion } from '@typegpu/sdf';
 import type { Renderer } from '../canvas/renderer';
 import type { RenderFrame } from '../frame';
 import { primitiveSdf } from '../sdf/primitives';
+import { createLightingPass, type LightingPass } from './lighting';
+import { packGroups, parseHex } from './pack';
 
 const WGSL = /* wgsl */ `
 struct Camera {
@@ -110,7 +112,11 @@ async function withTimeout<T>(p: Promise<T>, ms: number): Promise<T | null> {
   ]);
 }
 
-async function createGpuRenderer(canvas: HTMLCanvasElement): Promise<Renderer | null> {
+export type GpuRendererOpts = {
+  lighting?: boolean;
+};
+
+async function createGpuRenderer(canvas: HTMLCanvasElement, opts: GpuRendererOpts = {}): Promise<Renderer | null> {
   if (!('gpu' in navigator) || !navigator.gpu) return null;
   const adapter = await navigator.gpu.requestAdapter();
   if (!adapter) return null;
@@ -146,7 +152,14 @@ async function createGpuRenderer(canvas: HTMLCanvasElement): Promise<Renderer | 
     ],
   });
 
-  let lastGpuMs = 0;
+  let lighting: LightingPass | null = null;
+  if (opts.lighting) {
+    try {
+      lighting = createLightingPass(root, device, context, format, canvas);
+    } catch {
+      lighting = null;
+    }
+  }
   const query = device.createQuerySet?.({ type: 'timestamp', count: 2 });
   void query;
   void sdDisk;
@@ -155,10 +168,10 @@ async function createGpuRenderer(canvas: HTMLCanvasElement): Promise<Renderer | 
   void opSmoothUnion;
   void primitiveSdf;
 
-  return {
+  const renderer: Renderer = {
     kind: 'gpu',
     canvas,
-    lastGpuMs,
+    lastGpuMs: 0,
     resize(w: number, h: number) {
       const dpr = window.devicePixelRatio || 1;
       canvas.width = Math.floor(w * dpr);
@@ -172,40 +185,9 @@ async function createGpuRenderer(canvas: HTMLCanvasElement): Promise<Renderer | 
       const h = canvas.height;
       const cam = new Float32Array([frame.camera.x, frame.camera.y, frame.camera.zoom, 0, w, h, frame.camera.shakeX, frame.camera.shakeY]);
       device.queue.writeBuffer(cameraBuf, 0, cam);
-      const gData = new ArrayBuffer(Math.max(256, frame.groups.length * 64));
-      const pData = new ArrayBuffer(Math.max(256, frame.groups.reduce((n, g) => n + g.primitives.length, 0) * 32));
-      const gv = new DataView(gData);
-      const pv = new DataView(pData);
-      let po = 0;
-      let pi = 0;
-      frame.groups.forEach((g, i) => {
-        const off = i * 64;
-        gv.setFloat32(off, g.minX, true);
-        gv.setFloat32(off + 4, g.minY, true);
-        gv.setFloat32(off + 8, g.maxX, true);
-        gv.setFloat32(off + 12, g.maxY, true);
-        const c = parseColor(g.color);
-        gv.setFloat32(off + 16, c[0], true);
-        gv.setFloat32(off + 20, c[1], true);
-        gv.setFloat32(off + 24, c[2], true);
-        gv.setFloat32(off + 28, 1, true);
-        gv.setUint32(off + 32, pi, true);
-        gv.setUint32(off + 36, g.primitives.length, true);
-        gv.setUint32(off + 40, g.blend === 'smoothUnion' ? 1 : 0, true);
-        gv.setFloat32(off + 44, g.smoothK, true);
-        for (const p of g.primitives) {
-          pv.setUint32(po, p.kind, true);
-          pv.setFloat32(po + 4, p.ax, true);
-          pv.setFloat32(po + 8, p.ay, true);
-          pv.setFloat32(po + 12, p.bx, true);
-          pv.setFloat32(po + 16, p.by, true);
-          pv.setFloat32(po + 20, p.r, true);
-          po += 32;
-          pi += 1;
-        }
-      });
-      device.queue.writeBuffer(groupBuf, 0, gData);
-      device.queue.writeBuffer(primBuf, 0, pData);
+      const packed = packGroups(frame.groups);
+      device.queue.writeBuffer(groupBuf, 0, packed.groupBytes);
+      device.queue.writeBuffer(primBuf, 0, packed.primBytes);
       const encoder = device.createCommandEncoder();
       const pass = encoder.beginRenderPass({
         colorAttachments: [
@@ -222,26 +204,23 @@ async function createGpuRenderer(canvas: HTMLCanvasElement): Promise<Renderer | 
       if (frame.groups.length) pass.draw(6, frame.groups.length);
       pass.end();
       device.queue.submit([encoder.finish()]);
-      lastGpuMs = performance.now() - t0;
+      renderer.lastGpuMs = performance.now() - t0;
+      if (opts.lighting) lighting?.apply(frame, renderer.lastGpuMs, true);
     },
   };
+  return renderer;
 }
 
-export async function tryCreateGpuRenderer(canvas: HTMLCanvasElement): Promise<Renderer | null> {
+export async function tryCreateGpuRenderer(canvas: HTMLCanvasElement, opts: GpuRendererOpts = {}): Promise<Renderer | null> {
   try {
-    return await withTimeout(createGpuRenderer(canvas), 4000);
+    return await withTimeout(createGpuRenderer(canvas, opts), 4000);
   } catch {
     return null;
   }
 }
 
 function parseColor(hex: string): [number, number, number] {
-  const h = hex.replace('#', '');
-  return [
-    parseInt(h.slice(0, 2), 16) / 255,
-    parseInt(h.slice(2, 4), 16) / 255,
-    parseInt(h.slice(4, 6), 16) / 255,
-  ];
+  return parseHex(hex);
 }
 
 function hexToRgb(hex: string): GPUColorDict {

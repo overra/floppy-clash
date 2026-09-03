@@ -21,14 +21,19 @@ const PALETTE = [
   'trigger.drop',
 ];
 
+export type EditorTool = string;
+
 export type EditorState = {
   level: LevelDef;
   selected: number;
-  tool: string;
+  selectedSpawn: number;
+  tool: EditorTool;
   grid: number;
   history: LevelDef[];
   future: LevelDef[];
 };
+
+export const EXTRA_TOOLS = ['spawn', 'drop-range'] as const;
 
 export function createEditorState(): EditorState {
   return {
@@ -48,6 +53,7 @@ export function createEditorState(): EditorState {
       objects: [{ type: 'solid', x: 16, y: 1, w: 32, h: 2 }],
     },
     selected: 0,
+    selectedSpawn: 0,
     tool: 'solid',
     grid: 1,
     history: [],
@@ -75,10 +81,60 @@ export function redo(state: EditorState): void {
 }
 
 export function addObject(state: EditorState, x: number, y: number): void {
+  if (state.tool === 'spawn') {
+    addSpawn(state, x, y);
+    return;
+  }
+  if (state.tool === 'drop-range') {
+    setDropEdge(state, x);
+    return;
+  }
   pushHistory(state);
   const obj: LevelObject = { type: state.tool, x: snap(x, state.grid), y: snap(y, state.grid), w: 2, h: 1 };
   state.level.objects.push(obj);
   state.selected = state.level.objects.length - 1;
+}
+
+export function addSpawn(state: EditorState, x: number, y: number): void {
+  pushHistory(state);
+  state.level.spawns.push({ x: snap(x, state.grid), y: snap(y, state.grid) });
+  state.selectedSpawn = state.level.spawns.length - 1;
+}
+
+export function moveSpawn(state: EditorState, i: number, x: number, y: number): void {
+  const s = state.level.spawns[i];
+  if (!s) return;
+  s.x = snap(x, state.grid);
+  s.y = snap(y, state.grid);
+}
+
+export function setDropEdge(state: EditorState, x: number): void {
+  pushHistory(state);
+  const sx = snap(x, state.grid);
+  const drops = state.level.drops ?? { enabled: true, xMin: 4, xMax: 28, intervalScale: 1 };
+  const mid = (drops.xMin + drops.xMax) / 2;
+  if (sx < mid) drops.xMin = sx;
+  else drops.xMax = sx;
+  if (drops.xMin > drops.xMax) {
+    const t = drops.xMin;
+    drops.xMin = drops.xMax;
+    drops.xMax = t;
+  }
+  state.level.drops = drops;
+}
+
+export function selectSpawnAt(state: EditorState, x: number, y: number): number {
+  let best = -1;
+  let bestD = 1.2;
+  state.level.spawns.forEach((s, i) => {
+    const d = Math.hypot(s.x - x, s.y - y);
+    if (d < bestD) {
+      bestD = d;
+      best = i;
+    }
+  });
+  if (best >= 0) state.selectedSpawn = best;
+  return best;
 }
 
 export function moveSelected(state: EditorState, x: number, y: number): void {

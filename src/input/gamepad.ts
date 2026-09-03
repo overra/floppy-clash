@@ -1,6 +1,7 @@
 import { clamp } from '../core/math';
 import { EMPTY_INPUT, type PlayerInput } from '../sim/input';
 import { tuning } from '../sim/tuning';
+import { DEFAULT_MAP, type PadMap } from './remap';
 
 export type PadSeat = {
   index: number;
@@ -29,7 +30,7 @@ export function radialDeadzone(x: number, y: number, dz: number): { x: number; y
   return { x: (x / mag) * scale, y: (y / mag) * scale };
 }
 
-export function readPad(pad: Gamepad, latch: Latch, lastAim: { x: number; y: number }): PlayerInput {
+export function readPad(pad: Gamepad, latch: Latch, lastAim: { x: number; y: number }, map: PadMap = DEFAULT_MAP): PlayerInput {
   const lx = pad.axes[0] ?? 0;
   const ly = pad.axes[1] ?? 0;
   const rx = pad.axes[2] ?? 0;
@@ -38,15 +39,24 @@ export function readPad(pad: Gamepad, latch: Latch, lastAim: { x: number; y: num
   const aim = radialDeadzone(rx, -ry, tuning.aimDeadzone);
   const dpadX = (pad.buttons[15]?.pressed ? 1 : 0) - (pad.buttons[14]?.pressed ? 1 : 0);
   const dpadY = pad.buttons[13]?.pressed;
-  const jump = !!(pad.buttons[0]?.pressed || pad.buttons[4]?.pressed);
-  const attack = !!(pad.buttons[7]?.pressed || pad.buttons[5]?.pressed || (pad.buttons[2]?.pressed ?? false));
-  const block = !!(pad.buttons[6]?.pressed || pad.buttons[1]?.pressed);
-  const thrw = !!(pad.buttons[3]?.pressed || pad.buttons[2]?.pressed);
+  const custom = map !== DEFAULT_MAP;
+  const jump = custom
+    ? !!pad.buttons[map.jump]?.pressed
+    : !!(pad.buttons[map.jump]?.pressed || pad.buttons[4]?.pressed);
+  const attack = custom
+    ? !!pad.buttons[map.attack]?.pressed
+    : !!(pad.buttons[map.attack]?.pressed || pad.buttons[5]?.pressed || pad.buttons[2]?.pressed);
+  const block = custom
+    ? !!pad.buttons[map.block]?.pressed
+    : !!(pad.buttons[map.block]?.pressed || pad.buttons[1]?.pressed);
+  const thrw = custom
+    ? !!pad.buttons[map.throw]?.pressed
+    : !!(pad.buttons[map.throw]?.pressed || pad.buttons[2]?.pressed);
   if (jump) latch.jump = true;
   if (attack) latch.attack = true;
   if (block) latch.block = true;
   if (thrw) latch.throw = true;
-  if (pad.buttons[9]?.pressed) latch.pause = true;
+  if (pad.buttons[map.pause]?.pressed) latch.pause = true;
   const aimX = Math.abs(aim.x) + Math.abs(aim.y) > 0.01 ? aim.x : lastAim.x;
   const aimY = Math.abs(aim.x) + Math.abs(aim.y) > 0.01 ? aim.y : lastAim.y;
   return {

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { consumeLatch, emptyLatch, radialDeadzone, readPad } from '../src/input/gamepad';
 
-function fakePad(partial: { axes?: number[]; buttons?: boolean[] }): Gamepad {
+function fakePad(partial: { id?: string; mapping?: GamepadMappingType; axes?: number[]; buttons?: boolean[] }): Gamepad {
   const buttons = (partial.buttons ?? []).map((pressed) => ({
     pressed,
     touched: pressed,
@@ -10,10 +10,10 @@ function fakePad(partial: { axes?: number[]; buttons?: boolean[] }): Gamepad {
   while (buttons.length < 17) buttons.push({ pressed: false, touched: false, value: 0 } as GamepadButton);
   const axes = partial.axes ?? [0, 0, 0, 0];
   return {
-    id: 'Xbox 360 Controller (XInput STANDARD GAMEPAD)',
+    id: partial.id ?? 'Xbox 360 Controller (XInput STANDARD GAMEPAD)',
     index: 0,
     connected: true,
-    mapping: 'standard',
+    mapping: partial.mapping ?? 'standard',
     axes,
     buttons,
     timestamp: 1,
@@ -44,5 +44,55 @@ describe('gamepad mapping', () => {
     const latch = emptyLatch();
     readPad(fakePad({ buttons: [true] }), latch, { x: 1, y: 0 });
     expect(latch.jump).toBe(true);
+  });
+
+  it('maps DualSense / Switch Pro / Firefox-style fixtures', () => {
+    const ds = readPad(
+      fakePad({
+        id: 'DualSense Wireless Controller (STANDARD GAMEPAD Vendor: 054c Product: 0ce6)',
+        axes: [0.9, 0, 0, 0],
+        buttons: [true, false, false, true, false, false, true, false],
+      }),
+      emptyLatch(),
+      { x: 1, y: 0 },
+    );
+    expect(ds.moveX).toBeGreaterThan(0.5);
+    expect(ds.jump).toBe(true);
+    expect(ds.throw).toBe(true);
+    expect(ds.block).toBe(true);
+
+    const pro = readPad(
+      fakePad({
+        id: 'Pro Controller (STANDARD GAMEPAD Vendor: 057e Product: 2009)',
+        axes: [-0.8, 0.7, 0.1, 0],
+        buttons: [false, false, false, false, false, false, false, true],
+      }),
+      emptyLatch(),
+      { x: 1, y: 0 },
+    );
+    expect(pro.moveX).toBeLessThan(-0.4);
+    expect(pro.down).toBe(true);
+    expect(pro.attack).toBe(true);
+
+    const ff = readPad(
+      fakePad({
+        id: '054c-0ce6-Wireless Controller',
+        mapping: '' as GamepadMappingType,
+        buttons: [false, false, false, false, false, false, false, false, false, true],
+      }),
+      emptyLatch(),
+      { x: 1, y: 0 },
+    );
+    expect(ff.jump).toBe(false);
+  });
+
+  it('honours a custom remap', () => {
+    const latch = emptyLatch();
+    const pad = fakePad({
+      id: 'custom',
+      buttons: [false, false, true],
+    });
+    const input = readPad(pad, latch, { x: 1, y: 0 }, { jump: 2, attack: 7, block: 6, throw: 3, pause: 9 });
+    expect(input.jump).toBe(true);
   });
 });

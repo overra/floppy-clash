@@ -8,6 +8,7 @@ import {
   sdCapsule,
   sdDisk,
 } from '../src/render/sdf/primitives';
+import { evalCoverageGpu, evalPrimitiveSdfGpu, evalSmoothUnionGpu } from '../src/render/gpu/shaders';
 
 describe('sdf primitives', () => {
   it('disk is negative inside', () => {
@@ -31,6 +32,16 @@ describe('sdf primitives', () => {
 
   it('primitiveSdf dispatches kinds', () => {
     expect(primitiveSdf({ kind: PRIM_DISK, ax: 0, ay: 0, bx: 0, by: 0, r: 1 }, { x: 0, y: 0 })).toBeLessThan(0);
+  });
+});
+
+describe('TypeGPU use-gpu fns on CPU', () => {
+  it('calls DualFn coverage / sdf / smooth-union', () => {
+    expect(evalCoverageGpu(-1)).toBeGreaterThan(0.5);
+    const inside = evalPrimitiveSdfGpu({ kind: PRIM_DISK, ax: 0, ay: 0, bx: 0, by: 0, r: 1 }, 0, 0);
+    expect(inside).toBeLessThan(0);
+    const u = evalSmoothUnionGpu(-0.2, -0.1, 0.3);
+    expect(Number.isFinite(u)).toBe(true);
   });
 });
 

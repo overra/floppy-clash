@@ -33,7 +33,10 @@ describe('M0 scaffold', () => {
       }
       return sim.hash();
     };
-    expect(run()).toBe(run());
+    const hash = run();
+    expect(hash).toBe(run());
+    // Deliberate pin — update only when a sim change is intentional (PLAN §6).
+    expect(hash).toBe('b83084a7');
   });
 
   it('player transform stays finite', () => {

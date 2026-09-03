@@ -1,19 +1,23 @@
 import {
   addObject,
   exportLevel,
+  EXTRA_TOOLS,
   fromHash,
   hitTest,
   importLevel,
   loadLibrary,
   moveSelected,
+  moveSpawn,
   PALETTE,
   redo,
   rotateSelected,
   saveLibrary,
+  selectSpawnAt,
   shareHash,
   undo,
   type EditorState,
 } from './editor';
+import { applyField, fieldValue, objectSchemaFields } from './properties';
 import type { LevelDef } from '../sim/level/schema';
 
 export type EditorViewFns = {
@@ -28,8 +32,8 @@ export function mountEditor(root: HTMLElement, state: EditorState, fns: EditorVi
     'position:absolute;inset:0;background:#111318;color:#fff;display:grid;grid-template-columns:220px 1fr 280px;gap:8px;padding:8px;pointer-events:auto';
 
   const pal = document.createElement('div');
-  pal.innerHTML = `<h2 style="margin:8px">Level Editor</h2><p style="color:#9aa3b2;padding:0 8px">Pad: tools. Mouse: click to place, drag to move.</p>`;
-  for (const t of PALETTE) {
+  pal.innerHTML = `<h2 style="margin:8px">Level Editor</h2><p style="color:#9aa3b2;padding:0 8px">Pad: D-pad moves selection. Mouse: click to place, drag to move. Property fields come from the zod schema.</p>`;
+  for (const t of [...PALETTE, ...EXTRA_TOOLS]) {
     const b = document.createElement('button');
     b.textContent = t;
     b.dataset.tool = t;
@@ -56,9 +60,11 @@ export function mountEditor(root: HTMLElement, state: EditorState, fns: EditorVi
 
   const side = document.createElement('div');
   side.innerHTML = `<h3>Properties</h3>`;
+  const fields = document.createElement('div');
+  fields.id = 'edfields';
   const props = document.createElement('pre');
   props.id = 'edjson';
-  props.style.cssText = 'font-size:11px;max-height:40vh;overflow:auto;background:#151820;padding:8px';
+  props.style.cssText = 'font-size:11px;max-height:22vh;overflow:auto;background:#151820;padding:8px';
   const actions = document.createElement('div');
   const mk = (label: string, fn: () => void) => {
     const b = document.createElement('button');
@@ -109,7 +115,7 @@ export function mountEditor(root: HTMLElement, state: EditorState, fns: EditorVi
     importLevel(state, text);
     draw();
   };
-  side.append(actions, file, props);
+  side.append(actions, file, fields, props);
 
   wrap.append(pal, mid, side);
   root.append(wrap);
@@ -133,15 +139,23 @@ export function mountEditor(root: HTMLElement, state: EditorState, fns: EditorVi
   };
   canvas.addEventListener('pointerdown', (ev) => {
     const w = toWorld(ev);
-    const hit = hitTest(state, w.x, w.y);
-    if (hit < 0) addObject(state, w.x, w.y);
+    if (state.tool === 'spawn') {
+      const hit = selectSpawnAt(state, w.x, w.y);
+      if (hit < 0) addObject(state, w.x, w.y);
+    } else if (state.tool === 'drop-range') {
+      addObject(state, w.x, w.y);
+    } else {
+      const hit = hitTest(state, w.x, w.y);
+      if (hit < 0) addObject(state, w.x, w.y);
+    }
     drag = true;
     draw();
   });
   canvas.addEventListener('pointermove', (ev) => {
     if (!drag) return;
     const w = toWorld(ev);
-    moveSelected(state, w.x, w.y);
+    if (state.tool === 'spawn') moveSpawn(state, state.selectedSpawn, w.x, w.y);
+    else if (state.tool !== 'drop-range') moveSelected(state, w.x, w.y);
     draw();
   });
   canvas.addEventListener('pointerup', () => {
@@ -170,7 +184,81 @@ export function mountEditor(root: HTMLElement, state: EditorState, fns: EditorVi
         draw();
       }
     }
+    const step = ev.shiftKey ? state.grid * 4 : state.grid;
+    if (ev.code === 'ArrowLeft') {
+      nudge(-step, 0);
+      ev.preventDefault();
+    }
+    if (ev.code === 'ArrowRight') {
+      nudge(step, 0);
+      ev.preventDefault();
+    }
+    if (ev.code === 'ArrowUp') {
+      nudge(0, step);
+      ev.preventDefault();
+    }
+    if (ev.code === 'ArrowDown') {
+      nudge(0, -step);
+      ev.preventDefault();
+    }
+    if (ev.code === 'KeyA' && !ev.ctrlKey && !ev.metaKey) {
+      addObject(state, 12, 6);
+      draw();
+    }
   });
+
+  function nudge(dx: number, dy: number) {
+    if (state.tool === 'spawn') {
+      const s = state.level.spawns[state.selectedSpawn];
+      if (s) moveSpawn(state, state.selectedSpawn, s.x + dx, s.y + dy);
+    } else {
+      const obj = state.level.objects[state.selected];
+      if (obj) moveSelected(state, obj.x + dx, obj.y + dy);
+    }
+    draw();
+  }
+
+  function paintFields() {
+    fields.innerHTML = '';
+    const obj = state.level.objects[state.selected];
+    if (!obj) {
+      const drop = document.createElement('p');
+      drop.style.color = '#9aa3b2';
+      drop.textContent = `Drops ${state.level.drops?.xMin ?? 4}–${state.level.drops?.xMax ?? 28}. Spawns: ${state.level.spawns.length}.`;
+      fields.append(drop);
+      return;
+    }
+    for (const field of objectSchemaFields()) {
+      const row = document.createElement('label');
+      row.style.cssText = 'display:block;font-size:12px;margin:4px 0';
+      row.textContent = `${field.key} `;
+      if (field.kind === 'enum' && field.options) {
+        const sel = document.createElement('select');
+        for (const opt of field.options) {
+          const o = document.createElement('option');
+          o.value = opt;
+          o.textContent = opt;
+          if (fieldValue(obj, field.key) === opt) o.selected = true;
+          sel.append(o);
+        }
+        sel.onchange = () => {
+          applyField(obj, field.key, sel.value);
+          draw();
+        };
+        row.append(sel);
+      } else {
+        const input = document.createElement('input');
+        input.value = fieldValue(obj, field.key);
+        input.style.width = '70%';
+        input.onchange = () => {
+          applyField(obj, field.key, input.value);
+          draw();
+        };
+        row.append(input);
+      }
+      fields.append(row);
+    }
+  }
 
   function draw() {
     const r = canvas.getBoundingClientRect();
@@ -196,6 +284,12 @@ export function mountEditor(root: HTMLElement, state: EditorState, fns: EditorVi
       ctx.lineTo(r.width, sy(y));
       ctx.stroke();
     }
+    if (state.level.drops) {
+      ctx.fillStyle = 'rgba(242,193,78,0.12)';
+      const x0 = state.level.drops.xMin * ppm;
+      const x1 = state.level.drops.xMax * ppm;
+      ctx.fillRect(x0, 0, x1 - x0, r.height);
+    }
     state.level.objects.forEach((obj, i) => {
       const w = (obj.w ?? 2) * ppm;
       const h = (obj.h ?? 1) * ppm;
@@ -208,12 +302,13 @@ export function mountEditor(root: HTMLElement, state: EditorState, fns: EditorVi
       ctx.fillText(obj.type, obj.x * ppm - w / 2, sy(obj.y));
     });
     ctx.fillStyle = '#3dcf7a';
-    for (const s of state.level.spawns) {
+    state.level.spawns.forEach((s, i) => {
       ctx.beginPath();
-      ctx.arc(s.x * ppm, sy(s.y), 6, 0, Math.PI * 2);
+      ctx.arc(s.x * ppm, sy(s.y), i === state.selectedSpawn ? 8 : 6, 0, Math.PI * 2);
       ctx.fill();
-    }
+    });
     props.textContent = exportLevel(state);
+    paintFields();
   }
   requestAnimationFrame(draw);
   new ResizeObserver(() => draw()).observe(mid);

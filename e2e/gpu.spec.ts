@@ -14,14 +14,22 @@ test('GPU renderer initialises or the fallback notice is shown', async ({ page }
   await page.waitForTimeout(1500);
   const sample = await page.evaluate(async () => {
     const canvas = document.querySelector('canvas#game') as HTMLCanvasElement;
-    if (!canvas) return { ok: false, reason: 'no-canvas' };
+    if (!canvas) return { ok: false, reason: 'no-canvas', colored: 0, kind: '' };
+    const dbg = (window as unknown as { __floppy?: { rendererKind: string } }).__floppy;
     if (canvas.getContext('webgpu')) {
-      return { ok: true, kind: 'webgpu' };
+      return { ok: true, kind: dbg?.rendererKind ?? 'webgpu', colored: 1 };
     }
     const ctx = canvas.getContext('2d');
-    if (!ctx) return { ok: false, reason: 'no-2d' };
-    const data = ctx.getImageData(8, 8, 1, 1).data;
-    return { ok: data[3]! > 0, kind: 'canvas' };
+    if (!ctx) return { ok: false, reason: 'no-2d', colored: 0, kind: '' };
+    const w = Math.min(canvas.width, 96);
+    const h = Math.min(canvas.height, 96);
+    const data = ctx.getImageData(0, 0, w, h).data;
+    let colored = 0;
+    for (let i = 0; i < data.length; i += 4) {
+      if (data[i]! + data[i + 1]! + data[i + 2]! > 40) colored += 1;
+    }
+    return { ok: colored > 8 || data[3]! > 0, kind: dbg?.rendererKind ?? 'canvas', colored };
   });
   expect(sample.ok).toBeTruthy();
+  expect(sample.colored).toBeGreaterThan(0);
 });

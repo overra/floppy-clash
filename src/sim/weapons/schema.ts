@@ -2,6 +2,7 @@ import { z } from 'zod';
 
 export const WeaponDefSchema = z.object({
   id: z.string(),
+  displayName: z.string().optional(),
   category: z.enum(['melee', 'pistol', 'rifle', 'explosive', 'snake', 'lava', 'other']),
   ammo: z.number(),
   fireMode: z.enum(['semi', 'auto', 'burst', 'hold']),

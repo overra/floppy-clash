@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { ALL_LEVELS, builtInMatchLevels, hazardTestLevels } from '../src/levels/catalog';
+import { ALL_LEVELS, builtInMatchLevels, hazardTestLevels, matchLevelPool } from '../src/levels/catalog';
 
 describe('levels catalog', () => {
   it('has 60+ unique match levels and 30+ across the six v1 themes', () => {
@@ -13,6 +13,14 @@ describe('levels catalog', () => {
     expect(v1.length).toBeGreaterThanOrEqual(30);
     const later = match.filter((l) => ['laser', 'western', 'halloween'].includes(l.theme));
     expect(later.length).toBeGreaterThanOrEqual(15);
+  });
+
+  it('filters user levels into the match pool', () => {
+    const extra = [{ ...builtInMatchLevels()[0]!, id: 'user-arena', name: 'User Arena' }];
+    const pool = matchLevelPool('all', extra);
+    expect(pool.some((l) => l.id === 'user-arena')).toBe(true);
+    const subset = matchLevelPool(['user-arena'], extra);
+    expect(subset.map((l) => l.id)).toEqual(['user-arena']);
   });
 
   it('ships a per-hazard test level', () => {

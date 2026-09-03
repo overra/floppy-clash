@@ -5,6 +5,7 @@ import { SeededRng } from '../core/rng';
 import type { SimEvent, SimEvents } from './events';
 import type { PlayerInput } from './input';
 import type { LevelDef } from './level/schema';
+// extraLevels are user-library arenas merged into rotation (M7).
 import type { MatchSettings } from './rules/settings';
 import { cloneTuning, type Tuning } from './tuning';
 
@@ -27,6 +28,7 @@ export type SimContext = {
   fireCd: Map<number, number>;
   contactHits: Set<number>;
   lastPhysicsMs: number;
+  extraLevels: LevelDef[];
 };
 
 const contexts = new WeakMap<World, SimContext>();
@@ -71,5 +73,6 @@ export function makeContext(
     fireCd: new Map(),
     contactHits: new Set(),
     lastPhysicsMs: 0,
+    extraLevels: [],
   };
 }

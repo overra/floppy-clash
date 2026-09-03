@@ -1,6 +1,6 @@
 # Feel checklist
 
-Signed off against reference footage of Stick Fight-style movement. Numbers are from `src/sim/tuning.ts` and pinned by `test/movement.test.ts` (±10 %).
+Numbers are from `src/sim/tuning.ts` and pinned by `test/movement.test.ts` (±10 %).
 
 | Tech | Target | Notes |
 | --- | --- | --- |
@@ -10,6 +10,10 @@ Signed off against reference footage of Stick Fight-style movement. Numbers are 
 | Wall climb | 6-tile shaft in ≤ 4 wall jumps | Gym shaft interior x=3–5, walls to y≈14 |
 | Run | 30 m in ≈ 4 s | Dedicated `run-track` (60 m floor), `runSpeed` 8 |
 
-Live tuning: press F2 to open the Tweakpane bound to `tuning.ts`.
+Live tuning: **F2** opens Tweakpane bound to `tuning.ts`.
 
-Headless pins: `test/movement.test.ts`. GPU time / 1080p / 4 ms budgets are measured on an integrated-GPU laptop; CI SwiftShader only asserts correctness.
+Debug (PLAN 4.16): **F1** physics overlay, **F3** tick/hash/ms HUD, **F4** spawn pistol, **F5** kill P1, **F6** toggle slow-mo scale, **F7** freeze camera, **F8** GPU ↔ Canvas, **F9** download replay JSON.
+
+## Hardware sign-off (not claimed)
+
+Side-by-side footage vs Stick Fight and 60 fps on an integrated-GPU laptop at 1080p / 4 players / 200 bodies are **human / hardware** checks. CI SwiftShader only asserts correctness, never the 4 ms GPU budget.

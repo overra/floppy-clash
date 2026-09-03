@@ -30,6 +30,7 @@ export type CreateSimOptions = {
   settings?: Partial<MatchSettings>;
   spawnPlayers?: boolean;
   boxes?: number;
+  extraLevels?: LevelDef[];
 };
 
 export type SimHandle = {
@@ -48,6 +49,7 @@ export function createSimWorld(opts: CreateSimOptions): SimHandle {
   const g = cloneTuning().gravity;
   const physics = new PhysicsWorld({ gravity: { x: 0, y: -g } });
   const ctx = makeContext(ecs, physics, opts.level, opts.seed, settings);
+  ctx.extraLevels = opts.extraLevels ?? [];
   bindContext(ecs, ctx);
   physics.on('begin-contact', (contact) => {
     const a = contact.getFixtureA().getBody().getUserData() as FixtureUserData | undefined;

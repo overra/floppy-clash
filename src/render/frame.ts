@@ -1,3 +1,4 @@
+import type { LightEmitter } from './gpu/lighting';
 import type { Primitive } from './sdf/primitives';
 
 export type BlendOp = 'union' | 'smoothUnion';
@@ -22,7 +23,21 @@ export type RenderFrame = {
     bodies: { x: number; y: number; angle: number; hx: number; hy: number }[];
     rays: { x1: number; y1: number; x2: number; y2: number }[];
   };
-  hud: { slowmo: boolean; countdown: number; notice?: string };
+  lights?: LightEmitter[];
+  hud: {
+    slowmo: boolean;
+    countdown: number;
+    notice?: string;
+    wins?: number[];
+    firstTo?: number;
+    showWins?: boolean;
+    phase?: number;
+    tick?: number;
+    hash?: string;
+    physicsMs?: number;
+    gpuMs?: number;
+    entities?: number;
+  };
 };
 
 export function emptyFrame(): RenderFrame {

@@ -21,6 +21,7 @@
   },
   "dependencies": {
     "@typegpu/noise": "0.12.0",
+    "@typegpu/radiance-cascades": "0.12.0",
     "@typegpu/sdf": "0.12.0",
     "koota": "0.6.6",
     "planck": "1.5.0",

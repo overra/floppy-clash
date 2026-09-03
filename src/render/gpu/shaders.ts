@@ -35,6 +35,34 @@ export function primitiveSdfCpu(prim: Primitive, px: number, py: number): number
   return primitiveSdf(prim, { x: px, y: py });
 }
 
-void primitiveSdfGpu;
-void coverageGpu;
-void smoothUnionGpu;
+/** Invoke the TypeGPU `'use gpu'` DualFns as JS (PLAN §6). Falls back to CPU math. */
+export function evalPrimitiveSdfGpu(prim: Primitive, px: number, py: number): number {
+  try {
+    const out = primitiveSdfGpu(
+      { kind: prim.kind, ax: prim.ax, ay: prim.ay, bx: prim.bx, by: prim.by, r: prim.r },
+      { x: px, y: py } as never,
+    );
+    const n = Number(out);
+    return Number.isFinite(n) ? n : primitiveSdfCpu(prim, px, py);
+  } catch {
+    return primitiveSdfCpu(prim, px, py);
+  }
+}
+
+export function evalCoverageGpu(dist: number): number {
+  try {
+    const n = Number(coverageGpu(dist));
+    return Number.isFinite(n) ? n : dist < 0 ? 1 : 0;
+  } catch {
+    return dist < 0 ? 1 : 0;
+  }
+}
+
+export function evalSmoothUnionGpu(a: number, b: number, k: number): number {
+  try {
+    const n = Number(smoothUnionGpu(a, b, k));
+    return Number.isFinite(n) ? n : Math.min(a, b);
+  } catch {
+    return Math.min(a, b);
+  }
+}

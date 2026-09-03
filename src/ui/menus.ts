@@ -1,3 +1,8 @@
+import { builtInMatchLevels } from '../levels/catalog';
+import { DEFAULT_MAP, type PadMap } from '../input/remap';
+import { WEAPON_DEFS, weaponDisplayName } from '../sim/weapons/defs';
+import { DEFAULT_USER_SETTINGS, type UserSettings } from './settingsStore';
+
 export type Screen = 'menu' | 'join' | 'settings' | 'pause' | 'scoreboard' | 'lobby' | 'editor' | 'play' | 'disconnect';
 
 export type Seat = {
@@ -17,6 +22,11 @@ export type MenuState = {
   bots: number;
   roomCode: string;
   chat: string[];
+  draftChat: string;
+};
+
+export type MenuActions = {
+  [key: string]: (() => void) | ((payload?: string) => void) | undefined;
 };
 
 export function createMenuState(): MenuState {
@@ -29,12 +39,81 @@ export function createMenuState(): MenuState {
     bots: 0,
     roomCode: '',
     chat: [],
+    draftChat: '',
   };
 }
 
 const COLORS = ['Yellow', 'Blue', 'Red', 'Green'];
 
-export function renderMenus(root: HTMLElement, state: MenuState, actions: Record<string, () => void>): void {
+export function cycleSeatColor(seat: Seat, dir: number): void {
+  seat.color = (seat.color + dir + 4) % 4;
+}
+
+export function collectSettings(card: HTMLElement, menus: MenuState, settings: UserSettings): UserSettings {
+  const num = (id: string, fallback: number) => {
+    const el = card.querySelector(`#${id}`) as HTMLInputElement | null;
+    return el ? Number(el.value) : fallback;
+  };
+  const chk = (id: string, fallback: boolean) => {
+    const el = card.querySelector(`#${id}`) as HTMLInputElement | null;
+    return el ? el.checked : fallback;
+  };
+  const sel = (id: string, fallback: string) => {
+    const el = card.querySelector(`#${id}`) as HTMLSelectElement | null;
+    return el ? el.value : fallback;
+  };
+  menus.maxHp = num('hp', menus.maxHp);
+  menus.firstTo = num('ft', menus.firstTo);
+  menus.bots = num('bots', menus.bots);
+  const weapons = WEAPON_DEFS.filter((d) => d.dropWeight > 0);
+  const enabledW = weapons.filter((d) => chk(`w-${d.id}`, true)).map((d) => d.id);
+  const levels = builtInMatchLevels();
+  const enabledL = levels.filter((l) => chk(`l-${l.id}`, true)).map((l) => l.id);
+  return {
+    ...settings,
+    maxHp: menus.maxHp,
+    firstTo: menus.firstTo,
+    showWins: chk('wins', settings.showWins),
+    haptics: chk('hap', settings.haptics),
+    colorblind: chk('cb', settings.colorblind),
+    reduceShake: chk('rs', settings.reduceShake),
+    reduceBlood: chk('rb', settings.reduceBlood),
+    lighting: chk('lit', settings.lighting),
+    includeUserLevels: chk('usr', settings.includeUserLevels),
+    renderer: sel('ren', settings.renderer) as UserSettings['renderer'],
+    rotation: sel('rot', settings.rotation) as UserSettings['rotation'],
+    sfx: num('sfx', settings.sfx),
+    music: num('mus', settings.music),
+    enabledWeapons: enabledW.length === weapons.length ? 'all' : enabledW,
+    enabledLevels: enabledL.length === levels.length ? 'all' : enabledL,
+  };
+}
+
+export function collectPadMap(card: HTMLElement): { padId: string; map: PadMap } {
+  const padId = (card.querySelector('#padid') as HTMLInputElement | null)?.value || 'custom';
+  const n = (id: string, fallback: number) => {
+    const el = card.querySelector(`#${id}`) as HTMLInputElement | null;
+    return el ? Number(el.value) : fallback;
+  };
+  return {
+    padId,
+    map: {
+      jump: n('map-jump', DEFAULT_MAP.jump),
+      attack: n('map-attack', DEFAULT_MAP.attack),
+      block: n('map-block', DEFAULT_MAP.block),
+      throw: n('map-throw', DEFAULT_MAP.throw),
+      pause: n('map-pause', DEFAULT_MAP.pause),
+    },
+  };
+}
+
+export function renderMenus(
+  root: HTMLElement,
+  state: MenuState,
+  actions: MenuActions,
+  settings: UserSettings = DEFAULT_USER_SETTINGS,
+  maps: Record<string, PadMap> = {},
+): void {
   root.innerHTML = '';
   if (state.screen === 'play') return;
   const wrap = document.createElement('div');
@@ -42,7 +121,7 @@ export function renderMenus(root: HTMLElement, state: MenuState, actions: Record
     'position:absolute;inset:0;display:flex;align-items:center;justify-content:center;background:rgba(10,12,16,0.72);pointer-events:auto;';
   const card = document.createElement('div');
   card.style.cssText =
-    'width:min(720px,92vw);background:#1b1e27;border-radius:16px;padding:28px;box-shadow:0 20px 60px rgba(0,0,0,0.4);';
+    'width:min(760px,94vw);max-height:92vh;overflow:auto;background:#1b1e27;border-radius:16px;padding:28px;box-shadow:0 20px 60px rgba(0,0,0,0.4);';
   if (state.screen === 'menu') {
     card.innerHTML = `<h1 style="margin:0 0 8px;font-size:42px">Floppy Clash</h1>
       <p style="color:#9aa3b2">Couch physics brawler. Press a button on a pad — or use the keyboard fallback.</p>
@@ -58,7 +137,7 @@ export function renderMenus(root: HTMLElement, state: MenuState, actions: Record
       row.append(btn(label, () => actions[id]?.()));
     }
   } else if (state.screen === 'join') {
-    card.innerHTML = `<h2>Join</h2><p>Press A / Space to join a seat. Left/Right change color. Start / Enter to begin.</p>`;
+    card.innerHTML = `<h2>Join</h2><p>Press A / Space to join a seat. Left/Right (or Arrow keys) change color. Start / Enter to begin.</p>`;
     state.seats.forEach((s, i) => {
       const line = document.createElement('div');
       line.style.cssText = `margin:8px 0;padding:10px;border-radius:8px;background:${s.taken ? '#2a3144' : '#151820'}`;
@@ -70,31 +149,7 @@ export function renderMenus(root: HTMLElement, state: MenuState, actions: Record
     card.append(btn('Start', () => actions.start?.()));
     card.append(btn('Back', () => actions.back?.()));
   } else if (state.screen === 'settings') {
-    card.innerHTML = `<h2>Settings</h2>
-      <label>HP <input id="hp" type="number" value="${state.maxHp}"></label><br/>
-      <label>First to <input id="ft" type="number" value="${state.firstTo}"></label><br/>
-      <label>Bots <input id="bots" type="number" value="${state.bots}"></label><br/>
-      <label>Show wins <input id="wins" type="checkbox" checked></label><br/>
-      <label>Haptics <input id="hap" type="checkbox" checked></label><br/>
-      <label>Colorblind palette <input id="cb" type="checkbox"></label><br/>
-      <label>Reduce shake <input id="rs" type="checkbox"></label><br/>
-      <label>Reduce blood <input id="rb" type="checkbox"></label><br/>
-      <label>2D lighting (stretch) <input id="lit" type="checkbox"></label><br/>
-      <label>Renderer
-        <select id="ren">
-          <option value="auto">Auto</option>
-          <option value="gpu">SDF / WebGPU</option>
-          <option value="canvas">Canvas</option>
-        </select>
-      </label>
-      <p style="color:#9aa3b2">Weapon and level toggles apply from the host; per-pad remap is offered on non-standard mappings.</p>`;
-    card.append(btn('Save', () => {
-      state.maxHp = Number((card.querySelector('#hp') as HTMLInputElement).value);
-      state.firstTo = Number((card.querySelector('#ft') as HTMLInputElement).value);
-      state.bots = Number((card.querySelector('#bots') as HTMLInputElement).value);
-      actions.save?.();
-    }));
-    card.append(btn('Back', () => actions.back?.()));
+    renderSettings(card, state, settings, maps, actions);
   } else if (state.screen === 'pause') {
     card.innerHTML = `<h2>Paused</h2>`;
     card.append(btn('Resume', () => actions.resume?.()));
@@ -102,15 +157,7 @@ export function renderMenus(root: HTMLElement, state: MenuState, actions: Record
   } else if (state.screen === 'scoreboard') {
     card.innerHTML = `<h2>Round over</h2><p>Next level incoming…</p>`;
   } else if (state.screen === 'lobby') {
-    card.innerHTML = `<h2>Online lobby</h2><p>Room ${state.roomCode || '------'}</p>`;
-    const chat = document.createElement('div');
-    chat.style.maxHeight = '160px';
-    chat.style.overflow = 'auto';
-    chat.textContent = state.chat.join('\n');
-    card.append(chat);
-    card.append(btn('Host', () => actions.host?.()));
-    card.append(btn('Join', () => actions.joinRoom?.()));
-    card.append(btn('Back', () => actions.back?.()));
+    renderLobby(card, state, settings, actions);
   } else if (state.screen === 'disconnect') {
     card.innerHTML = `<h2>Controller disconnected</h2><p>Reconnect the same pad to resume.</p>`;
   }
@@ -122,6 +169,130 @@ export function renderMenus(root: HTMLElement, state: MenuState, actions: Record
   }
   wrap.append(card);
   root.append(wrap);
+}
+
+function renderSettings(
+  card: HTMLElement,
+  state: MenuState,
+  settings: UserSettings,
+  maps: Record<string, PadMap>,
+  actions: MenuActions,
+): void {
+  const weaponBoxes = WEAPON_DEFS.filter((d) => d.dropWeight > 0)
+    .map((d) => {
+      const on = settings.enabledWeapons === 'all' || settings.enabledWeapons.includes(d.id);
+      return `<label style="display:inline-block;margin:2px 8px 2px 0"><input id="w-${d.id}" type="checkbox" ${on ? 'checked' : ''}/> ${weaponDisplayName(d)}</label>`;
+    })
+    .join('');
+  const levelBoxes = builtInMatchLevels()
+    .slice(0, 80)
+    .map((l) => {
+      const on = settings.enabledLevels === 'all' || settings.enabledLevels.includes(l.id);
+      return `<label style="display:block;font-size:12px"><input id="l-${l.id}" type="checkbox" ${on ? 'checked' : ''}/> ${l.name} <span style="color:#9aa3b2">(${l.theme})</span></label>`;
+    })
+    .join('');
+  const lastMap = Object.entries(maps)[0]?.[1] ?? DEFAULT_MAP;
+  const lastId = Object.keys(maps)[0] ?? '';
+  card.innerHTML = `<h2>Settings</h2>
+      <label>HP <input id="hp" type="number" value="${state.maxHp}"></label><br/>
+      <label>First to <input id="ft" type="number" value="${state.firstTo}"></label><br/>
+      <label>Bots <input id="bots" type="number" value="${state.bots}"></label><br/>
+      <label>Show wins <input id="wins" type="checkbox" ${settings.showWins ? 'checked' : ''}></label><br/>
+      <label>Haptics <input id="hap" type="checkbox" ${settings.haptics ? 'checked' : ''}></label><br/>
+      <label>Colorblind palette <input id="cb" type="checkbox" ${settings.colorblind ? 'checked' : ''}></label><br/>
+      <label>Reduce shake <input id="rs" type="checkbox" ${settings.reduceShake ? 'checked' : ''}></label><br/>
+      <label>Reduce blood <input id="rb" type="checkbox" ${settings.reduceBlood ? 'checked' : ''}></label><br/>
+      <label>2D lighting (radiance cascades) <input id="lit" type="checkbox" ${settings.lighting ? 'checked' : ''}></label><br/>
+      <label>Include user levels in rotation <input id="usr" type="checkbox" ${settings.includeUserLevels ? 'checked' : ''}></label><br/>
+      <label>SFX <input id="sfx" type="range" min="0" max="1" step="0.05" value="${settings.sfx}"></label><br/>
+      <label>Music <input id="mus" type="range" min="0" max="1" step="0.05" value="${settings.music}"></label><br/>
+      <label>Level order
+        <select id="rot">
+          <option value="random" ${settings.rotation === 'random' ? 'selected' : ''}>Random</option>
+          <option value="ordered" ${settings.rotation === 'ordered' ? 'selected' : ''}>Ordered</option>
+        </select>
+      </label><br/>
+      <label>Renderer
+        <select id="ren">
+          <option value="auto" ${settings.renderer === 'auto' ? 'selected' : ''}>Auto</option>
+          <option value="gpu" ${settings.renderer === 'gpu' ? 'selected' : ''}>SDF / WebGPU</option>
+          <option value="canvas" ${settings.renderer === 'canvas' ? 'selected' : ''}>Canvas</option>
+        </select>
+      </label>
+      <h3>Weapon toggles</h3>
+      <div style="max-height:140px;overflow:auto;background:#151820;padding:8px;border-radius:8px">${weaponBoxes}</div>
+      <h3>Level toggles</h3>
+      <div style="max-height:140px;overflow:auto;background:#151820;padding:8px;border-radius:8px">${levelBoxes}</div>
+      <h3>Per-pad remap</h3>
+      <p style="color:#9aa3b2;font-size:13px">Offered automatically for non-<code>standard</code> mappings. Button indices follow the W3C Gamepad API.</p>
+      <label>Pad id <input id="padid" value="${lastId}" placeholder="Xbox / DualSense id string"></label><br/>
+      <label>Jump <input id="map-jump" type="number" value="${lastMap.jump}"></label>
+      <label>Attack <input id="map-attack" type="number" value="${lastMap.attack}"></label>
+      <label>Block <input id="map-block" type="number" value="${lastMap.block}"></label>
+      <label>Throw <input id="map-throw" type="number" value="${lastMap.throw}"></label>
+      <label>Pause <input id="map-pause" type="number" value="${lastMap.pause}"></label>`;
+  card.append(
+    btn('Save', () => {
+      const next = collectSettings(card, state, settings);
+      Object.assign(settings, next);
+      actions.save?.();
+    }),
+  );
+  card.append(
+    btn('Save remap', () => {
+      actions.saveRemap?.();
+    }),
+  );
+  card.append(btn('Back', () => actions.back?.()));
+}
+
+function renderLobby(card: HTMLElement, state: MenuState, settings: UserSettings, actions: MenuActions): void {
+  card.innerHTML = `<h2>Online lobby</h2>
+    <p>Host-authoritative WebRTC. Signaling is local (<code>npm run server</code>); live WAN STUN/TURN is a hardware path.</p>
+    <label>Room code <input id="room" value="${state.roomCode}" placeholder="ABC123" maxlength="8"></label>
+    <label>HP <input id="hp" type="number" value="${state.maxHp}"></label>
+    <label>First to <input id="ft" type="number" value="${state.firstTo}"></label>
+    <p style="color:#9aa3b2;font-size:13px">Host-only: HP / first-to apply when you Host. Chat is reliable-channel text.</p>`;
+  const chat = document.createElement('div');
+  chat.style.maxHeight = '160px';
+  chat.style.overflow = 'auto';
+  chat.style.background = '#151820';
+  chat.style.padding = '8px';
+  chat.style.whiteSpace = 'pre-wrap';
+  chat.textContent = state.chat.join('\n') || '(no messages)';
+  const row = document.createElement('div');
+  const input = document.createElement('input');
+  input.id = 'chat';
+  input.placeholder = 'Type a message';
+  input.value = state.draftChat;
+  input.style.width = '70%';
+  row.append(input);
+  row.append(
+    btn('Send', () => {
+      const text = input.value.trim();
+      if (!text) return;
+      state.draftChat = '';
+      actions.chat?.(text);
+    }),
+  );
+  card.append(chat, row);
+  card.append(
+    btn('Host', () => {
+      const room = (card.querySelector('#room') as HTMLInputElement | null)?.value.trim().toUpperCase();
+      state.roomCode = room || state.roomCode;
+      state.maxHp = Number((card.querySelector('#hp') as HTMLInputElement).value) || settings.maxHp;
+      state.firstTo = Number((card.querySelector('#ft') as HTMLInputElement).value) || 0;
+      actions.host?.();
+    }),
+  );
+  card.append(
+    btn('Join', () => {
+      const room = (card.querySelector('#room') as HTMLInputElement | null)?.value.trim().toUpperCase();
+      state.roomCode = room || state.roomCode || 'JOINME';
+      actions.joinRoom?.();
+    }),
+  );
+  card.append(btn('Back', () => actions.back?.()));
 }
 
 function btn(label: string, onClick: () => void): HTMLButtonElement {

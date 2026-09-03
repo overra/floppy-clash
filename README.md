@@ -35,7 +35,9 @@ Pads only appear after you press a button. Keyboard/mouse is a development fallb
 
 `npm run build` emits `dist/`. Deploy that folder to any static host (GitHub Pages, Netlify, nginx). The [pages workflow](.github/workflows/pages.yml) publishes `dist/` when this branch is merged to `main`. Install from the browser as a PWA (`public/manifest.webmanifest` + `sw.js`) for offline couch play.
 
-Until Pages is enabled on the repo, serve locally with `npm run preview`.
+Until Pages is enabled on the repo, serve locally with `npm run preview`. Distinctive weapon names (Oracle Pistol, Void Well, …) are used in the UI; data ids stay stable.
+
+Settings persist HP, weapon/level toggles, remaps, audio, renderer, and the optional 2D lighting pass (`@typegpu/radiance-cascades` + Jump Flood, budget-gated). User levels from the editor join match rotation when that toggle is on.
 
 ## Commands
 
@@ -53,4 +55,4 @@ DOM-free `src/sim` (Koota + Planck) steps at 60 Hz. `src/render` only reads a `R
 
 ## Legal
 
-Mechanics only. No names, art, audio, or layouts copied from the original game.
+Mechanics only. No names, art, audio, or layouts copied from the original game. See [docs/netcode.md](docs/netcode.md) and [docs/couch-test-matrix.md](docs/couch-test-matrix.md).

@@ -670,7 +670,65 @@ const raw = [
   },
 ];
 
-export const WEAPON_DEFS: WeaponDef[] = raw.map((def) => WeaponDefSchema.parse(def));
+/** Distinctive public names (PLAN §9). Ids stay stable for data/toggles. */
+const DISPLAY_NAMES: Record<string, string> = {
+  fists: 'Fists',
+  pistol: 'Pistol',
+  revolver: 'Revolver',
+  deagle: 'Hand Cannon',
+  uzi: 'Spray Pistol',
+  'god-pistol': 'Oracle Pistol',
+  ak47: 'Battle Rifle',
+  m16: 'Burst Rifle',
+  m1: 'Scout Rifle',
+  sniper: 'Longshot',
+  'sawed-off': 'Boomstick',
+  'military-shotgun': 'Tactical Scatter',
+  bouncer: 'Ricochet Rifle',
+  'grenade-launcher': 'Arc Launcher',
+  thruster: 'Pusher',
+  rpg: 'Warhead',
+  'snake-gun': 'Viper Pistol',
+  'snake-shotgun': 'Viper Scatter',
+  'snake-grenade': 'Viper Grenade',
+  'snake-launcher': 'Viper Launcher',
+  'snake-minigun': 'Viper Minigun',
+  'flying-snake-launcher': 'Sky Viper',
+  'lava-spike-ball': 'Magma Orb',
+  'lava-beam': 'Magma Beam',
+  'lava-stream': 'Magma Stream',
+  'lava-spray': 'Magma Spray',
+  'lava-spike-gun': 'Magma Spike',
+  sword: 'Cleaver',
+  spear: 'Pike',
+  'blink-dagger': 'Blink Knife',
+  'time-bubble': 'Stasis Orb',
+  laser: 'Beam Pistol',
+  'ice-gun': 'Frost Gun',
+  'black-hole': 'Void Well',
+  'glue-gun': 'Goo Gun',
+  minigun: 'Rotary Cannon',
+  flamethrower: 'Flame Hose',
+};
+
+export const WEAPON_DEFS: WeaponDef[] = raw.map((def) =>
+  WeaponDefSchema.parse({ ...def, displayName: DISPLAY_NAMES[def.id] ?? titleCase(def.id) }),
+);
+
+function titleCase(id: string): string {
+  return id
+    .split('-')
+    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+    .join(' ');
+}
+
+export function weaponDisplayName(def: WeaponDef | string): string {
+  if (typeof def === 'string') {
+    const found = WEAPON_BY_ID.get(def)?.def;
+    return found?.displayName ?? DISPLAY_NAMES[def] ?? titleCase(def);
+  }
+  return def.displayName ?? DISPLAY_NAMES[def.id] ?? titleCase(def.id);
+}
 
 export const WEAPON_BY_ID = new Map(WEAPON_DEFS.map((d, i) => [d.id, { def: d, index: i }]));
 

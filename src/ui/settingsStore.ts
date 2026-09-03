@@ -13,6 +13,7 @@ export type UserSettings = {
   sfx: number;
   music: number;
   lighting: boolean;
+  includeUserLevels: boolean;
 };
 
 const KEY = 'floppy-clash.settings';
@@ -32,6 +33,7 @@ export const DEFAULT_USER_SETTINGS: UserSettings = {
   sfx: 0.8,
   music: 0.25,
   lighting: false,
+  includeUserLevels: true,
 };
 
 export function loadSettings(): UserSettings {

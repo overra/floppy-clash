@@ -53,6 +53,19 @@ export function builtInMatchLevels(): LevelDef[] {
   return ALL_LEVELS.filter(isMatchLevel);
 }
 
+/** Built-in match arenas plus optional user-library levels, filtered by host toggles. */
+export function matchLevelPool(enabled: string[] | 'all', extra: LevelDef[] = []): LevelDef[] {
+  const seen = new Set<string>();
+  const out: LevelDef[] = [];
+  for (const level of [...builtInMatchLevels(), ...extra]) {
+    if (seen.has(level.id)) continue;
+    if (enabled !== 'all' && !enabled.includes(level.id)) continue;
+    seen.add(level.id);
+    out.push(level);
+  }
+  return out;
+}
+
 export function hazardTestLevels(): LevelDef[] {
   return ALL_LEVELS.filter((l) => l.id.startsWith('test-'));
 }
