@@ -409,7 +409,7 @@ test('local 10-round fists-only match (PLAN M2 stand-in)', async ({ page }) => {
     .toBe(2);
   await page.evaluate(() => {
     const pads = (window as unknown as { __e2ePads: (Gamepad | null)[] }).__e2ePads;
-    const removed = pads[0];
+    const removed = pads[0] ?? null;
     (window as unknown as { __e2eRemovedPad: Gamepad | null }).__e2eRemovedPad = removed;
     pads[0] = null;
     window.dispatchEvent(Object.assign(new Event('gamepaddisconnected'), { gamepad: removed }));
