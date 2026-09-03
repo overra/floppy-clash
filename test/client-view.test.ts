@@ -203,7 +203,7 @@ describe('client interpolation view', () => {
     speedRounds(host);
     host.ctx.tuning.countdownTicks = 2;
     host.ctx.tuning.slowmoTicks = 1;
-    host.ctx.tuning.scoreboardTicks = 1;
+    expect(host.ctx.tuning.scoreboardTicks).toBe(90);
     const first = host.snapshot();
     const view = createClientView(first);
     expect(view.sim.ctx.level.id).toBe(first.levelId);
