@@ -5,10 +5,76 @@ import type { SimEvent } from '../src/sim/events';
 import type { PlayerInput } from '../src/sim/input';
 import { Category, Mask } from '../src/sim/physics/categories';
 import { spawnWeapon } from '../src/sim/systems/weapons';
-import { Combat, Dead, Health, Held, HeldBy, Loose, Projectile, ProjectileKind, Snake, Status, Transform, Weapon } from '../src/sim/traits';
+import { Combat, Dead, Health, Held, HeldBy, Loose, Projectile, ProjectileKind, RoundPhase, RoundState, Snake, Status, Transform, Weapon } from '../src/sim/traits';
 import { WEAPON_DEFS, weaponIndex } from '../src/sim/weapons/defs';
 import { damageMultiplier } from '../src/sim/player/health';
 import { hold, makeSim, playerOf, runTrack } from './helpers';
+
+describe('weapon rain', () => {
+  const looseXs = (sim: ReturnType<typeof makeSim>) => {
+    const xs: number[] = [];
+    sim.ecs.query(Weapon, Loose).updateEach((_, e) => {
+      const t = e.get(Transform);
+      if (t) xs.push(t.x);
+    });
+    return xs;
+  };
+
+  it('drops nothing during the countdown, then opens with one gun per fighter spread across the arena', () => {
+    const sim = makeSim({ level: woodsClearing, seed: 5, settings: { playerCount: 4, bots: 0 }, skipCountdown: false });
+    const t = sim.ctx.tuning;
+    const idle = [hold({}), hold({}), hold({}), hold({})];
+    // Loading tick, then the whole countdown: the sky stays empty.
+    for (let i = 0; i <= t.countdownTicks; i++) {
+      sim.step(idle);
+      expect(looseXs(sim)).toHaveLength(0);
+    }
+    expect(sim.ecs.get(RoundState)?.phase).toBe(RoundPhase.Fighting);
+    // Still nothing until the opening delay has elapsed after "FIGHT".
+    for (let i = 0; i < t.firstDropDelayTicks - 2; i++) sim.step(idle);
+    expect(looseXs(sim)).toHaveLength(0);
+    // The volley: four guns within a second, one over each quarter of the drop range.
+    for (let i = 0; i < 60; i++) sim.step(idle);
+    const xs = looseXs(sim).sort((a, b) => a - b);
+    expect(xs).toHaveLength(4);
+    const { xMin, xMax } = woodsClearing.drops!;
+    const slice = (xMax - xMin) / 4;
+    xs.forEach((x, i) => {
+      expect(x).toBeGreaterThanOrEqual(xMin + slice * i - 0.01);
+      expect(x).toBeLessThanOrEqual(xMin + slice * (i + 1) + 0.01);
+    });
+    // After the volley the regular cadence takes over (nothing extra falls immediately; a gun that
+    // landed on a fighter may have been picked up, so count every weapon, held or loose).
+    for (let i = 0; i < t.dropIntervalMinTicks / 2; i++) sim.step(idle);
+    let all = 0;
+    sim.ecs.query(Weapon).updateEach(() => {
+      all += 1;
+    });
+    expect(all).toBe(4);
+  });
+
+  it('a new round starts with an empty sky even though the drop timer had long expired', () => {
+    const sim = makeSim({ level: woodsClearing, seed: 6, settings: { playerCount: 2, bots: 0, firstTo: 0 } });
+    const t = sim.ctx.tuning;
+    const idle = [hold({}), hold({}), hold({}), hold({})];
+    // Let the opening volley and one regular drop happen, then end the round.
+    for (let i = 0; i < t.firstDropDelayTicks + t.dropIntervalMaxTicks + 60; i++) sim.step(idle);
+    expect(looseXs(sim).length).toBeGreaterThan(0);
+    playerOf(sim, 1).set(Health, { hp: 0, maxHp: 100 });
+    sim.step(idle);
+    // Slow-mo, scoreboard, loading: the next round's countdown must not start with guns in the air.
+    let sawCountdown = false;
+    for (let i = 0; i < t.slowmoTicks + t.scoreboardTicks + t.countdownTicks + 10; i++) {
+      sim.step(idle);
+      const phase = sim.ecs.get(RoundState)?.phase;
+      if (phase === RoundPhase.Countdown) {
+        sawCountdown = true;
+        expect(looseXs(sim)).toHaveLength(0);
+      }
+    }
+    expect(sawCountdown).toBe(true);
+  });
+});
 
 describe('M3 weapons', () => {
   it('picks up a loose weapon and refills ammo', () => {
@@ -28,7 +94,9 @@ describe('M3 weapons', () => {
   });
 
   it('a weapon dropped from the sky lands beside the player and is picked up by walking over it', () => {
-    const sim = makeSim({ level: woodsClearing, seed: 12, settings: { playerCount: 1 } });
+    // No weapon rain: the only gun on the stage must be the one we drop.
+    const quiet = { ...woodsClearing, drops: { ...woodsClearing.drops!, enabled: false } };
+    const sim = makeSim({ level: quiet, seed: 12, settings: { playerCount: 1 } });
     const p = playerOf(sim);
     const start = { ...p.get(Transform)! };
     const gun = spawnWeapon(sim.ecs, 'pistol', start.x + 1.5, start.y + 4);
@@ -272,7 +340,11 @@ describe('weapon behaviours by class', () => {
 
   it('the void well opens, drags the enemy in and swallows them, then collapses', () => {
     const { sim, a, b } = duel('black-hole', 5);
-    const ev = fireFor(sim, 120, true);
+    // The shooter fires and backs off, as you should; the target just stands there.
+    const ev: SimEvent[] = [];
+    for (let i = 0; i < 120; i++) {
+      ev.push(...sim.step([hold({ attack: i < 2, moveX: i > 2 ? -1 : 0, aimX: 1, aimY: 0 }), hold({}), hold({}), hold({})]));
+    }
     expect(ev.some((e) => e.type === 'kill' && e.target === b)).toBe(true);
     expect(a.has(Dead)).toBe(false);
     for (let i = 0; i < 200; i++) sim.step([hold({}), hold({}), hold({}), hold({})]);
@@ -281,6 +353,43 @@ describe('weapon behaviours by class', () => {
       if (p.kind === ProjectileKind.Field) fields += 1;
     });
     expect(fields).toBe(0);
+  });
+
+  it('the void well is a real gravity well: it plucks a fighter off the floor from 3 m, and only a run from the rim escapes', () => {
+    const open = (targetDx: number, targetMove: number) => {
+      // Park the target out of the way while the hole flies its full 6 m, then place it by the open well.
+      const { sim, b } = duel('black-hole', 30);
+      let hole: { x: number; y: number } | undefined;
+      for (let i = 0; i < 80 && !hole; i++) {
+        sim.step([hold({ attack: i < 2, aimX: 1, aimY: 0 }), hold({}), hold({}), hold({})]);
+        sim.ecs.query(Projectile).updateEach(([p]) => {
+          if (p.kind === ProjectileKind.Field && p.phase === 1) hole = { x: p.x, y: p.y };
+        });
+      }
+      expect(hole).toBeTruthy();
+      const body = sim.ctx.bodies.get(b)!;
+      body.setPosition({ x: hole!.x + targetDx, y: 2.81 });
+      body.setLinearVelocity({ x: 0, y: 0 });
+      let lifted = false;
+      let died = -1;
+      for (let i = 0; i < 150 && died < 0; i++) {
+        sim.step([hold({ aimX: 1 }), hold({ moveX: targetMove, aimX: 1 }), hold({}), hold({})]);
+        if ((b.get(Transform)?.y ?? 0) > 3.0) lifted = true;
+        if (b.has(Dead)) died = i;
+      }
+      return { died, lifted, x: b.get(Transform)!.x - hole!.x };
+    };
+    // Standing 3 m out, a fighter is dragged in and swallowed within a second, leaving the ground on the way.
+    const idle = open(3, 0);
+    expect(idle.died).toBeGreaterThan(0);
+    expect(idle.died).toBeLessThan(60);
+    expect(idle.lifted).toBe(true);
+    // Running away from 1.5 m is hopeless...
+    expect(open(1.5, 1).died).toBeGreaterThan(0);
+    // ...but from 3 m the rim is still a tug you can beat.
+    const runner = open(3, 1);
+    expect(runner.died).toBe(-1);
+    expect(runner.x).toBeGreaterThan(4.5);
   });
 
   it('snakes leave the barrel flying, spare their owner at first, then hunt and bite', () => {
@@ -347,7 +456,10 @@ describe('weapon behaviours by class', () => {
     expect(booms.length).toBeGreaterThan(0);
     // Shells lobbed from x=20 must not skate off down the track before detonating.
     for (const boom of booms) expect(boom.x).toBeLessThan(34);
-    expect(launcher.b.get(Health)?.hp ?? 100).toBeLessThan(100);
+    // The target may well have died and been respawned at full health by the time the loop ends,
+    // so look for the damage in the event stream rather than the final hp.
+    const hurt = ev.some((e) => (e.type === 'hit' || e.type === 'kill') && e.target === launcher.b) || (launcher.b.get(Health)?.hp ?? 100) < 100;
+    expect(hurt).toBe(true);
   });
 });
 

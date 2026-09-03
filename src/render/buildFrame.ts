@@ -366,8 +366,24 @@ export function buildFrame(
       case ProjectileKind.Field: {
         const r = Math.max(0.6, def.projectile.radius * 0.5);
         if (def.id === 'black-hole') {
-          groups.push(group([disk(p.x, p.y, r * 0.8)], '#0a0410', Layer.Projectiles, { style: 'flat', fx: 'hole', pad: r }));
-          groups.push(group([disk(p.x, p.y, r * 0.95)], withAlpha('#a05cff', 0.5), Layer.Projectiles, { style: 'outline', fx: 'glow', glow: r * 0.8 }));
+          // A compact seed in flight; open, it swells into the well proper, with a faint rim marking
+          // how far the drag reaches and motes spiralling in so the pull reads even on an empty stage.
+          const open = p.phase === 1;
+          const core = open ? r * 0.8 : 0.32;
+          groups.push(group([disk(p.x, p.y, core)], '#0a0410', Layer.Projectiles, { style: 'flat', fx: 'hole', pad: open ? r : 0.5 }));
+          groups.push(group([disk(p.x, p.y, core * 1.18)], withAlpha('#a05cff', 0.5), Layer.Projectiles, { style: 'outline', fx: 'glow', glow: open ? r * 0.8 : 0.4 }));
+          if (open) {
+            const reach = def.projectile.radius;
+            groups.push(group([disk(p.x, p.y, reach)], withAlpha('#8a4cff', 0.14), Layer.Projectiles, { style: 'outline', pad: 0.3 }));
+            const motes = [];
+            for (let k = 0; k < 6; k++) {
+              const fall = 1 - ((time * 0.55 + k * 0.17) % 1);
+              const ang = time * (2.2 + k * 0.3) + k * 1.05 + fall * 4;
+              const dist = core + (reach - core) * fall * fall;
+              motes.push(disk(p.x + Math.cos(ang) * dist, p.y + Math.sin(ang) * dist * 0.8, 0.06 + 0.05 * fall));
+            }
+            groups.push(group(motes, withAlpha('#d9b8ff', 0.75), Layer.Projectiles, { style: 'flat', fx: 'glow', glow: 0.3 }));
+          }
         } else if (def.id === 'time-bubble') {
           groups.push(group([disk(p.x, p.y, r * 1.6)], withAlpha('#7ae7ff', 0.18), Layer.Projectiles, { style: 'flat', pad: 0.4 }));
           groups.push(group([disk(p.x, p.y, r * 1.6)], withAlpha('#c9f5ff', 0.6), Layer.Projectiles, { style: 'outline', pad: 0.4 }));
@@ -518,7 +534,8 @@ export function buildFrame(
   const roundWinner = over ? (rs?.winner ?? -1) : undefined;
   const countdownLeft = rs?.phase === RoundPhase.Countdown ? ctx.tuning.countdownTicks - (rs.ticks ?? 0) : 0;
   const winsArr = ms ? [ms.wins0, ms.wins1, ms.wins2, ms.wins3] : [0, 0, 0, 0];
-  const tr = ctx.tuning.tickRate;
+  // The countdown always reads 3-2-1 however long it lasts: each numeral gets a third of it.
+  const beat = Math.max(1, ctx.tuning.countdownTicks / 3);
   // Renderers draw groups in array order; a stable sort keeps within-layer ordering deterministic.
   groups.sort((a, b) => a.layer - b.layer);
   return {
@@ -530,8 +547,8 @@ export function buildFrame(
     decalLayer: opts.decalLayer,
     hud: {
       slowmo: rs?.phase === RoundPhase.LastKill,
-      countdown: countdownLeft > 0 ? Math.ceil(countdownLeft / tr) : 0,
-      countdownT: countdownLeft > 0 ? (countdownLeft % tr) / tr : 0,
+      countdown: countdownLeft > 0 ? Math.ceil(countdownLeft / beat) : 0,
+      countdownT: countdownLeft > 0 ? (countdownLeft % beat) / beat : 0,
       wins: winsArr,
       firstTo: ms?.firstTo ?? 0,
       showWins: (ms?.showWins ?? 1) === 1,

@@ -34,6 +34,8 @@ export function controller(world: World): void {
     const glued = (status?.glued ?? 0) > 0;
     const slowed = (status?.slowed ?? 0) > 0;
     const bubbled = (status?.bubbled ?? 0) > 0;
+    // In a void well's grip the floor gives no purchase: air accel only, and no skidding to a stop.
+    const pulled = (status?.pulled ?? 0) > 0;
     if (bubbled) return;
 
     const vel = body.getLinearVelocity();
@@ -108,7 +110,7 @@ export function controller(world: World): void {
 
     ctrl.ducking = input.down && ctrl.grounded;
     const speed = t.runSpeed * (ctrl.ducking ? t.duckSpeedScale : 1) * (slowed ? 0.45 : 1) * (glued ? 0.15 : 1);
-    const accel = (ctrl.grounded ? groundAccel : airAccel) * (glued ? 0.2 : 1);
+    const accel = (ctrl.grounded && !pulled ? groundAccel : airAccel) * (glued ? 0.2 : 1);
 
     if (ctrl.lockTicks > 0) {
       ctrl.lockTicks -= 1;
@@ -116,7 +118,7 @@ export function controller(world: World): void {
       const target = input.moveX * speed;
       if (input.moveX > 0 && vx < target) vx = Math.min(target, vx + accel);
       if (input.moveX < 0 && vx > target) vx = Math.max(target, vx - accel);
-    } else if (ctrl.grounded) {
+    } else if (ctrl.grounded && !pulled) {
       // A staggered fighter skids rather than stopping dead, so a blocked swing or clash visibly throws them.
       vx *= stunned ? 0.92 : 0.75;
     }

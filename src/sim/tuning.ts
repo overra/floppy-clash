@@ -69,18 +69,22 @@ export const tuning = {
   lavaDamage: 35,
   lavaCooldownTicks: 30,
 
-  countdownTicks: 120,
-  // 45 sim ticks at 0.3x is ~2.5 s of real time: long enough to savour, short enough not to stall the party.
+  // Between rounds: ~2 s of slow-mo on the last kill (36 ticks at 0.3x), 0.75 s with the scorecard
+  // up at full speed, then a 1.5 s 3-2-1. About 4 s door to door; rounds against bots can be short,
+  // so the gap has to be shorter still.
+  countdownTicks: 90,
   lastKillSlowmo: 0.3,
-  slowmoTicks: 45,
-  scoreboardTicks: 90,
+  slowmoTicks: 36,
+  scoreboardTicks: 45,
 
   cameraPadding: 4,
   cameraLerp: 0.12,
   cameraZoomLerp: 0.08,
 
   ownerGraceTicks: 6,
-  aimHoldAtRestTicks: 12,
+  // After the right stick is released the aim stays put this long (a flick-and-fire lands where the
+  // flick pointed), then the run direction takes it over. Standing still keeps it indefinitely.
+  aimHoldAtRestTicks: 20,
   stickSmoothing: 0.35,
   moveDeadzone: 0.2,
   aimDeadzone: 0.25,

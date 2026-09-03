@@ -76,7 +76,7 @@ export function createSimWorld(opts: CreateSimOptions): SimHandle {
       round: 0,
     }),
     SimClock({ tick: 0, stepScale: 1 }),
-    DropState({ nextDrop: 180, looseCount: 0 }),
+    DropState({ nextDrop: 0, looseCount: 0, wave: 0, waveSize: 0 }),
   );
 
   loadLevel(ecs, opts.level);

@@ -38,8 +38,20 @@ const SWING_HALF_ANGLE_COS = Math.cos((60 * Math.PI) / 180);
 const HOLE_FLIGHT_TICKS = 36;
 const HOLE_HOLD_TICKS = 180;
 const HOLE_KILL_RADIUS = 0.7;
-/** The shooter gets this long to get clear once their own hole opens. */
-const HOLE_OWNER_GRACE_TICKS = 45;
+/** The shooter gets this long to get clear once their own hole opens: untouched by the drag, unswallowed. */
+const HOLE_OWNER_GRACE_TICKS = 60;
+/**
+ * The well's drag on a fighter, in m/s², at the rim and at the centre; it climbs quadratically
+ * between them. Movement is velocity-targeted, so what matters is the drag per tick against the
+ * controller's accel per tick (run 8 m/s over 6 ticks on the ground, 14 in the air): the rim is a
+ * tug you can run out of, from about 2 m in even air control loses, and the core is inescapable.
+ */
+const HOLE_PULL_RIM = 9;
+const HOLE_PULL_CORE = 120;
+/** Inside this fraction of the radius the well also lifts against gravity, plucking fighters off the floor. */
+const HOLE_LIFT_BAND = 0.65;
+/** Loose bodies (guns, crates, corpses) are dragged in harder than fighters and swallowed at the centre. */
+const HOLE_PULL_DEBRIS = 70;
 const BUBBLE_FLIGHT_TICKS = 40;
 const BUBBLE_HOLD_TICKS = 240;
 const BURN_TICKS = 150;
@@ -54,11 +66,12 @@ function ownerOf(entity: Entity): Entity | undefined {
 }
 
 function applyStatus(target: Entity, status: string, ticks: number): void {
-  const current = target.get(Status) ?? { burning: 0, slowed: 0, glued: 0, bubbled: 0 };
+  const current = target.get(Status) ?? { burning: 0, slowed: 0, glued: 0, bubbled: 0, pulled: 0 };
   if (status === 'burn') current.burning = Math.max(current.burning, ticks);
   if (status === 'slow') current.slowed = Math.max(current.slowed, ticks);
   if (status === 'glue') current.glued = Math.max(current.glued, ticks);
   if (status === 'bubble') current.bubbled = Math.max(current.bubbled, ticks);
+  if (status === 'pulled') current.pulled = Math.max(current.pulled, ticks);
   if (target.get(Status)) target.set(Status, current);
   else target.add(Status(current));
 }
@@ -379,8 +392,8 @@ function stepField(world: World, ctx: SimContext, entity: Entity, proj: Projecti
 
   const radius = def.projectile.radius;
   if (hole) {
-    // Everything loose falls in; fighters who reach the centre are gone. The drag on a fighter is a
-    // steep gradient: a tug at the rim you can run out of, a grip near the middle you cannot.
+    // A gravity well: everything loose falls in, fighters are dragged (and near the middle lifted
+    // off the floor) towards a centre that swallows whatever reaches it.
     for (const b of queryBodiesInRadius(world, proj.x, proj.y, radius)) {
       if (b.getType() !== 'dynamic') continue;
       const data = b.getUserData() as FixtureUserData | undefined;
@@ -389,16 +402,31 @@ function stepField(world: World, ctx: SimContext, entity: Entity, proj: Projecti
       const dx = proj.x - p.x;
       const dy = proj.y - p.y;
       const d = Math.hypot(dx, dy) || 0.01;
-      const falloff = Math.max(0, 1 - d / radius);
+      const closeness = Math.max(0, 1 - d / radius);
+      const v = b.getLinearVelocity();
       const isPlayer = e !== undefined && world.has(e) && e.has(Player);
       if (isPlayer) {
-        const braced = e === owner && proj.ownerGrace > 0 ? 0.5 : 1;
-        const pull = (0.03 + 0.6 * falloff * falloff) * braced;
-        const v = b.getLinearVelocity();
-        b.setLinearVelocity(new Vec2(v.x + (dx / d) * pull, v.y + (dy / d) * pull));
+        // The shooter's grace is a head start, not a discount: no drag at all until it lapses.
+        if (e === owner && proj.ownerGrace > 0) continue;
+        const pull = (HOLE_PULL_RIM + (HOLE_PULL_CORE - HOLE_PULL_RIM) * closeness * closeness) * dt;
+        // Inside the lift band gravity is cancelled outright and then some, so a grounded fighter
+        // leaves the floor (where the run can no longer out-muscle the drag) instead of skidding.
+        const band = Math.max(0, 1 - d / (radius * HOLE_LIFT_BAND));
+        const lift = band > 0 ? ctx.tuning.gravity * (1 + 1.5 * band) * dt : 0;
+        b.setLinearVelocity(new Vec2(v.x + (dx / d) * pull, v.y + (dy / d) * pull + lift));
+        applyStatus(e, 'pulled', 2);
       } else {
-        const mag = (def.projectile.explodeImpulse || 14) * 0.4 * falloff * b.getMass();
-        b.applyLinearImpulse(new Vec2((dx / d) * mag, (dy / d) * mag), p);
+        const loose = e !== undefined && world.has(e) && e.has(Weapon) && e.has(Loose);
+        if (d < HOLE_KILL_RADIUS && loose) {
+          ctx.pendingDestroy.push(e);
+          continue;
+        }
+        // Debris does not fight back, so it needs no steep curve, but it must not slingshot through
+        // the middle and out the other side: bleed speed off close in.
+        const pull = HOLE_PULL_DEBRIS * (0.25 + 0.75 * closeness) * dt;
+        const lift = d < radius * HOLE_LIFT_BAND ? ctx.tuning.gravity * dt : 0;
+        const damp = d < 1.2 ? 0.9 : 1;
+        b.setLinearVelocity(new Vec2(v.x * damp + (dx / d) * pull, v.y * damp + (dy / d) * pull + lift));
       }
     }
     world.query(livePlayers).updateEach(([, tr], other) => {

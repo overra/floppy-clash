@@ -31,7 +31,7 @@ test('boots, joins with keyboard, starts a local match vs bots', async ({ page }
     () => false,
   );
   if (!started) await page.getByRole('button', { name: 'Start' }).click();
-  // The countdown only lasts two seconds, so look for it before anything slower.
+  // The countdown only lasts a second and a half, so look for it before anything slower.
   await expect(page.locator('[data-countdown]')).toBeVisible({ timeout: 8_000 });
   const canvas = page.locator('canvas#game');
   await expect(canvas).toBeVisible();

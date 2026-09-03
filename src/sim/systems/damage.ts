@@ -23,6 +23,7 @@ export function damageDeath(world: World): void {
       if (status.slowed > 0) status.slowed -= 1;
       if (status.glued > 0) status.glued -= 1;
       if (status.bubbled > 0) status.bubbled -= 1;
+      if (status.pulled > 0) status.pulled -= 1;
       entity.set(Status, status);
     }
 

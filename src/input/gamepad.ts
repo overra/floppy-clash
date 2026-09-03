@@ -30,13 +30,37 @@ export function radialDeadzone(x: number, y: number, dz: number): { x: number; y
   return { x: (x / mag) * scale, y: (y / mag) * scale };
 }
 
+/** Deflection needed to start a new aim from a resting stick (past the deadzone, which then keeps tracking it). */
+export const AIM_ENGAGE = 0.5;
+
+/**
+ * Right-stick aim with the release transient filtered out. A flicked stick springs back through
+ * centre and overshoots to the far side for a frame or two; taken at face value that lands the aim
+ * on the opposite side just as the attack button goes down. So a fresh aim needs a deliberate push
+ * (`AIM_ENGAGE`), and while tracking, a weak sample pointing the other way is the snap-back, not a
+ * new aim. `prev` is the stick vector this returned last frame; `{0,0}` means at rest, which the sim
+ * turns into "hold the last aim briefly, then face the way you are running" (see applyInputs).
+ */
+export function filterAim(rx: number, ry: number, prev: { x: number; y: number }): { x: number; y: number } {
+  const mag = Math.hypot(rx, ry);
+  if (mag < tuning.aimDeadzone) return { x: 0, y: 0 };
+  const prevMag = Math.hypot(prev.x, prev.y);
+  if (prevMag < 0.01) {
+    if (mag < AIM_ENGAGE) return { x: 0, y: 0 };
+  } else if (mag < AIM_ENGAGE) {
+    const cos = (rx * prev.x + ry * prev.y) / (mag * prevMag);
+    if (cos < -0.5) return { x: 0, y: 0 };
+  }
+  return radialDeadzone(rx, ry, tuning.aimDeadzone);
+}
+
 export function readPad(pad: Gamepad, latch: Latch, lastAim: { x: number; y: number }, map: PadMap = DEFAULT_MAP): PlayerInput {
   const lx = pad.axes[0] ?? 0;
   const ly = pad.axes[1] ?? 0;
   const rx = pad.axes[2] ?? 0;
   const ry = pad.axes[3] ?? 0;
   const move = radialDeadzone(lx, ly, tuning.moveDeadzone);
-  const aim = radialDeadzone(rx, -ry, tuning.aimDeadzone);
+  const aim = filterAim(rx, -ry, lastAim);
   const dpadX = (pad.buttons[15]?.pressed ? 1 : 0) - (pad.buttons[14]?.pressed ? 1 : 0);
   const dpadY = pad.buttons[13]?.pressed;
   const custom = map !== DEFAULT_MAP;
@@ -57,8 +81,9 @@ export function readPad(pad: Gamepad, latch: Latch, lastAim: { x: number; y: num
   if (block) latch.block = true;
   if (thrw) latch.throw = true;
   if (pad.buttons[map.pause]?.pressed) latch.pause = true;
-  const aimX = Math.abs(aim.x) + Math.abs(aim.y) > 0.01 ? aim.x : lastAim.x;
-  const aimY = Math.abs(aim.x) + Math.abs(aim.y) > 0.01 ? aim.y : lastAim.y;
+  // A resting stick is reported as {0,0} on purpose: the sim keeps the last aim for a moment and
+  // then lets the run direction take over, so fists and guns follow the left stick unless the
+  // right stick says otherwise.
   return {
     moveX: clamp(move.x + dpadX, -1, 1),
     jump: latch.jump,
@@ -66,8 +91,8 @@ export function readPad(pad: Gamepad, latch: Latch, lastAim: { x: number; y: num
     attack: latch.attack,
     block: latch.block,
     throw: latch.throw,
-    aimX,
-    aimY,
+    aimX: aim.x,
+    aimY: aim.y,
   };
 }
 

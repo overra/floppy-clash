@@ -84,6 +84,8 @@ type FloppyDebug = {
   /** Loose weapons lying around, for checking what bots are trying to fetch. */
   loose: { x: number; y: number; id: string; cooldown: number }[];
   forceLastStand: () => void;
+  /** Puts a weapon straight into a fighter's hands (browser tests and manual checks of a specific gun). */
+  giveWeapon: (slot: number, id: string) => void;
   freeze: (on: boolean) => void;
   stepTicks: (n: number) => void;
 };
@@ -136,12 +138,8 @@ export function createGame(root: HTMLElement): Game {
   mixer.music = settings.music;
   const loop = createFixedStepLoop(tuning.tickRate);
   const latches: Latch[] = [emptyLatch(), emptyLatch(), emptyLatch(), emptyLatch()];
-  const lastAim = [
-    { x: 1, y: 0 },
-    { x: -1, y: 0 },
-    { x: 1, y: 0 },
-    { x: -1, y: 0 },
-  ];
+  // Last accepted right-stick vector per pad, for the release-transient filter ({0,0} = at rest).
+  const lastAim: { x: number; y: number }[] = [];
   const padEdges: PadEdgeTracker[] = [];
   /**
    * Which device drives each fighter slot in the running match ('keyboard' or 'pad:<index>'),
@@ -651,7 +649,7 @@ export function createGame(root: HTMLElement): Game {
     pads.forEach((pad, i) => {
       if (!pad) return;
       const latch = (latches[i] ??= emptyLatch());
-      const aim = lastAim[i] ?? { x: 1, y: 0 };
+      const aim = lastAim[i] ?? { x: 0, y: 0 };
       const map = padMapFor(pad.id);
       const input = readPad(pad, latch, aim, map);
       // Start is edge-detected below (menus, pause, rematch); the latch would otherwise re-fire.
@@ -837,6 +835,16 @@ export function createGame(root: HTMLElement): Game {
             if (slot !== 0) p.set(Health, { hp: 0, maxHp: p.get(Health)?.maxHp ?? 100 });
           });
         },
+        giveWeapon: (slot: number, id: string) => {
+          if (!sim) return;
+          const p = sim.players().find((e) => e.get(Player)?.slot === slot);
+          const t = p?.get(Transform);
+          if (!p || !t) return;
+          for (const w of sim.ecs.query(Weapon, Held)) {
+            if (w.targetFor(HeldBy) === p) sim.ctx.pendingDestroy.push(w);
+          }
+          spawnWeapon(sim.ecs, id, t.x, t.y, false).add(Held(), HeldBy(p));
+        },
         freeze: (on: boolean) => {
           frozen = on;
           frozenSteps = 0;
@@ -867,11 +875,14 @@ export function createGame(root: HTMLElement): Game {
       return el;
     };
     const bars = mk('hud-bars');
-    const players = mk('hud-players');
+    // The score strip: title / fighter cards / verdict. Between rounds the strip itself grows into
+    // the scorecard (CSS keyed on data-card), so the tally you watched all round is the scoreboard.
+    const top = mk('hud-top');
+    const title = mk('hud-title', top);
+    const players = mk('hud-players', top);
+    const sub = mk('hud-sub', top);
     const count = mk('hud-count');
-    const banner = mk('hud-banner hidden');
     const level = mk('hud-level');
-    const tip = mk('hud-tip');
     const dbg = document.createElement('pre');
     dbg.className = 'hidden';
     dbg.style.cssText =
@@ -879,39 +890,41 @@ export function createGame(root: HTMLElement): Game {
     hudEl.append(dbg);
     return {
       bars,
+      top,
+      title,
       players,
+      sub,
       count,
-      banner,
       level,
-      tip,
       dbg,
       lastCount: -1,
-      lastPlayersKey: '',
-      lastBannerKey: '',
+      /** Which fighters (slot/colour) the cards were built for; cards persist so their CSS transitions play. */
+      lastRoster: '',
+      cards: new Map<number, { card: HTMLElement; face: HTMLElement; tally: HTMLElement; wins: HTMLElement; hp: HTMLElement; crown: HTMLElement | null }>(),
+      lastCardKey: '',
       lastWins: [0, 0, 0, 0],
       goUntil: 0,
       levelUntil: 0,
       lastLevel: '',
-      lastTip: '',
     };
   })();
 
-  /** A finished match's round-over card must not linger in the DOM or flash into the next one. */
+  /** A finished match's scorecard must not linger or flash into the next match. */
   function resetBanner() {
-    hud.banner.classList.add('hidden');
-    hud.banner.innerHTML = '';
-    delete hud.banner.dataset.roundOver;
-    hud.lastBannerKey = '';
+    hud.top.dataset.card = '0';
+    delete hud.top.dataset.roundOver;
+    hud.title.innerHTML = '';
+    hud.sub.textContent = '';
+    hud.lastCardKey = '';
+    hud.lastRoster = '';
+    hud.lastWins = [0, 0, 0, 0];
+    hud.players.innerHTML = '';
+    hud.cards.clear();
   }
 
   function drawHud(frame: ReturnType<typeof buildFrame>) {
     const h = frame.hud;
     const now = performance.now();
-    const tipText = rendererKind === 'gpu' ? 'SDF renderer' : 'Canvas fallback';
-    if (hud.lastTip !== tipText) {
-      hud.tip.textContent = tipText;
-      hud.lastTip = tipText;
-    }
 
     hud.bars.classList.toggle('on', h.slowmo);
 
@@ -946,103 +959,98 @@ export function createGame(root: HTMLElement): Game {
     }
     hud.level.classList.toggle('show', h.countdown > 0 || h.phase === RoundPhase.Scoreboard);
 
-    // Player cards.
+    // Fighter cards. Built once per roster and then updated in place, so the strip's morph into the
+    // scorecard (and back) is one continuous CSS transition rather than a rebuild.
     const plist = h.players ?? [];
     const wins = h.wins ?? [0, 0, 0, 0];
     const firstTo = h.firstTo ?? 0;
-    const key = plist
-      .map((p) => `${p.slot}:${p.color}:${p.alive ? 1 : 0}:${p.crown ? 1 : 0}:${Math.round((p.hp / Math.max(1, p.maxHp)) * 24)}:${wins[p.slot] ?? 0}`)
-      .join('|') + `#${firstTo}${h.showWins ? 'w' : ''}`;
-    if (key !== hud.lastPlayersKey) {
-      hud.lastPlayersKey = key;
+    const over = h.phase === RoundPhase.LastKill || h.phase === RoundPhase.Scoreboard || h.phase === RoundPhase.MatchOver;
+    const winnerSlot = !over ? -1 : h.phase === RoundPhase.MatchOver ? (h.matchWinner ?? -1) : (h.roundWinner ?? -1);
+    const roster = plist.map((p) => `${p.slot}:${p.color}`).join('|') + (h.showWins ? 'w' : '');
+    if (roster !== hud.lastRoster) {
+      hud.lastRoster = roster;
       hud.players.innerHTML = '';
+      hud.cards.clear();
       for (const p of plist) {
         const card = document.createElement('div');
         card.className = 'hud-p';
         card.style.setProperty('--c', p.color);
-        card.dataset.alive = p.alive ? '1' : '0';
         card.dataset.slot = String(p.slot);
         const face = document.createElement('div');
         face.className = 'hud-face';
-        if (p.crown) {
-          const crown = document.createElement('i');
-          crown.className = 'hud-crown';
-          face.append(crown);
-        }
         card.append(face);
-        if (h.showWins) {
-          const tally = document.createElement('div');
-          tally.className = 'hud-tally';
-          const n = Math.max(firstTo, wins[p.slot] ?? 0, 1);
-          for (let i = 0; i < Math.min(n, 10); i++) {
-            const dot = document.createElement('i');
-            if (i < (wins[p.slot] ?? 0)) {
-              dot.className = 'on' + (i === (wins[p.slot] ?? 0) - 1 && (hud.lastWins[p.slot] ?? 0) < (wins[p.slot] ?? 0) ? ' pop' : '');
-            }
-            tally.append(dot);
-          }
-          card.append(tally);
-        }
+        const tally = document.createElement('div');
+        tally.className = 'hud-tally';
+        const winsEl = document.createElement('div');
+        winsEl.className = 'hud-wins';
+        if (h.showWins) card.append(tally, winsEl);
         const hp = document.createElement('div');
         hp.className = 'hud-hp';
-        const fill = document.createElement('i');
-        fill.style.width = `${Math.max(0, Math.min(1, p.hp / Math.max(1, p.maxHp))) * 100}%`;
-        hp.append(fill);
+        hp.append(document.createElement('i'));
         card.append(hp);
         const name = document.createElement('div');
         name.className = 'hud-name';
         name.textContent = slotName(p.slot).toUpperCase();
         card.append(name);
         hud.players.append(card);
+        hud.cards.set(p.slot, { card, face, tally, wins: winsEl, hp: hp.firstElementChild as HTMLElement, crown: null });
       }
-      hud.lastWins = wins.slice();
     }
+    for (const p of plist) {
+      const c = hud.cards.get(p.slot);
+      if (!c) continue;
+      c.card.dataset.alive = p.alive ? '1' : '0';
+      c.card.dataset.winner = p.slot === winnerSlot ? '1' : '0';
+      if (p.crown && !c.crown) {
+        c.crown = document.createElement('i');
+        c.crown.className = 'hud-crown';
+        c.face.append(c.crown);
+      } else if (!p.crown && c.crown) {
+        c.crown.remove();
+        c.crown = null;
+      }
+      c.hp.style.width = `${Math.max(0, Math.min(1, p.hp / Math.max(1, p.maxHp))) * 100}%`;
+      if (h.showWins) {
+        const w = wins[p.slot] ?? 0;
+        const n = Math.min(Math.max(firstTo, w, 1), 10);
+        while (c.tally.childElementCount < n) c.tally.append(document.createElement('i'));
+        while (c.tally.childElementCount > n) c.tally.lastElementChild?.remove();
+        const gained = (hud.lastWins[p.slot] ?? 0) < w;
+        Array.from(c.tally.children).forEach((dot, i) => {
+          dot.classList.toggle('on', i < w);
+          // The freshly earned pip pops; the class stays until the next change so the animation completes.
+          if (gained) dot.classList.toggle('pop', i === w - 1);
+        });
+        c.wins.textContent = String(w);
+      }
+    }
+    hud.lastWins = wins.slice();
 
-    // Round / match banner.
-    const over = h.phase === RoundPhase.LastKill || h.phase === RoundPhase.Scoreboard || h.phase === RoundPhase.MatchOver;
-    const bannerKey = over ? `${h.phase}:${h.roundWinner ?? -1}:${h.matchWinner ?? -1}:${wins.join(',')}` : '';
-    if (bannerKey !== hud.lastBannerKey) {
-      hud.lastBannerKey = bannerKey;
-      hud.banner.classList.toggle('hidden', !over);
+    // Between rounds the strip becomes the scorecard: title above, verdict below, winner ringed.
+    hud.top.dataset.card = over ? '1' : '0';
+    if (over) hud.top.dataset.roundOver = '1';
+    else delete hud.top.dataset.roundOver;
+    const cardKey = over ? `${h.phase}:${winnerSlot}:${h.matchWinner ?? -1}` : '';
+    if (cardKey !== hud.lastCardKey) {
+      hud.lastCardKey = cardKey;
+      // Leaving card mode keeps the old text in place: it collapses out of view, no blank box.
       if (over) {
-        hud.banner.dataset.roundOver = '1';
-        hud.banner.innerHTML = '';
-        const winnerSlot = h.phase === RoundPhase.MatchOver ? (h.matchWinner ?? -1) : (h.roundWinner ?? -1);
+        hud.title.innerHTML = '';
         const winner = plist.find((p) => p.slot === winnerSlot);
-        hud.banner.style.setProperty('--c', winner?.color ?? '#f4f1ea');
-        const title = document.createElement('h2');
+        hud.top.style.setProperty('--c', winner?.color ?? '#f4f1ea');
         const small = document.createElement('small');
         small.textContent =
           h.phase === RoundPhase.MatchOver ? 'Match over' : h.phase === RoundPhase.LastKill ? 'Last one standing' : 'Round over';
-        title.append(small);
-        title.append(
-          document.createTextNode(
-            winner
-              ? h.phase === RoundPhase.MatchOver
-                ? `${slotName(winnerSlot)} wins the match`
-                : `${slotName(winnerSlot)} takes it`
-              : h.phase === RoundPhase.MatchOver
-                ? 'Match over'
-                : 'Everybody dies',
-          ),
-        );
-        hud.banner.append(title);
-        if (h.showWins) {
-          const score = document.createElement('div');
-          score.className = 'hud-score';
-          for (const p of plist) {
-            const cell = document.createElement('div');
-            cell.style.setProperty('--c', p.color);
-            const face = document.createElement('div');
-            face.className = 'hud-face';
-            cell.append(face);
-            cell.append(document.createTextNode(String(wins[p.slot] ?? 0)));
-            score.append(cell);
-          }
-          hud.banner.append(score);
-        }
-        const sub = document.createElement('p');
-        sub.textContent =
+        const big = document.createElement('b');
+        big.textContent = winner
+          ? h.phase === RoundPhase.MatchOver
+            ? `${slotName(winnerSlot)} wins the match`
+            : `${slotName(winnerSlot)} takes it`
+          : h.phase === RoundPhase.MatchOver
+            ? 'Match over'
+            : 'Everybody dies';
+        hud.title.append(small, big);
+        hud.sub.textContent =
           h.phase === RoundPhase.MatchOver
             ? isPadKey(slotDevices[0] ?? '')
               ? 'Start — rematch · Select — menu'
@@ -1050,9 +1058,6 @@ export function createGame(root: HTMLElement): Game {
             : firstTo
               ? `First to ${firstTo}`
               : 'Next level incoming';
-        hud.banner.append(sub);
-      } else {
-        delete hud.banner.dataset.roundOver;
       }
     }
 
@@ -1115,7 +1120,8 @@ export function createGame(root: HTMLElement): Game {
     adoptCanvas(gpuCanvas);
     renderer = gpu;
     rendererKind = 'gpu';
-    menus.notice = 'SDF renderer';
+    // The normal case needs no label; the notice is for things worth knowing (fallbacks, odd pads).
+    if (menus.notice.startsWith('Canvas fallback')) menus.notice = '';
     if (menus.screen !== 'play') show();
   }
 
@@ -1253,8 +1259,6 @@ export function createGame(root: HTMLElement): Game {
         for (const el of menusEl.querySelectorAll('.pad-focus')) el.classList.remove('pad-focus');
       });
       renderer = createCanvasRenderer(canvas);
-      menus.notice = 'Canvas fallback';
-      if (menus.screen !== 'play') show();
       bindDebug();
       if ('serviceWorker' in navigator) {
         if (import.meta.env.PROD) void navigator.serviceWorker.register('/sw.js');

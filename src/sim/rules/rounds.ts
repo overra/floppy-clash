@@ -2,6 +2,7 @@ import { createQuery, type World } from 'koota';
 import { emit, getContext } from '../context';
 import { Crown, Dead, MatchState, Player, RoundPhase, RoundState } from '../traits';
 import { nextMatchLevel, respawnPlayers } from '../systems/reset';
+import { openDrops } from './spawner';
 
 const playersQ = createQuery(Player);
 
@@ -34,6 +35,7 @@ export function rules(world: World): void {
     if (round.ticks >= ctx.tuning.countdownTicks) {
       round.phase = RoundPhase.Fighting;
       round.ticks = 0;
+      openDrops(world);
       emit(world, { type: 'round-phase', phase: 'fighting' });
     }
   } else if (round.phase === RoundPhase.Fighting) {

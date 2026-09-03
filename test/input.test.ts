@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { radialDeadzone } from '../src/input/gamepad';
 import { rising } from '../src/sim/input';
 import { Aim, Controller, Player } from '../src/sim/traits';
+import { tuning } from '../src/sim/tuning';
 import { assignColors, canStartMatch, clearSeats, createMenuState, cycleSeatColor, maxBots, takeOrReadySeat, takeSeat } from '../src/ui/menus';
 import { hold, makeSim, playerOf } from './helpers';
 
@@ -18,18 +19,26 @@ describe('input', () => {
     expect(v.x).toBeCloseTo(1);
   });
 
-  it('holds aim then falls back to facing', () => {
+  it('holds aim after the stick rests, then the run direction takes it over', () => {
     const sim = makeSim({ seed: 3, settings: { playerCount: 1 } });
     const p = playerOf(sim);
     sim.step([hold({ aimX: 1, aimY: 0 }), hold({}), hold({}), hold({})]);
     expect(p.get(Aim)?.x).toBeGreaterThan(0.5);
-    for (let i = 0; i < 12; i++) {
-      sim.step([hold({ aimX: 0, aimY: 0 }), hold({}), hold({}), hold({})]);
+    // Flick-and-fire window: running the other way inside the hold does not steal the aim...
+    for (let i = 0; i < tuning.aimHoldAtRestTicks; i++) {
+      sim.step([hold({ aimX: 0, aimY: 0, moveX: -1 }), hold({}), hold({}), hold({})]);
+      expect(p.get(Aim)?.x).toBeGreaterThan(0.5);
     }
-    expect(p.get(Aim)?.x).toBeGreaterThan(0.5);
+    // ...but once it lapses, fists follow the left stick.
     sim.step([hold({ aimX: 0, aimY: 0, moveX: -1 }), hold({}), hold({}), hold({})]);
     expect(p.get(Aim)?.x).toBeLessThan(0);
     expect(p.get(Controller)?.facing).toBe(-1);
+    // Standing still keeps whatever the aim was.
+    for (let i = 0; i < 90; i++) sim.step([hold({ aimX: 0, aimY: 0 }), hold({}), hold({}), hold({})]);
+    expect(p.get(Aim)?.x).toBeLessThan(0);
+    // A deflected stick overrides the run direction: fighting while backing away.
+    sim.step([hold({ aimX: 1, aimY: 0, moveX: -1 }), hold({}), hold({}), hold({})]);
+    expect(p.get(Aim)?.x).toBeGreaterThan(0.5);
   });
 });
 

@@ -102,11 +102,13 @@ export const Anchor = trait({ x: 0, y: 0 });
 /** Render-facing geometry of the body's main fixture (derived, never authored). kind: ShapeKind. */
 export const Shape = trait({ kind: 0, hx: 0.5, hy: 0.5, r: 0 });
 export const Lifetime = trait({ ticksLeft: 0 });
+/** Ticks left on each affliction. pulled: in a void well's grip, so footing counts for nothing (controller.ts). */
 export const Status = trait({
   burning: 0,
   slowed: 0,
   glued: 0,
   bubbled: 0,
+  pulled: 0,
 });
 /** grace: ticks during which a freshly fired snake ignores whoever shot it (and sails ballistically while high). */
 export const Snake = trait({ hp: 0, giant: 0, flying: 0, biteCooldown: 0, grace: 0 });
@@ -177,7 +179,8 @@ export const MatchState = trait({
 });
 
 export const SimClock = trait({ tick: 0, stepScale: 1 });
-export const DropState = trait({ nextDrop: 0, looseCount: 0 });
+/** Weapon rain: `wave` counts the opening volley still to fall (one per fighter, see spawner.ts). */
+export const DropState = trait({ nextDrop: 0, looseCount: 0, wave: 0, waveSize: 0 });
 
 export const RoundPhase = {
   Loading: 0,

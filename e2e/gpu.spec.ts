@@ -3,7 +3,7 @@ import { expect, test } from '@playwright/test';
 test('GPU renderer initialises or the fallback notice is shown', async ({ page }) => {
   await page.goto('/');
   await expect(page.getByRole('heading', { name: 'Floppy Clash' })).toBeVisible();
-  await expect(page.locator('.notice').first()).toHaveText(/SDF renderer|Canvas fallback/, { timeout: 15_000 });
+  // A working GPU renderer says nothing; only a fallback earns a notice, and it says why.
   await page.getByRole('button', { name: 'Solo vs Bots' }).click();
   await expect(page.getByRole('heading', { name: 'Join' })).toBeVisible();
   await page.keyboard.press('Enter');
@@ -32,5 +32,11 @@ test('GPU renderer initialises or the fallback notice is shown', async ({ page }
   });
   expect(sample.ok).toBeTruthy();
   expect(sample.colored).toBeGreaterThan(0);
+  if (sample.kind === 'canvas') {
+    await page.keyboard.press('Escape');
+    await expect(page.locator('.notice').first()).toHaveText(/Canvas fallback/, { timeout: 15_000 });
+  } else {
+    await expect(page.locator('.notice')).toHaveCount(0);
+  }
   await page.screenshot({ path: 'test-results/gpu-xvfb.png', fullPage: true });
 });

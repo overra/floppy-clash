@@ -104,7 +104,7 @@ export function respawnPlayers(world: World): void {
       });
     }
     const status = player.get(Status);
-    if (status) player.set(Status, { burning: 0, slowed: 0, glued: 0, bubbled: 0 });
+    if (status) player.set(Status, { burning: 0, slowed: 0, glued: 0, bubbled: 0, pulled: 0 });
     // A new arena means a new nav graph: forget the old surface, target and grudges.
     const bot = player.get(Bot);
     if (bot) player.set(Bot, { ...bot, mode: 0, timer: 0, target: -1, surf: -1, detour: 0, blocked: 0, shunned: -1, shunTicks: 0 });

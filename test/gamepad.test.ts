@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { consumeLatch, createPadEdgeTracker, emptyLatch, isPadKey, padIndexOf, padKey, padLabel, radialDeadzone, readPad } from '../src/input/gamepad';
+import { consumeLatch, createPadEdgeTracker, emptyLatch, filterAim, isPadKey, padIndexOf, padKey, padLabel, radialDeadzone, readPad } from '../src/input/gamepad';
 
 function fakePad(partial: { id?: string; mapping?: GamepadMappingType; axes?: number[]; buttons?: boolean[] }): Gamepad {
   const buttons = (partial.buttons ?? []).map((pressed) => ({
@@ -84,6 +84,36 @@ describe('gamepad mapping', () => {
       { x: 1, y: 0 },
     );
     expect(ff.jump).toBe(false);
+  });
+
+  it('reports a resting right stick as {0,0} so the sim can hand the aim to the run direction', () => {
+    const idle = readPad(fakePad({ axes: [0, 0, 0, 0] }), emptyLatch(), { x: 1, y: 0 });
+    expect(idle.aimX).toBe(0);
+    expect(idle.aimY).toBe(0);
+    const up = readPad(fakePad({ axes: [0, 0, 0, -0.9] }), emptyLatch(), { x: 0, y: 0 });
+    expect(up.aimY).toBeGreaterThan(0.5);
+  });
+
+  it('ignores the spring-back of a released flick instead of aiming the other way', () => {
+    // A flick right, released: the stick snaps through centre and overshoots left for a frame or two.
+    const trace = [0.9, 0.95, 0.5, -0.1, -0.35, -0.15, 0];
+    let prev = { x: 0, y: 0 };
+    const seen: number[] = [];
+    for (const rx of trace) {
+      const input = readPad(fakePad({ axes: [0, 0, rx, 0] }), emptyLatch(), prev);
+      prev = { x: input.aimX, y: input.aimY };
+      seen.push(input.aimX);
+    }
+    expect(seen[0]).toBeGreaterThan(0.5);
+    expect(seen.some((x) => x < 0)).toBe(false);
+    // Same story when sampling skips the centre entirely: +0.3 straight to -0.35 is not a new aim.
+    expect(filterAim(-0.35, 0, { x: 0.07, y: 0 })).toEqual({ x: 0, y: 0 });
+    // A deliberate push the other way is, even from rest.
+    expect(filterAim(-0.9, 0, { x: 0, y: 0 }).x).toBeLessThan(-0.5);
+    // A weak nudge from rest is not enough to start aiming (the overshoot lives here)...
+    expect(filterAim(0.4, 0, { x: 0, y: 0 })).toEqual({ x: 0, y: 0 });
+    // ...but once engaged, the aim keeps tracking a moderate roll around the rim.
+    expect(filterAim(0.3, 0.3, { x: 0.4, y: 0 }).y).toBeGreaterThan(0);
   });
 
   it('honours a custom remap', () => {
