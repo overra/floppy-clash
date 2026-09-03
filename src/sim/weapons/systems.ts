@@ -83,7 +83,7 @@ function spawnBullet(
     def.projectile.kind === 'field' ||
     def.projectile.kind === 'creature' ||
     def.projectile.kind === 'burst-into';
-  if (needsBody) {
+  if (needsBody && def.projectile.radius > 0) {
     proj.add(Transform({ x, y, angle: 0 }), PrevTransform({ x, y, angle: 0 }));
     const body = createBoxBody(
       ctx.physics,
@@ -91,8 +91,8 @@ function spawnBullet(
       'projectile',
       x,
       y,
-      Math.max(0.12, def.projectile.radius * 0.35),
-      Math.max(0.12, def.projectile.radius * 0.35),
+      def.projectile.radius * 0.35,
+      def.projectile.radius * 0.35,
       'dynamic',
       { density: 0.4, friction: 0.2, restitution: def.projectile.bounce > 0 ? 0.55 : 0.05, bullet: true, fixedRotation: false },
     );

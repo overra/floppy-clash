@@ -64,6 +64,7 @@ export function applyExplosion(
   impulse: number,
   onBody?: (body: Body, falloff: number) => void,
 ): void {
+  if (radius <= 0) return;
   const bodies = queryBodiesInRadius(world, x, y, radius);
   for (const body of bodies) {
     if (body.getType() === 'static') {

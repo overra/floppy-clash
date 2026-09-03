@@ -3,7 +3,7 @@ import type { Entity } from 'koota';
 import { Circle } from 'planck';
 import { createClientView } from '../src/net/clientView';
 import { getLevel } from '../src/levels/catalog';
-import { DYNAMIC_APPENDIX_D_KINDS, lateJoinBodySpec } from '../src/sim/hazards/lateJoin';
+import { applyBodyShapeToSpec, DYNAMIC_APPENDIX_D_KINDS, lateJoinBodySpec } from '../src/sim/hazards/lateJoin';
 import { destroyBody } from '../src/sim/physics/bodies';
 import { restoreWorld, serializeWorld } from '../src/sim/snapshot';
 import { Destructible, Hazard, HazardKind, NetId, PhysBody, SpawnPoint, Static, Transform } from '../src/sim/traits';
@@ -202,6 +202,38 @@ describe('lateJoinBodySpec Appendix D materials', () => {
         HazardKind.Collapsing,
       ].sort((a, b) => a - b),
     );
+  });
+
+  it('param 0 is zero size when BodyShape is missing (not create-default)', () => {
+    const crate = lateJoinBodySpec(HazardKind.Crate, emptyHz, liveFlags);
+    expect(crate.hx).toBe(0);
+    expect(crate.hy).toBe(0);
+    const ball = lateJoinBodySpec(HazardKind.Spikeball, emptyHz, liveFlags);
+    expect(ball.radius).toBe(0);
+    const spikes = lateJoinBodySpec(HazardKind.Spikes, emptyHz, liveFlags);
+    expect(spikes.hx).toBe(0);
+    const authored = lateJoinBodySpec(
+      HazardKind.Crate,
+      { param0: 2, param1: 1, param2: 0, param3: 0 },
+      liveFlags,
+    );
+    expect(authored.hx).toBeCloseTo(1, 5);
+    expect(authored.hy).toBeCloseTo(0.5, 5);
+  });
+
+  it('BodyShape 0 overrides reconstructed size (0 is not ignored)', () => {
+    const spec = lateJoinBodySpec(
+      HazardKind.Crate,
+      { param0: 2, param1: 1, param2: 0, param3: 0 },
+      liveFlags,
+    );
+    expect(spec.hx).toBeCloseTo(1, 5);
+    const zero = applyBodyShapeToSpec(spec, { circle: 0, hx: 0, hy: 0, radius: 0 });
+    expect(zero.hx).toBe(0);
+    expect(zero.hy).toBe(0);
+    const circle = applyBodyShapeToSpec(spec, { circle: 1, hx: 0, hy: 0, radius: 0 });
+    expect(circle.shape).toBe('circle');
+    expect(circle.radius).toBe(0);
   });
 
   it.each(cases)('$name is not a generic density-1 box', (row) => {

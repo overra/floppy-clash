@@ -29,6 +29,7 @@ import { weaponByIndex } from './defs';
 import { explodeDamageAt, rollIfRanged } from './mapping';
 import type { FixtureUserData } from '../physics/categories';
 import { playerCrossesBeam } from '../hazards/laser';
+import { authored } from '../authored';
 
 const bullets = createQuery(Projectile);
 const heldWeapons = createQuery(Weapon);
@@ -189,12 +190,13 @@ function bounceOffShield(
 
 function explode(world: World, x: number, y: number, defId: number, owner?: Entity, rolledDamage?: number): void {
   const def = weaponByIndex(defId);
-  const radius = def.projectile.radius || 2;
+  const radius = authored(def.projectile.radius, 2);
+  const impulse = authored(def.projectile.explodeImpulse, 8);
   const reported =
     def.projectile.explodeDamageMax ??
     (def.projectile.explodeDamage || rolledDamage || def.projectile.damage);
   emit(world, { type: 'explosion', x, y, radius, damage: reported });
-  applyExplosion(world, x, y, radius, def.projectile.explodeImpulse || 8, (body, falloff) => {
+  applyExplosion(world, x, y, radius, impulse, (body, falloff) => {
     const data = body.getUserData() as FixtureUserData | undefined;
     if (!data) return;
     const target = data.entity as Entity;
@@ -226,7 +228,7 @@ function explode(world: World, x: number, y: number, defId: number, owner?: Enti
 
 export function spawnSnake(world: World, x: number, y: number, owner: Entity | undefined, giant: boolean, flying: boolean): void {
   const ctx = getContext(world);
-  const hp = (ctx.settings.maxHp || 100) * (giant ? 2 : 1);
+  const hp = authored(ctx.settings.maxHp, 100) * (giant ? 2 : 1);
   const snake = world.spawn(
     Snake({ hp, giant: giant ? 1 : 0, flying: flying ? 1 : 0, biteCooldown: 0 }),
     Health({ hp, maxHp: hp }),
@@ -256,7 +258,11 @@ export function projectiles(world: World): void {
     if (proj.kind === ProjectileKind.Melee) {
       const aim = owner?.get(Aim);
       const ot = owner?.get(Transform);
-      const reach = def.projectile.radius || 0.7;
+      const reach = authored(def.projectile.radius, 0.7);
+      if (reach <= 0) {
+        ctx.pendingDestroy.push(entity);
+        return;
+      }
       if (aim && ot) {
         // PLAN 4.9 / Appendix C: short arc in front of the wielder, not a full disk.
         world.query(Player, Transform, Not(Dead)).updateEach(([_p, pt], other) => {
@@ -287,8 +293,12 @@ export function projectiles(world: World): void {
     }
 
     if (proj.kind === ProjectileKind.Beam) {
-      const warn = def.projectile.warningTicks || 0;
-      const life = def.projectile.beamTicks || 2;
+      const warn = authored(def.projectile.warningTicks, 0);
+      const life = authored(def.projectile.beamTicks, 2);
+      if (warn + life <= 0) {
+        ctx.pendingDestroy.push(entity);
+        return;
+      }
       if (proj.fuse <= 0) proj.fuse = warn + life;
       const remaining = proj.fuse;
       proj.fuse -= 1;

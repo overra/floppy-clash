@@ -1,21 +1,28 @@
 import { describe, expect, it } from 'vitest';
 import { getLevel } from '../src/levels/catalog';
 import { woodsClearing } from '../src/levels/handauthored';
+import { authored } from '../src/sim/authored';
 import { diskSweepsPlayer } from '../src/sim/hazards/common';
 import { crusherOverlaps } from '../src/sim/hazards/crusher';
 import { lavaSweepsPlayer } from '../src/sim/hazards/lava';
 import { sawOverlaps } from '../src/sim/hazards/saw';
+import { applyExplosion } from '../src/sim/physics/queries';
+import { inMeleeArc } from '../src/sim/weapons/projectiles';
 import { weaponIndex } from '../src/sim/weapons/defs';
 import { nextMatchLevel } from '../src/sim/systems/reset';
 import {
+  Aim,
   Dead,
   Hazard,
   HazardKind,
   Health,
   MatchState,
+  OwnedBy,
   PhysBody,
   Player,
   PrevTransform,
+  Projectile,
+  ProjectileKind,
   RoundPhase,
   RoundState,
   Transform,
@@ -1105,6 +1112,185 @@ describe('honest PLAN stand-ins (no pin/pred OR, no scoreboard shrink)', () => {
     });
     expect(defId).toBe(weaponIndex('fists'));
     expect(defId).toBe(0);
+  });
+
+  it('authored keeps live 0 and only fills undefined', () => {
+    expect(authored(0, 2)).toBe(0);
+    expect(authored(0, 8)).toBe(0);
+    expect(authored(0, 0.7)).toBe(0);
+    expect(authored(undefined, 2)).toBe(2);
+    expect(authored(undefined, 8)).toBe(8);
+    expect(authored(undefined, 0.7)).toBe(0.7);
+  });
+
+  it('explosion radius 0 / impulse 0 do not substitute 2 / 8', () => {
+    const sim = makeSim({ seed: 176, settings: { playerCount: 2 } });
+    const a = playerOf(sim, 0);
+    const b = playerOf(sim, 1);
+    pin(sim, a, 10, 5);
+    pin(sim, b, 11.2, 5);
+    const hpA = a.get(Health)?.hp ?? 100;
+    const hpB = b.get(Health)?.hp ?? 100;
+    const vx0 = sim.ctx.bodies.get(b)?.getLinearVelocity().x ?? 0;
+    applyExplosion(sim.ecs, 10, 5, authored(0, 2), authored(0, 8), () => {
+      throw new Error('0-radius blast must not touch bodies');
+    });
+    expect(a.get(Health)?.hp ?? 0).toBe(hpA);
+    expect(b.get(Health)?.hp ?? 0).toBe(hpB);
+    expect(Math.abs((sim.ctx.bodies.get(b)?.getLinearVelocity().x ?? 0) - vx0)).toBeLessThan(0.05);
+  });
+
+  it('a melee projectile with catalog radius 0 does not use || 0.7', () => {
+    expect(inMeleeArc(10, 5, 1, 0, 10.5, 5, authored(0, 0.7))).toBe(false);
+    expect(inMeleeArc(10, 5, 1, 0, 10.5, 5, 0.7)).toBe(true);
+    const sim = makeSim({ seed: 177, settings: { playerCount: 2 } });
+    const a = playerOf(sim, 0);
+    const b = playerOf(sim, 1);
+    pin(sim, a, 10, 5);
+    pin(sim, b, 10.5, 5);
+    a.set(Aim, { x: 1, y: 0, holdTicks: 1 });
+    sim.ecs.spawn(
+      Projectile({
+        kind: ProjectileKind.Melee,
+        damage: 40,
+        speed: 0,
+        bounces: 0,
+        fuse: 0,
+        x: 10,
+        y: 5,
+        vx: 0,
+        vy: 0,
+        gravity: 0,
+        ownerGrace: 0,
+        defId: weaponIndex('pistol'),
+      }),
+      OwnedBy(a),
+    );
+    const hp = b.get(Health)?.hp ?? 100;
+    sim.step([hold({}), hold({}), hold({}), hold({})]);
+    expect(b.get(Health)?.hp ?? 0).toBe(hp);
+    expect(b.has(Dead)).toBe(false);
+  });
+
+  it('a beam with catalog beamTicks 0 does not use || 2', () => {
+    const sim = makeSim({ seed: 178, settings: { playerCount: 2 } });
+    const a = playerOf(sim, 0);
+    const b = playerOf(sim, 1);
+    pin(sim, a, 8, 5);
+    pin(sim, b, 14, 5);
+    a.set(Aim, { x: 1, y: 0, holdTicks: 1 });
+    sim.ecs.spawn(
+      Projectile({
+        kind: ProjectileKind.Beam,
+        damage: 40,
+        speed: 0,
+        bounces: 0,
+        fuse: 0,
+        x: 8,
+        y: 5,
+        vx: 0,
+        vy: 0,
+        gravity: 0,
+        ownerGrace: 0,
+        defId: weaponIndex('pistol'),
+      }),
+      OwnedBy(a),
+    );
+    const hp = b.get(Health)?.hp ?? 100;
+    for (let i = 0; i < 4; i++) sim.step([hold({}), hold({}), hold({}), hold({})]);
+    expect(b.get(Health)?.hp ?? 0).toBe(hp);
+    expect(b.has(Dead)).toBe(false);
+  });
+
+  it('a laser with param3 = 0 does not fire a 14 m beam', () => {
+    const sim = makeSim({
+      level: {
+        ...getLevel('test-laser'),
+        id: 'laser-zero-reach',
+        objects: [
+          { type: 'solid' as const, x: 12, y: 1, w: 24, h: 2 },
+          { type: 'laser' as const, x: 2, y: 7, onTicks: 80, offTicks: 1, warningTicks: 0 },
+        ],
+      },
+      seed: 179,
+      settings: { playerCount: 1 },
+    });
+    const p = playerOf(sim);
+    sim.ecs.query(Hazard).updateEach(([hz]) => {
+      if (hz.kind === HazardKind.Laser) hz.param3 = 0;
+    });
+    pin(sim, p, 8, 7);
+    sim.step([hold({}), hold({}), hold({}), hold({})]);
+    expect(p.has(Dead)).toBe(false);
+    expect(p.get(Health)?.hp ?? 1).toBeGreaterThan(0);
+  });
+
+  it('an omitted laser length still defaults to 14 at create', () => {
+    const sim = makeSim({
+      level: {
+        ...getLevel('test-laser'),
+        id: 'laser-omit-reach',
+        objects: [
+          { type: 'solid' as const, x: 12, y: 1, w: 24, h: 2 },
+          { type: 'laser' as const, x: 2, y: 7, onTicks: 80, offTicks: 1, warningTicks: 0 },
+        ],
+      },
+      seed: 180,
+      settings: { playerCount: 1 },
+    });
+    let reach = -1;
+    sim.ecs.query(Hazard).updateEach(([hz]) => {
+      if (hz.kind === HazardKind.Laser) reach = hz.param3;
+    });
+    expect(reach).toBe(14);
+    const p = playerOf(sim);
+    pin(sim, p, 8, 7);
+    sim.step([hold({}), hold({}), hold({}), hold({})]);
+    expect(p.has(Dead) || (p.get(Health)?.hp ?? 1) <= 0).toBe(true);
+  });
+
+  it('spikes kill across the authored bed, not only 0.7 from center', () => {
+    const sim = makeSim({
+      level: {
+        ...getLevel('test-spikes'),
+        id: 'spikes-wide-bed',
+        objects: [
+          { type: 'solid' as const, x: 12, y: 1, w: 24, h: 2 },
+          { type: 'spikes' as const, x: 12, y: 6, w: 6, dir: 'up' as const },
+        ],
+      },
+      seed: 181,
+      settings: { playerCount: 1 },
+    });
+    const p = playerOf(sim);
+    // 2.2 m from center: outside 0.7+0.3, inside authored half-width 3.
+    pin(sim, p, 14.2, 6);
+    sim.step([hold({}), hold({}), hold({}), hold({})]);
+    expect(p.has(Dead)).toBe(true);
+    expect(p.get(Health)?.hp ?? 1).toBeLessThanOrEqual(0);
+  });
+
+  it('spikes with param0 = 0 do not kill at the old 0.7 center reach', () => {
+    const sim = makeSim({
+      level: {
+        ...getLevel('test-spikes'),
+        id: 'spikes-zero-w',
+        objects: [
+          { type: 'solid' as const, x: 12, y: 1, w: 24, h: 2 },
+          { type: 'spikes' as const, x: 12, y: 6, w: 4, dir: 'up' as const },
+        ],
+      },
+      seed: 182,
+      settings: { playerCount: 1 },
+    });
+    const p = playerOf(sim);
+    sim.ecs.query(Hazard).updateEach(([hz]) => {
+      if (hz.kind === HazardKind.Spikes) hz.param0 = 0;
+    });
+    pin(sim, p, 12, 6);
+    sim.step([hold({}), hold({}), hold({}), hold({})]);
+    expect(p.has(Dead)).toBe(false);
+    expect(p.get(Health)?.hp ?? 1).toBeGreaterThan(0);
   });
 
   it('createSimWorld without boxes does not dump M0 crates onto a match arena', () => {

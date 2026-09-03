@@ -234,8 +234,8 @@ export function buildFrame(
       fx,
       primitives,
     });
-    if (hz.kind === HazardKind.Laser && hz.armed >= 1) {
-      const reach = hz.param3 || 14;
+    if (hz.kind === HazardKind.Laser && hz.armed >= 1 && hz.param3 > 0) {
+      const reach = hz.param3;
       const ang = t.angle;
       const x2 = x + Math.cos(ang) * reach;
       const y2 = y + Math.sin(ang) * reach;
@@ -512,7 +512,7 @@ export function buildFrame(
     if (def.id !== 'black-hole') return;
     const life = 180;
     const age = Math.max(0, life - Math.max(p.fuse, 0));
-    const radius = Math.max(0.8, (def.projectile.radius || 4.5) * (0.2 + 0.8 * Math.min(1, age / life)));
+    const radius = def.projectile.radius * (0.2 + 0.8 * Math.min(1, age / life));
     hole.x = p.x;
     hole.y = p.y;
     hole.r = radius;

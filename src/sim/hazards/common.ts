@@ -84,6 +84,8 @@ export function paramsFromObject(obj: LevelObject): {
       };
     case 'platform.momentum':
       return { param0: obj.w ?? 4, param1: obj.h ?? 0.6, param2: obj.x, param3: obj.y };
+    case 'spikes':
+      return { param0: obj.w ?? 2, param1: 0, param2: 0, param3: 0 };
     case 'crate':
     case 'barrel.explosive':
       return { param0: obj.w ?? 2, param1: obj.h ?? 1, param2: 0, param3: 0 };

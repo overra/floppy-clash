@@ -162,7 +162,9 @@ export const laser: HazardModule = {
     else hz.armed = 0;
 
     if (hz.armed !== 1) return;
-    const reach = hz.param3 > 0 ? hz.param3 : 14;
+    // param3 is authored beam length (default 14 at create). Live 0 stays 0.
+    const reach = hz.param3;
+    if (reach <= 0) return;
     const ang = tr.angle;
     const x2 = tr.x + Math.cos(ang) * reach;
     const y2 = tr.y + Math.sin(ang) * reach;

@@ -36,7 +36,13 @@ export function hazardsStep(world: World): void {
       const dy = Math.abs(pt.y - ht.y);
       const hung = hz.kind === HazardKind.Chain && hz.param3 === 1;
       // param0 is authored deck width. 0 means no extra hang reach — do not `|| 2.8`.
-      const reach = hung ? Math.max(2.2, hz.param0 / 2 + 0.5) : 1.6;
+      const bed =
+        hz.kind === HazardKind.Spikes
+          ? hz.param0 / 2
+          : hz.kind === HazardKind.Lava
+            ? hz.param1
+            : 0;
+      const reach = hung ? Math.max(2.2, hz.param0 / 2 + 0.5) : Math.max(1.6, bed + 0.5);
       const prev = hazard.get(PrevTransform);
       const pprev = player.get(PrevTransform);
       const body = ctx.bodies.get(hazard);

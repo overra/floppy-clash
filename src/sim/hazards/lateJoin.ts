@@ -37,9 +37,9 @@ export const DYNAMIC_APPENDIX_D_KINDS = [
   HazardKind.Collapsing,
 ] as const;
 
-/** Positive authored size, else the same default `module.create` uses. 0 is unset, not a `||` drive. */
-function dim(value: number, fallback: number): number {
-  return value > 0 ? value : fallback;
+/** Authored size from hazard params. 0 is zero, not a create-default substitute. */
+function dim(value: number): number {
+  return value;
 }
 
 function box(partial: Partial<LateJoinBodySpec> & Pick<LateJoinBodySpec, 'bodyType' | 'hx' | 'hy'>): LateJoinBodySpec {
@@ -90,8 +90,8 @@ export function lateJoinBodySpec(
       return box({
         bodyType: 'dynamic',
         // Host `createDynamicBox` defaults: w??2, h??1 — not 1.1×1.1.
-        hx: Math.max(0.05, dim(hz.param0, 2) / 2),
-        hy: Math.max(0.05, dim(hz.param1, 1) / 2),
+        hx: dim(hz.param0) / 2,
+        hy: dim(hz.param1) / 2,
         density: 0.5,
         friction: 0.5,
         restitution: 0.05,
@@ -100,8 +100,8 @@ export function lateJoinBodySpec(
     case HazardKind.Barrel:
       return box({
         bodyType: 'dynamic',
-        hx: Math.max(0.05, dim(hz.param0, 2) / 2),
-        hy: Math.max(0.05, dim(hz.param1, 1) / 2),
+        hx: dim(hz.param0) / 2,
+        hy: dim(hz.param1) / 2,
         density: 0.5,
         friction: 0.5,
         restitution: 0.05,
@@ -110,8 +110,8 @@ export function lateJoinBodySpec(
     case HazardKind.Debris:
       return box({
         bodyType: 'dynamic',
-        hx: Math.max(0.04, dim(hz.param0, 0.24) / 2),
-        hy: Math.max(0.04, dim(hz.param1, 0.24) / 2),
+        hx: dim(hz.param0) / 2,
+        hy: dim(hz.param1) / 2,
         density: 0.35,
         friction: 0.4,
         restitution: 0.15,
@@ -120,8 +120,8 @@ export function lateJoinBodySpec(
     case HazardKind.Boss:
       return box({
         bodyType: 'dynamic',
-        hx: Math.max(0.2, dim(hz.param0, 2.2) / 2),
-        hy: Math.max(0.2, dim(hz.param1, 2) / 2),
+        hx: dim(hz.param0) / 2,
+        hy: dim(hz.param1) / 2,
         density: 1.2,
         friction: 0.4,
         fixedRotation: false,
@@ -130,7 +130,7 @@ export function lateJoinBodySpec(
       const roll = flags.spikeStyle === 1 || hz.param2 === 1;
       return circle({
         bodyType: 'dynamic',
-        radius: dim(hz.param0, 0.4),
+        radius: dim(hz.param0),
         density: 0.8,
         friction: roll ? 0.05 : 0.2,
         restitution: roll ? 0.35 : 0.05,
@@ -141,8 +141,8 @@ export function lateJoinBodySpec(
       if (flags.chainDeck || hz.param3 === 1) {
         return box({
           bodyType: 'dynamic',
-          hx: Math.max(0.1, dim(hz.param0, 2.8) / 2),
-          hy: Math.max(0.08, dim(hz.param1, 0.4) / 2),
+          hx: dim(hz.param0) / 2,
+          hy: dim(hz.param1) / 2,
           density: 0.45,
           friction: 1.15,
           fixedRotation: true,
@@ -170,8 +170,8 @@ export function lateJoinBodySpec(
     case HazardKind.Momentum:
       return box({
         bodyType: 'dynamic',
-        hx: Math.max(0.2, dim(hz.param0, 4) / 2),
-        hy: Math.max(0.1, dim(hz.param1, 0.6) / 2),
+        hx: dim(hz.param0) / 2,
+        hy: dim(hz.param1) / 2,
         density: 0.35,
         friction: 0.8,
         fixedRotation: false,
@@ -181,7 +181,7 @@ export function lateJoinBodySpec(
     case HazardKind.Collapsing:
       return box({
         bodyType: 'dynamic',
-        hx: Math.max(0.2, dim(hz.param0, 3) / 2),
+        hx: dim(hz.param0) / 2,
         hy: 0.25,
         density: 0,
         friction: 0.8,
@@ -191,8 +191,8 @@ export function lateJoinBodySpec(
     case HazardKind.Crusher:
       return box({
         bodyType: 'kinematic',
-        hx: dim(hz.param2, 0.75),
-        hy: dim(hz.param3, 3),
+        hx: dim(hz.param2),
+        hy: dim(hz.param3),
         density: 0,
         friction: 0.8,
       });
@@ -209,8 +209,8 @@ export function lateJoinBodySpec(
     case HazardKind.Lava:
       return box({
         bodyType: 'kinematic',
-        hx: Math.max(0.2, dim(hz.param1, 2) / 2),
-        hy: Math.max(0.2, dim(hz.param2, 1) / 2),
+        hx: dim(hz.param1) / 2,
+        hy: dim(hz.param2) / 2,
         density: 0,
         friction: 0.4,
         sensor: true,
@@ -219,7 +219,7 @@ export function lateJoinBodySpec(
     case HazardKind.Ice:
       return box({
         bodyType: 'static',
-        hx: Math.max(0.2, dim(hz.param0, 2) / 2),
+        hx: dim(hz.param0) / 2,
         hy: 0.25,
         density: 0,
         friction: 0.02,
@@ -228,7 +228,7 @@ export function lateJoinBodySpec(
     case HazardKind.Spikes:
       return box({
         bodyType: 'static',
-        hx: Math.max(0.2, dim(hz.param0, 2) / 2),
+        hx: dim(hz.param0) / 2,
         hy: 0.25,
         density: 0,
         friction: 0.6,
@@ -238,8 +238,8 @@ export function lateJoinBodySpec(
     case HazardKind.Destructible:
       return box({
         bodyType: 'static',
-        hx: Math.max(0.2, dim(hz.param0, 2) / 2),
-        hy: Math.max(0.15, dim(hz.param1, 2) / 2),
+        hx: dim(hz.param0) / 2,
+        hy: dim(hz.param1) / 2,
         density: 0,
         friction: 0.5,
         fixtureKind: 'solid',
@@ -247,7 +247,7 @@ export function lateJoinBodySpec(
     case HazardKind.Conveyor:
       return box({
         bodyType: 'static',
-        hx: Math.max(0.2, dim(hz.param0, 2) / 2),
+        hx: dim(hz.param0) / 2,
         hy: 0.2,
         density: 0,
         friction: 0.6,
@@ -256,8 +256,8 @@ export function lateJoinBodySpec(
     case HazardKind.Solid:
       return box({
         bodyType: 'static',
-        hx: Math.max(0.2, dim(hz.param0, 2) / 2),
-        hy: Math.max(0.15, dim(hz.param1, 1) / 2),
+        hx: dim(hz.param0) / 2,
+        hy: dim(hz.param1) / 2,
         density: 0,
         friction: 0.6,
         fixtureKind: 'solid',
@@ -265,24 +265,24 @@ export function lateJoinBodySpec(
     case HazardKind.MovingPlatform:
       return box({
         bodyType: 'kinematic',
-        hx: Math.max(0.2, dim(hz.param1, 4) / 2),
-        hy: Math.max(0.1, dim(hz.param3, 0.6) / 2),
+        hx: dim(hz.param1) / 2,
+        hy: dim(hz.param3) / 2,
         density: 0,
         friction: 0.8,
       });
     case HazardKind.RotatingPlatform:
       return box({
         bodyType: 'kinematic',
-        hx: Math.max(0.2, dim(hz.param1, 4) / 2),
-        hy: Math.max(0.1, dim(hz.param2, 0.6) / 2),
+        hx: dim(hz.param1) / 2,
+        hy: dim(hz.param2) / 2,
         density: 0,
         friction: 0.8,
       });
     case HazardKind.Disappearing:
       return box({
         bodyType: 'kinematic',
-        hx: Math.max(0.2, dim(hz.param2, 3) / 2),
-        hy: Math.max(0.1, dim(hz.param3, 0.5) / 2),
+        hx: dim(hz.param2) / 2,
+        hy: dim(hz.param3) / 2,
         density: 0,
         friction: 0.8,
       });
@@ -301,8 +301,8 @@ export function lateJoinBodySpec(
       if (flags.isStatic) {
         return box({
           bodyType: 'static',
-          hx: Math.max(0.2, dim(hz.param0, 2) / 2),
-          hy: Math.max(0.15, dim(hz.param1, 1) / 2),
+          hx: dim(hz.param0) / 2,
+          hy: dim(hz.param1) / 2,
           density: 0,
           friction: kind === HazardKind.Bounce ? 0.1 : 0.6,
           restitution: kind === HazardKind.Bounce ? 1.2 : 0,
@@ -327,12 +327,12 @@ export function applyBodyShapeToSpec(
   if (!shape || spec.shape === 'none') return spec;
   if (Number(shape.circle) === 1) {
     const radius = Number(shape.radius);
-    if (radius > 0) return { ...spec, shape: 'circle', radius, hx: 0, hy: 0 };
+    if (Number.isFinite(radius)) return { ...spec, shape: 'circle', radius, hx: 0, hy: 0 };
     return spec;
   }
   const hx = Number(shape.hx);
   const hy = Number(shape.hy);
-  if (hx > 0 && hy > 0) return { ...spec, shape: 'box', hx, hy, radius: 0 };
+  if (Number.isFinite(hx) && Number.isFinite(hy)) return { ...spec, shape: 'box', hx, hy, radius: 0 };
   return spec;
 }
 
@@ -347,6 +347,7 @@ export function createLateJoinHazardBody(
   if (spec.shape === 'none') return;
   const ctx = getContext(world);
   if (spec.shape === 'circle') {
+    if (spec.radius <= 0) return;
     const body = createCircleBody(ctx.physics, entity, spec.fixtureKind, x, y, spec.radius, spec.bodyType, {
       density: spec.density,
       friction: spec.friction,
@@ -357,6 +358,7 @@ export function createLateJoinHazardBody(
     registerBody(world, entity, body);
     return;
   }
+  if (spec.hx <= 0 || spec.hy <= 0) return;
   const body = createBoxBody(ctx.physics, entity, spec.fixtureKind, x, y, spec.hx, spec.hy, spec.bodyType, {
     density: spec.density,
     friction: spec.friction,
