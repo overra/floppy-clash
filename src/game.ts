@@ -758,6 +758,12 @@ export function createGame(root: HTMLElement): Game {
     const dt = Math.min(0.05, (now - last) / 1000);
     last = now;
     applyPauseHotkey();
+    // PLAN 4.12: join A/color/Start and pause Start are sampled even when the sim is idle.
+    if (menus.screen === 'join' || menus.screen === 'pause') {
+      sampleInputs();
+      latches.forEach(consumeLatch);
+      keys.consume();
+    }
     if (renderer) renderer.resize(canvas.clientWidth || 1280, canvas.clientHeight || 720);
     const viewSim = menus.netRole === 'client' && clientView ? clientView.sim : sim;
     if (viewSim && menus.screen === 'play' && !paused) {
