@@ -90,3 +90,14 @@ export function canResumePause(actor: string, pausedBy: string | null, seats: Se
 export function pauseRisingEdge(wasDown: boolean, isDown: boolean): boolean {
   return isDown && !wasDown;
 }
+
+/**
+ * PLAN 4.12: a Start that is already down when play begins must not pause.
+ * Seed each held-flag from the current down sample (join, editor playtest, or Start).
+ */
+export function seedHeldFromDown(held: boolean[], down: boolean[]): void {
+  const n = Math.max(held.length, down.length);
+  for (let i = 0; i < n; i++) {
+    held[i] = Boolean(down[i]);
+  }
+}

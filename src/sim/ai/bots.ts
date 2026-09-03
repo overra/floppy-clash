@@ -9,6 +9,7 @@ import {
   Dead,
   Hazard,
   HazardKind,
+  Health,
   Held,
   HeldBy,
   Loose,
@@ -102,17 +103,27 @@ export function thinkBots(world: World): void {
     } else if (target.cur) {
       const dx = target.cur.x - tr.x;
       const dy = target.cur.y - tr.y;
-      input.moveX = Math.max(-1, Math.min(1, dx * 0.35));
-      const len = Math.hypot(dx, dy) || 1;
+      const dist = Math.hypot(dx, dy);
+      const hp = entity.get(Health)?.hp ?? 100;
+      const maxHp = entity.get(Health)?.maxHp ?? 100;
+      const retreat = (armed && dist < 2.15) || hp < maxHp * 0.35;
+      input.moveX = retreat
+        ? -(Math.sign(dx) || 1)
+        : Math.max(-1, Math.min(1, dx * 0.35 || Math.sign(dx)));
+      const len = dist || 1;
       const noise = ctx.rng.range(-0.12, 0.12);
       const noiseY = ctx.rng.range(-0.12, 0.12);
       input.aimX = dx / len + noise;
       input.aimY = dy / len + noiseY;
-      input.attack = bot.think % 18 < 6;
-      input.block = bulletApproaching(world, tr.x, tr.y) || bot.think % 40 < 6;
+      input.attack = !retreat && bot.think % 18 < 6;
+      input.block = bulletApproaching(world, tr.x, tr.y);
       if (dy > 1.2 || Math.abs(dx) > 3) input.jump = bot.think % 16 < 3;
-      const wall = raycastClosest(world, tr.x, tr.y, tr.x + Math.sign(dx) * 0.5, tr.y);
-      if (wall && !ctrl.grounded) input.jump = true;
+      const climbDir = Math.sign(input.moveX) || Math.sign(dx) || ctrl.facing || 1;
+      const wall = raycastClosest(world, tr.x, tr.y, tr.x + climbDir * 0.55, tr.y);
+      if (wall && (!ctrl.grounded || dy > 1)) {
+        input.moveX = climbDir;
+        input.jump = true;
+      }
     }
     const dir = Math.sign(input.moveX) || ctrl.facing || 1;
     if (hazardAhead(world, tr.x, tr.y, dir)) {

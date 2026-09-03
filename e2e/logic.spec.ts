@@ -842,14 +842,10 @@ test('same pad rejoins the remembered color after a fresh Local Play', async ({ 
   await expect(page.locator('[data-seat="0"]')).toContainText(/Blue/i);
   await page.getByRole('button', { name: 'Back' }).click();
   await page.getByRole('button', { name: 'Solo vs Bots' }).click();
-  await expect(page.locator('[data-seat="0"]')).toContainText(/keyboard|You/i);
+  await expect(page.locator('[data-seat="0"]')).toContainText(/e2e-memory-pad/);
   await page.getByRole('button', { name: 'Back' }).click();
   await page.getByRole('button', { name: 'Local Play' }).click();
-  await expect(page.locator('[data-seat="0"]')).toContainText(/empty/i);
-  await page.evaluate(() => {
-    const pad = (window as unknown as { __e2ePad: Gamepad }).__e2ePad;
-    window.dispatchEvent(Object.assign(new Event('gamepadconnected'), { gamepad: pad }));
-  });
+  await expect(page.locator('[data-seat="0"]')).toContainText(/e2e-memory-pad/);
   await expect(page.locator('[data-seat="0"]')).toContainText(/Blue/i);
 });
 
@@ -924,6 +920,37 @@ test('editor Rotate writes angle into the draft JSON', async ({ page }) => {
   await page.getByRole('button', { name: 'Undo' }).click();
   await page.getByRole('button', { name: 'Undo' }).click();
   await expect(page.locator('#edjson')).not.toContainText('"angle":');
+});
+
+test('solo vs bots: an already-connected pad claims the human seat without a new connect event', async ({
+  page,
+}) => {
+  await page.addInitScript(() => {
+    const buttons = Array.from({ length: 17 }, () => ({ pressed: false, touched: false, value: 0 }));
+    const pad = {
+      id: 'e2e-already-pad',
+      index: 0,
+      connected: true,
+      mapping: 'standard' as const,
+      axes: [0, 0, 0, 0],
+      buttons,
+      timestamp: 1,
+      hapticActuators: [],
+      vibrationActuator: null,
+    };
+    Object.defineProperty(navigator, 'getGamepads', { value: () => [pad], configurable: true });
+    (window as unknown as { __e2ePad: typeof pad }).__e2ePad = pad;
+  });
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Solo vs Bots' }).click();
+  await expect(page.locator('[data-seat="0"]')).toContainText(/e2e-already-pad/);
+  await expect(page.locator('[data-seat="0"]')).toHaveAttribute('data-ready', '1');
+  await expect(page.locator('[data-seat="1"]')).toContainText(/empty/i);
+  await page.getByRole('button', { name: 'Start' }).click();
+  await expect(page.locator('canvas#game')).toBeVisible();
+  await expect(page.locator('[data-countdown]')).toBeVisible({ timeout: 8_000 });
+  await expect.poll(async () => page.evaluate(() => window.__floppy?.playerColors?.[0])).toBe(0);
+  await expect.poll(async () => page.evaluate(() => (window.__floppy?.playerXs ?? []).length)).toBe(4);
 });
 
 test('solo vs bots: a pad claims the keyboard seat instead of becoming P2', async ({ page }) => {
@@ -1018,6 +1045,7 @@ test('remapped pause Start begins the join match (PLAN 4.12)', async ({ page }) 
   });
   await expect(page.locator('canvas#game')).toBeVisible({ timeout: 8_000 });
   await expect(page.locator('[data-countdown]')).toBeVisible({ timeout: 8_000 });
+  await expect(page.getByRole('heading', { name: 'Paused' })).toHaveCount(0);
 });
 
 test('editor remapped Start playtests the draft', async ({ page }) => {
@@ -1045,27 +1073,14 @@ test('editor remapped Start playtests the draft', async ({ page }) => {
   await page.getByRole('button', { name: 'Back' }).click();
   await page.getByRole('button', { name: 'Level Editor' }).click();
   await expect(page.locator('text=Level Editor')).toBeVisible();
-  for (let i = 0; i < 6; i++) {
-    await page.evaluate(() => {
-      const pad = (window as unknown as { __e2ePad: { buttons: { pressed: boolean }[] } }).__e2ePad;
-      pad.buttons[8]!.pressed = true;
-    });
-    await page.waitForTimeout(100);
-    await page.evaluate(() => {
-      const pad = (window as unknown as { __e2ePad: { buttons: { pressed: boolean }[] } }).__e2ePad;
-      pad.buttons[8]!.pressed = false;
-    });
-    if (
-      (await page.locator('[data-countdown]').count()) > 0 ||
-      (await page.getByRole('heading', { name: 'Paused' }).count()) > 0
-    ) {
-      break;
-    }
-  }
-  if (await page.getByRole('heading', { name: 'Paused' }).isVisible()) {
-    await page.getByRole('button', { name: 'Resume' }).click();
-  }
+  await page.evaluate(() => {
+    const pad = (window as unknown as { __e2ePad: { buttons: { pressed: boolean }[] } }).__e2ePad;
+    pad.buttons[8]!.pressed = true;
+  });
   await expect(page.locator('[data-countdown]')).toBeVisible({ timeout: 8_000 });
+  await expect(page.getByRole('heading', { name: 'Paused' })).toHaveCount(0);
+  await page.waitForTimeout(250);
+  await expect(page.getByRole('heading', { name: 'Paused' })).toHaveCount(0);
 });
 
 test('online lobby has room code and chat', async ({ page }) => {

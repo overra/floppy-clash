@@ -12,9 +12,11 @@ import {
   routeSeatInputs,
   samplePrimaryLocal,
   seatIndexForPad,
+  seedHeldFromDown,
 } from '../src/input/seats';
 import {
   canStartMatch,
+  claimConnectedPadIds,
   clearJoinSeats,
   createMenuState,
   cycleSeatColor,
@@ -205,10 +207,49 @@ describe('join seats (PLAN 4.12)', () => {
     const pad = takeSeat(menus.seats, 'pad-solo', menus.padMemory, { replaceKeyboard: true });
     expect(pad?.padId).toBe('pad-solo');
     expect(menus.seats[0]?.padId).toBe('pad-solo');
-    expect(menus.seats[0]?.ready).toBe(false);
+    expect(menus.seats[0]?.ready).toBe(true);
     expect(menus.seats[1]?.taken).toBe(false);
     takeOrReadySeat(menus.seats, 'pad-solo', menus.padMemory, { replaceKeyboard: true });
     expect(menus.seats[0]?.ready).toBe(true);
+  });
+
+  it('solo vs bots: a second pad does not become leftover P2', () => {
+    const menus = createMenuState();
+    menus.seats[0] = { taken: true, ready: true, color: 0, padId: 'keyboard', name: 'You' };
+    takeSeat(menus.seats, 'pad-solo', menus.padMemory, { replaceKeyboard: true });
+    const extra = takeSeat(menus.seats, 'pad-p2', menus.padMemory, { replaceKeyboard: true });
+    expect(extra).toBeUndefined();
+    expect(menus.seats[0]?.padId).toBe('pad-solo');
+    expect(menus.seats[1]?.taken).toBe(false);
+  });
+
+  it('solo vs bots: claiming a not-ready keyboard stays not-ready', () => {
+    const menus = createMenuState();
+    menus.seats[0] = { taken: true, ready: false, color: 0, padId: 'keyboard', name: 'You' };
+    takeSeat(menus.seats, 'pad-solo', menus.padMemory, { replaceKeyboard: true });
+    expect(menus.seats[0]?.padId).toBe('pad-solo');
+    expect(menus.seats[0]?.ready).toBe(false);
+  });
+
+  it('claimConnectedPadIds occupies already-connected pads', () => {
+    const menus = createMenuState();
+    menus.seats[0] = { taken: true, ready: true, color: 0, padId: 'keyboard', name: 'You' };
+    const claimed = claimConnectedPadIds(menus.seats, ['e2e-already'], menus.padMemory, {
+      replaceKeyboard: true,
+    });
+    expect(claimed[0]?.padId).toBe('e2e-already');
+    expect(menus.seats[0]?.padId).toBe('e2e-already');
+    expect(menus.seats[0]?.ready).toBe(true);
+    expect(menus.seats[1]?.taken).toBe(false);
+  });
+
+  it('a held Start after play begins is not a pause rising edge (PLAN 4.12)', () => {
+    const held = [false, false, false, false];
+    seedHeldFromDown(held, [true, false, false, false]);
+    expect(held[0]).toBe(true);
+    expect(pauseRisingEdge(held[0]!, true)).toBe(false);
+    expect(pauseRisingEdge(held[0]!, false)).toBe(false);
+    expect(pauseRisingEdge(false, true)).toBe(true);
   });
 
   it('local play does not replace a keyboard P1 with a second pad', () => {

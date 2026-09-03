@@ -13,6 +13,7 @@ import {
 } from './input/gamepad';
 import {
   canStartMatch,
+  claimConnectedPadIds,
   claimDisconnectedSeat,
   clearJoinSeats,
   collectPadMap,
@@ -39,6 +40,7 @@ import {
   pauseRisingEdge,
   routeSeatInputs,
   samplePrimaryLocal,
+  seedHeldFromDown,
 } from './input/seats';
 import { getLevel, gymLevel, matchLevelPool } from './levels/catalog';
 import { addShake, createCamera } from './render/camera';
@@ -259,6 +261,7 @@ export function createGame(root: HTMLElement): Game {
           clearJoinSeats(menus.seats);
           menus.screen = 'join';
           menus.bots = 0;
+          claimVisiblePads();
           show();
         },
         bots: () => {
@@ -267,6 +270,7 @@ export function createGame(root: HTMLElement): Game {
           menus.screen = 'join';
           menus.bots = 3;
           menus.seats[0] = { taken: true, ready: true, color: 0, padId: 'keyboard', name: 'You' };
+          claimVisiblePads();
           show();
         },
         online: () => {
@@ -387,6 +391,7 @@ export function createGame(root: HTMLElement): Game {
     const taken = menus.seats.filter((s) => s.taken).length;
     const online = menus.netRole === 'host' && net.peerCount > 0 ? 1 + net.peerCount : 0;
     const vsBots = menus.bots > 0;
+    if (!online && vsBots) claimVisiblePads();
     const seats = online ? undefined : humanSeatAssignments(menus.seats);
     const humans = online || Math.max(1, taken);
     extraLevels = settings.includeUserLevels ? await loadLibrary().catch(() => []) : [];
@@ -558,7 +563,29 @@ export function createGame(root: HTMLElement): Game {
     show();
   }
 
+  function connectedPadIds(): string[] {
+    return pollGamepads()
+      .filter((p): p is Gamepad => Boolean(p?.id))
+      .map((p) => p.id);
+  }
+
+  function claimVisiblePads(): void {
+    claimConnectedPadIds(menus.seats, connectedPadIds(), menus.padMemory, {
+      replaceKeyboard: menus.bots > 0,
+    });
+  }
+
+  /** A Start already down when play begins must not immediately pause (PLAN 4.12). */
+  function seedPauseHeldFromPads(): void {
+    const down = pollGamepads().map((pad) =>
+      pad ? buttonOn(pad.buttons[joinStartIndex(padMapFor(pad.id))]) : false,
+    );
+    seedHeldFromDown(pauseHeld, down);
+    seedHeldFromDown(joinStartHeld, down);
+  }
+
   function startIfReady() {
+    if (menus.bots > 0) claimVisiblePads();
     if (!canStartMatch(menus.seats)) {
       menus.notice = 'Join and press A / Space again to ready, then Start.';
       show();
@@ -632,6 +659,7 @@ export function createGame(root: HTMLElement): Game {
     clearFx(fx);
     decalLayer = createDecalLayer(level.bounds);
     menus.screen = 'play';
+    seedPauseHeldFromPads();
     show();
     net.send({ t: 'level', json: JSON.stringify(level) });
     net.send(lateJoinSnapshotMessage(sim.snapshot()));
@@ -724,6 +752,7 @@ export function createGame(root: HTMLElement): Game {
     }
     const pads = pollGamepads();
     const padInputs = new Map<string, PlayerInput>();
+    if (menus.screen === 'join') claimVisiblePads();
     pads.forEach((pad, i) => {
       if (!pad) return;
       const latch = latches[i] ?? emptyLatch();

@@ -2,8 +2,8 @@ import { describe, expect, it } from 'vitest';
 import { bulletApproaching, hazardAhead } from '../src/sim/ai/bots';
 import { getLevel } from '../src/levels/catalog';
 import { spawnWeapon } from '../src/sim/systems/weapons';
-import { Bot, Held, HeldBy, Projectile, Transform, Weapon } from '../src/sim/traits';
-import { makeSim, pin, playerOf } from './helpers';
+import { Bot, Health, Held, HeldBy, Loose, Projectile, Transform, Weapon } from '../src/sim/traits';
+import { gymLevel, makeSim, pin, playerOf } from './helpers';
 
 describe('M9 bots', () => {
   it('a human seat past playerCount is not tagged as a bot', () => {
@@ -119,6 +119,50 @@ describe('M9 bots', () => {
     const y = (lava?.y ?? 1.6) + 1.2;
     expect(hazardAhead(sim.ecs, x - 1.4, y, 1)).toBe(true);
     expect(hazardAhead(sim.ecs, 4, 3.2, 1)).toBe(false);
+  });
+
+  it('retreats when too close while armed (PLAN 4.14)', () => {
+    const sim = makeSim({ seed: 97, settings: { playerCount: 1, bots: 1 } });
+    const human = playerOf(sim, 0);
+    const bot = playerOf(sim, 1);
+    pin(sim, human, 10, 4);
+    pin(sim, bot, 10.35, 4);
+    const gun = spawnWeapon(sim.ecs, 'pistol', 10.35, 4);
+    gun.add(Held(), HeldBy(bot));
+    gun.remove(Loose);
+    sim.step();
+    const slot = bot.get(Bot)?.slot ?? 1;
+    expect(sim.ctx.inputs[slot]?.moveX).toBeGreaterThan(0);
+  });
+
+  it('retreats when HP is low even at mid range (PLAN 4.14)', () => {
+    const sim = makeSim({ seed: 99, settings: { playerCount: 1, bots: 1 } });
+    const human = playerOf(sim, 0);
+    const bot = playerOf(sim, 1);
+    pin(sim, human, 10, 4);
+    pin(sim, bot, 14, 4);
+    bot.set(Health, { hp: 20, maxHp: 100 });
+    sim.step();
+    const slot = bot.get(Bot)?.slot ?? 1;
+    expect(sim.ctx.inputs[slot]?.moveX).toBeGreaterThan(0);
+  });
+
+  it('wall-jumps when a wall is toward a higher target (PLAN 4.14)', () => {
+    const sim = makeSim({
+      level: gymLevel,
+      seed: 98,
+      settings: { playerCount: 1, bots: 1 },
+    });
+    const human = playerOf(sim, 0);
+    const bot = playerOf(sim, 1);
+    pin(sim, human, 16, 10);
+    pin(sim, bot, 4.7, 7);
+    const trait = bot.get(Bot);
+    if (trait) bot.set(Bot, { ...trait, think: 20 });
+    sim.step();
+    const slot = bot.get(Bot)?.slot ?? 1;
+    expect(sim.ctx.inputs[slot]?.jump).toBe(true);
+    expect(Math.abs(sim.ctx.inputs[slot]?.moveX ?? 0)).toBeGreaterThan(0.2);
   });
 
   it('bot soak of 2000 ticks stays finite', { timeout: 30_000 }, () => {

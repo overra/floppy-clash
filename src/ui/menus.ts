@@ -221,7 +221,10 @@ export function takeSeat(
   }
   if (opts.replaceKeyboard && padId !== 'keyboard') {
     const kb = seats.find((s) => s.taken && s.padId === 'keyboard');
-    if (kb) return occupySeat(kb, seats, padId, memory, false);
+    // Inherit ready: Solo vs Bots pre-readies the human seat (PLAN M9 one-pad start).
+    if (kb) return occupySeat(kb, seats, padId, memory, kb.ready);
+    // Solo is one human; extra pads must not become leftover P2s.
+    return undefined;
   }
   const mem = memory[padId];
   const preferred = mem && seats[mem.slot] && !seats[mem.slot]!.taken ? seats[mem.slot] : undefined;
@@ -232,6 +235,22 @@ export function takeSeat(
 
 export function canStartMatch(seats: Seat[]): boolean {
   return seats.some((s) => s.taken && s.ready);
+}
+
+/** Already-connected pads (no fresh `gamepadconnected`) occupy join seats. */
+export function claimConnectedPadIds(
+  seats: Seat[],
+  padIds: string[],
+  memory: PadSeatMemory = {},
+  opts: TakeSeatOpts = {},
+): Seat[] {
+  const claimed: Seat[] = [];
+  for (const id of padIds) {
+    if (!id || id === 'keyboard' || id === 'bot') continue;
+    const seat = takeSeat(seats, id, memory, opts);
+    if (seat) claimed.push(seat);
+  }
+  return claimed;
 }
 
 export function collectSettings(
