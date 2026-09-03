@@ -143,13 +143,17 @@ function punchKnock(airborne: boolean): number {
   const sim = makeSim({ level: woodsClearing, seed: airborne ? 21 : 20, settings: { playerCount: 2 } });
   const a = playerOf(sim, 0);
   const b = playerOf(sim, 1);
-  const y = airborne ? 8 : 4;
+  for (let i = 0; i < 30; i++) sim.step([hold({}), hold({}), hold({}), hold({})]);
+  const y = airborne ? 6.4 : 3.2;
   sim.ctx.bodies.get(a)?.setPosition({ x: 10, y });
   sim.ctx.bodies.get(b)?.setPosition({ x: 10.75, y });
+  sim.ctx.bodies.get(a)?.setLinearVelocity({ x: 0, y: airborne ? 1 : 0 });
+  sim.ctx.bodies.get(b)?.setLinearVelocity({ x: 0, y: airborne ? 1 : 0 });
   a.set(Transform, { x: 10, y, angle: 0 });
   b.set(Transform, { x: 10.75, y, angle: 0 });
-  for (let i = 0; i < 6; i++) {
-    sim.step([hold({ attack: i === 1, aimX: 1, aimY: 0 }), hold({}), hold({}), hold({})]);
+  if (!airborne) {
+    for (let i = 0; i < 12; i++) sim.step([hold({}), hold({}), hold({}), hold({})]);
   }
+  sim.step([hold({ attack: true, aimX: 1, aimY: 0 }), hold({}), hold({}), hold({})]);
   return Math.abs(sim.ctx.bodies.get(b)?.getLinearVelocity().x ?? 0);
 }

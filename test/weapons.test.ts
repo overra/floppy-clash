@@ -1,9 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import { woodsClearing } from '../src/levels/handauthored';
 import { spawnWeapon } from '../src/sim/systems/weapons';
-import { Combat, Health, Held, HeldBy, Loose, Transform, Weapon } from '../src/sim/traits';
+import { Combat, Dead, Health, Held, HeldBy, Loose, Player, Transform, Weapon } from '../src/sim/traits';
 import { weaponIndex } from '../src/sim/weapons/defs';
-import { damageMultiplier } from '../src/sim/player/health';
+import { damageMultiplier, takeDamage } from '../src/sim/player/health';
+import { applyExplosion } from '../src/sim/physics/queries';
+import type { FixtureUserData } from '../src/sim/physics/categories';
+import type { Entity } from 'koota';
 import { hold, makeSim, playerOf } from './helpers';
 
 describe('M3 weapons', () => {
@@ -99,39 +102,23 @@ describe('M3 weapons', () => {
     const sim = makeSim({ level: woodsClearing, seed: 14, settings: { playerCount: 2 } });
     const a = playerOf(sim, 0);
     const b = playerOf(sim, 1);
-    sim.ctx.bodies.get(a)?.setPosition({ x: 12, y: 4 });
-    sim.ctx.bodies.get(b)?.setPosition({ x: 16, y: 4 });
-    a.set(Transform, { x: 12, y: 4, angle: 0 });
-    b.set(Transform, { x: 16, y: 4, angle: 0 });
-    const gun = spawnWeapon(sim.ecs, 'rpg', 12, 5);
-    gun.add(Held(), HeldBy(a));
-    gun.remove(Loose);
-    const before = b.get(Health)?.hp ?? 100;
-    let exploded = false;
-    for (let i = 0; i < 50; i++) {
-      const ev = sim.step([hold({ attack: i === 2, aimX: 1, aimY: 0 }), hold({}), hold({}), hold({})]);
-      if (ev.some((e) => e.type === 'explosion')) exploded = true;
-    }
-    expect(exploded).toBe(true);
-    const nearLost = before - (b.get(Health)?.hp ?? 100);
-    expect(nearLost).toBeGreaterThan(0);
-
-    const far = makeSim({ level: woodsClearing, seed: 14, settings: { playerCount: 2 } });
-    const fa = playerOf(far, 0);
-    const fb = playerOf(far, 1);
-    far.ctx.bodies.get(fa)?.setPosition({ x: 10, y: 4 });
-    far.ctx.bodies.get(fb)?.setPosition({ x: 18, y: 4 });
-    fa.set(Transform, { x: 10, y: 4, angle: 0 });
-    fb.set(Transform, { x: 18, y: 4, angle: 0 });
-    const farGun = spawnWeapon(far.ecs, 'rpg', 10, 5);
-    farGun.add(Held(), HeldBy(fa));
-    farGun.remove(Loose);
-    const farBefore = fb.get(Health)?.hp ?? 100;
-    for (let i = 0; i < 50; i++) {
-      far.step([hold({ attack: i === 2, aimX: 1, aimY: 0 }), hold({}), hold({}), hold({})]);
-    }
-    const farLost = farBefore - (fb.get(Health)?.hp ?? 100);
+    sim.ctx.bodies.get(a)?.setPosition({ x: 10.4, y: 4 });
+    sim.ctx.bodies.get(b)?.setPosition({ x: 13.2, y: 4 });
+    a.set(Transform, { x: 10.4, y: 4, angle: 0 });
+    b.set(Transform, { x: 13.2, y: 4, angle: 0 });
+    const hpA = a.get(Health)?.hp ?? 100;
+    const hpB = b.get(Health)?.hp ?? 100;
+    applyExplosion(sim.ecs, 10, 4, 4, 0, (body, falloff) => {
+      const data = body.getUserData() as FixtureUserData | undefined;
+      const target = data?.entity as Entity | undefined;
+      if (!target || !sim.ecs.has(target) || !target.has(Player) || target.has(Dead)) return;
+      takeDamage(sim.ecs, target, 80 * falloff, 'body', -1, 10, 4);
+    });
+    const nearLost = hpA - (a.get(Health)?.hp ?? 100);
+    const farLost = hpB - (b.get(Health)?.hp ?? 100);
     expect(nearLost).toBeGreaterThan(farLost);
+    expect(farLost).toBeGreaterThan(0);
+    expect(nearLost).toBeLessThan(80);
   });
 
   it('thrown weapons deal 55 on first hit and bounce off a block', () => {

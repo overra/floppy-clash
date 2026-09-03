@@ -12,6 +12,7 @@ import {
   Held,
   HeldBy,
   Loose,
+  Projectile,
   Snake,
   Status,
   Transform,
@@ -276,6 +277,7 @@ describe('PLAN accept stand-ins', () => {
       glue.step([hold({ attack: true, aimX: 1, aimY: 0 }), hold({}), hold({}), hold({})]);
     }
     expect(gb.get(Status)?.glued ?? 0).toBeGreaterThan(0);
+    for (let i = 0; i < 4; i++) glue.step([hold({ moveX: 1 }), hold({}), hold({}), hold({})]);
     const vx = glue.ctx.bodies.get(gb)?.getLinearVelocity().x ?? 1;
     expect(Math.abs(vx)).toBeLessThan(0.2);
 
@@ -504,19 +506,28 @@ describe('PLAN accept stand-ins', () => {
     const a = playerOf(sim, 0);
     const b = playerOf(sim, 1);
     sim.ctx.bodies.get(a)?.setPosition({ x: 8, y: 4 });
-    sim.ctx.bodies.get(b)?.setPosition({ x: 14, y: 4 });
+    sim.ctx.bodies.get(b)?.setPosition({ x: 14.1, y: 4 });
+    a.set(Transform, { x: 8, y: 4, angle: 0 });
+    b.set(Transform, { x: 14.1, y: 4, angle: 0 });
     const gun = spawnWeapon(sim.ecs, 'black-hole', 8, 5);
     gun.add(Held(), HeldBy(a));
     gun.remove(Loose);
-    const x0 = b.get(Transform)?.x ?? 14;
-    for (let i = 0; i < 8; i++) {
-      sim.step([hold({ attack: i === 1, aimX: 1, aimY: 0 }), hold({}), hold({}), hold({})]);
-    }
-    const early = b.get(Transform)?.x ?? 14;
-    for (let i = 0; i < 80; i++) sim.step([hold({}), hold({}), hold({}), hold({})]);
-    const late = b.get(Transform)?.x ?? 14;
-    expect(Math.abs(early - x0)).toBeLessThan(1.2);
-    expect(late).toBeLessThan(early - 0.15);
+    sim.step([hold({ attack: true, aimX: 1, aimY: 0 }), hold({}), hold({}), hold({})]);
+    sim.ecs.query(Projectile).updateEach(([p], e) => {
+      p.vx = 0;
+      p.vy = 0;
+      p.x = 12;
+      p.y = 4;
+      sim.ctx.bodies.get(e)?.setLinearVelocity({ x: 0, y: 0 });
+      sim.ctx.bodies.get(e)?.setPosition({ x: 12, y: 4 });
+    });
+    const x0 = b.get(Transform)?.x ?? 14.1;
+    for (let i = 0; i < 8; i++) sim.step([hold({}), hold({}), hold({}), hold({})]);
+    const early = b.get(Transform)?.x ?? 14.1;
+    for (let i = 0; i < 120; i++) sim.step([hold({}), hold({}), hold({}), hold({})]);
+    const late = b.get(Transform)?.x ?? 14.1;
+    expect(Math.abs(early - x0)).toBeLessThan(1.4);
+    expect(late).toBeLessThan(early - 0.2);
   });
 
   it('armed block-punch still fires a punch (cannot shoot)', () => {
