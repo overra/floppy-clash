@@ -831,6 +831,8 @@ export function createGame(root: HTMLElement): Game {
     sim.ctx.settings.enabledWeapons = [];
     if (!liveFistsApplied) {
       liveFistsApplied = true;
+      settings.maxHp = 1;
+      menus.maxHp = 1;
       sim.ctx.settings.maxHp = 1;
       const ms = sim.ecs.get(MatchState);
       if (ms) {
@@ -1135,7 +1137,8 @@ export function createGame(root: HTMLElement): Game {
         if (!sim) return;
         sim.ctx.tuning.countdownTicks = 3;
         sim.ctx.tuning.slowmoTicks = 2;
-        sim.ctx.tuning.scoreboardTicks = 2;
+        // Keep the default scoreboard window so [data-round-over] is observable.
+        sim.ctx.tuning.scoreboardTicks = 90;
       },
       matchRound: handle?.ecs.get(MatchState)?.round ?? 0,
       clientViewTick: clientView?.appliedTick ?? 0,

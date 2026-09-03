@@ -1,5 +1,25 @@
 import { expect, test } from '@playwright/test';
 
+const FLAT_ARENA = {
+  id: 'e2e-flat',
+  name: 'E2E Flat',
+  theme: 'woods',
+  bounds: { x: 0, y: 0, w: 32, h: 18 },
+  killMargin: 6,
+  spawns: [
+    { x: 8, y: 4 },
+    { x: 16, y: 4 },
+    { x: 12, y: 4 },
+    { x: 20, y: 4 },
+  ],
+  drops: { enabled: false, xMin: 4, xMax: 28, intervalScale: 1 },
+  objects: [
+    { type: 'solid', x: 16, y: 1, w: 32, h: 2 },
+    { type: 'solid', x: 0.5, y: 9, w: 1, h: 18 },
+    { type: 'solid', x: 31.5, y: 9, w: 1, h: 18 },
+  ],
+};
+
 test('two pages exchange chat over localhost WebRTC', async ({ browser }) => {
   const hostCtx = await browser.newContext();
   const guestCtx = await browser.newContext();
@@ -156,25 +176,7 @@ test('four localhost peers connect; 100ms/2% shaping still delivers chat', async
   await send(g2, 'peer-two');
   await send(g3, 'peer-three');
   await host.waitForFunction(() => Boolean(window.__floppy?.loadLevel));
-  const fistsArena = await host.evaluate((level) => window.__floppy?.loadLevel(level), {
-    id: 'e2e-flat',
-    name: 'E2E Flat',
-    theme: 'woods',
-    bounds: { x: 0, y: 0, w: 32, h: 18 },
-    killMargin: 6,
-    spawns: [
-      { x: 8, y: 4 },
-      { x: 16, y: 4 },
-      { x: 12, y: 4 },
-      { x: 20, y: 4 },
-    ],
-    drops: { enabled: false, xMin: 4, xMax: 28, intervalScale: 1 },
-    objects: [
-      { type: 'solid', x: 16, y: 1, w: 32, h: 2 },
-      { type: 'solid', x: 0.5, y: 9, w: 1, h: 18 },
-      { type: 'solid', x: 31.5, y: 9, w: 1, h: 18 },
-    ],
-  });
+  const fistsArena = await host.evaluate((level) => window.__floppy?.loadLevel(level), FLAT_ARENA);
   expect(fistsArena).toBe('e2e-flat');
   const seen = async (needle: string) =>
     host.evaluate((n) => document.body.innerText.includes(n), needle);
@@ -198,6 +200,7 @@ test('four localhost peers connect; 100ms/2% shaping still delivers chat', async
   await expect(host.locator('canvas#game')).toBeVisible({ timeout: 15_000 });
   await host.waitForFunction(() => window.__floppy?.phase === 2, null, { timeout: 20_000 });
   await host.evaluate(() => {
+    window.__floppy?.configureMatch?.({ maxHp: 1, enabledWeapons: [] });
     window.__floppy?.speedRounds();
     window.__floppy?.armLiveFists();
   });
@@ -206,7 +209,7 @@ test('four localhost peers connect; 100ms/2% shaping still delivers chat', async
     await host.waitForFunction(
       (n) => (window.__floppy?.matchRound ?? 0) > n,
       r,
-      { timeout: 20_000 },
+      { timeout: 30_000 },
     );
   }
   const rounds = await host.evaluate(() => window.__floppy?.matchRound ?? 0);
@@ -311,6 +314,9 @@ test('guest joining after the match started gets a binary late-join snapshot', a
   await expect(host.locator('#netstatus')).toHaveAttribute('data-net-state', 'up', {
     timeout: 20_000,
   });
+  await host.waitForFunction(() => Boolean(window.__floppy?.loadLevel));
+  const lateArena = await host.evaluate((level) => window.__floppy?.loadLevel(level), FLAT_ARENA);
+  expect(lateArena).toBe('e2e-flat');
   await host.getByRole('button', { name: 'Start match' }).click();
   await expect(host.locator('canvas#game')).toBeVisible({ timeout: 15_000 });
   await host.waitForFunction(() => (window.__floppy?.tick ?? 0) > 8, null, { timeout: 15_000 });
@@ -352,6 +358,11 @@ test('guest joining after the match started gets a binary late-join snapshot', a
     .toBeGreaterThan(0);
   const slot = await guest.evaluate(() => window.__floppy?.netSlot ?? 0);
   await host.waitForFunction(() => window.__floppy?.phase === 2, null, { timeout: 15_000 });
+  await host.waitForFunction(
+    (s) => window.__floppy?.playerGrounded?.[s] === true,
+    slot,
+    { timeout: 8_000 },
+  );
   const x0 = await host.evaluate((s) => window.__floppy?.playerXs?.[s] ?? 0, slot);
   await expect
     .poll(
