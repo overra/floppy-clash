@@ -31,8 +31,7 @@ test('boots, joins with keyboard, starts a local match vs bots', async ({ page }
   }
   const canvas = page.locator('canvas#game');
   await expect(canvas).toBeVisible();
-  const countdown = page.locator('[data-countdown]');
-  await expect(countdown.or(page.locator('.notice').first())).toBeVisible({ timeout: 8_000 });
+  await expect(page.locator('[data-countdown]')).toBeVisible({ timeout: 8_000 });
   const pixels = await page.evaluate(() => {
     const c = document.querySelector('canvas#game') as HTMLCanvasElement;
     const ctx = c.getContext('2d');
@@ -52,7 +51,7 @@ test('settings persist toggles and editor property panel opens', async ({ page }
   await expect(page.locator('text=Weapon toggles')).toBeVisible();
   await expect(page.locator('text=Per-pad remap')).toBeVisible();
   await page.locator('#lit').check();
-  await page.getByRole('button', { name: 'Save' }).click();
+  await page.getByRole('button', { name: 'Save', exact: true }).click();
   await page.getByRole('button', { name: 'Settings' }).click();
   await expect(page.locator('#lit')).toBeChecked();
   await page.getByRole('button', { name: 'Back' }).click();

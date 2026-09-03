@@ -246,6 +246,15 @@ function renderSettings(
   card.append(btn('Back', () => actions.back?.()));
 }
 
+function syncLobbyFields(card: HTMLElement, state: MenuState, settings: UserSettings): void {
+  const room = (card.querySelector('#room') as HTMLInputElement | null)?.value.trim().toUpperCase();
+  if (room) state.roomCode = room;
+  const hp = card.querySelector('#hp') as HTMLInputElement | null;
+  if (hp) state.maxHp = Number(hp.value) || settings.maxHp;
+  const ft = card.querySelector('#ft') as HTMLInputElement | null;
+  if (ft) state.firstTo = Number(ft.value) || 0;
+}
+
 function renderLobby(card: HTMLElement, state: MenuState, settings: UserSettings, actions: MenuActions): void {
   card.innerHTML = `<h2>Online lobby</h2>
     <p>Host-authoritative WebRTC. Signaling is local (<code>npm run server</code>); live WAN STUN/TURN is a hardware path.</p>
@@ -271,6 +280,7 @@ function renderLobby(card: HTMLElement, state: MenuState, settings: UserSettings
     btn('Send', () => {
       const text = input.value.trim();
       if (!text) return;
+      syncLobbyFields(card, state, settings);
       state.draftChat = '';
       actions.chat?.(text);
     }),
@@ -278,17 +288,15 @@ function renderLobby(card: HTMLElement, state: MenuState, settings: UserSettings
   card.append(chat, row);
   card.append(
     btn('Host', () => {
-      const room = (card.querySelector('#room') as HTMLInputElement | null)?.value.trim().toUpperCase();
-      state.roomCode = room || state.roomCode;
-      state.maxHp = Number((card.querySelector('#hp') as HTMLInputElement).value) || settings.maxHp;
-      state.firstTo = Number((card.querySelector('#ft') as HTMLInputElement).value) || 0;
+      syncLobbyFields(card, state, settings);
+      if (!state.roomCode) state.roomCode = Math.random().toString(36).slice(2, 8).toUpperCase();
       actions.host?.();
     }),
   );
   card.append(
     btn('Join', () => {
-      const room = (card.querySelector('#room') as HTMLInputElement | null)?.value.trim().toUpperCase();
-      state.roomCode = room || state.roomCode || 'JOINME';
+      syncLobbyFields(card, state, settings);
+      state.roomCode = state.roomCode || 'JOINME';
       actions.joinRoom?.();
     }),
   );

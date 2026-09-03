@@ -141,7 +141,7 @@ export function createGame(root: HTMLElement): Game {
           show();
         },
         host: () => {
-          menus.roomCode = menus.roomCode || Math.random().toString(36).slice(2, 8).toUpperCase();
+          if (!menus.roomCode) menus.roomCode = Math.random().toString(36).slice(2, 8).toUpperCase();
           settings.maxHp = menus.maxHp;
           settings.firstTo = menus.firstTo;
           saveSettings(settings);
