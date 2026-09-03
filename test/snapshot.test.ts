@@ -11,7 +11,9 @@ import {
   serializeWorld,
 } from '../src/sim/snapshot';
 import { spawnWeapon } from '../src/sim/systems/weapons';
+import { spawnSnake } from '../src/sim/weapons/projectiles';
 import {
+  Aim,
   Boss,
   Combat,
   Controller,
@@ -31,9 +33,12 @@ import {
   NetId,
   OwnedBy,
   PartOf,
+  Projectile,
   RagdollPart,
+  Snake,
   Status,
   Weapon,
+  replication,
 } from '../src/sim/traits';
 import { hold, makeSim, playerOf, pos } from './helpers';
 
@@ -293,5 +298,163 @@ describe('M8 snapshot', () => {
     const creditDelta = serializeDelta(host.ecs);
     const gunRec = creditDelta.entities.find((e) => e.netId === gun.get(NetId)!.id);
     expect(Number(gunRec?.traits.OwnedBy?.ownerNetId)).toBe(a.get(NetId)!.id);
+  });
+
+  it('serializes Aim.holdTicks, Weapon.pickupCooldown, and projectile extras', () => {
+    const host = makeSim({ seed: 101, settings: { playerCount: 2 } });
+    const a = playerOf(host, 0);
+    const aim = a.get(Aim)!;
+    a.set(Aim, { ...aim, holdTicks: 17 });
+    const gun = spawnWeapon(host.ecs, 'pistol', 8, 6);
+    gun.set(Weapon, { ...gun.get(Weapon)!, pickupCooldown: 22, thrownHit: true, thrown: true });
+    const bullet = host.ecs.spawn(
+      Projectile({
+        kind: 0,
+        damage: 12,
+        speed: 40,
+        bounces: 3,
+        fuse: 0,
+        x: 5,
+        y: 6,
+        vx: 8,
+        vy: -1,
+        gravity: 0.4,
+        ownerGrace: 6,
+        defId: 1,
+      }),
+      NetId({ id: 9001 }),
+    );
+    void bullet;
+    spawnSnake(host.ecs, 9, 5, a, false, false);
+    host.ecs.query(Snake).updateEach(([s]) => {
+      s.biteCooldown = 11;
+    });
+    const snap = serializeWorld(host.ecs);
+    const aRec = snap.entities.find((e) => Number(e.traits.Player?.slot) === 0);
+    expect(aRec?.traits.Aim?.holdTicks).toBe(17);
+    const gunRec = snap.entities.find((e) => e.netId === gun.get(NetId)!.id);
+    expect(gunRec?.traits.Weapon?.pickupCooldown).toBe(22);
+    expect(gunRec?.traits.Weapon?.thrownHit).toBe(1);
+    const pr = snap.entities.find((e) => e.traits.Projectile && Number(e.traits.Projectile.bounces) === 3);
+    expect(pr?.traits.Projectile).toMatchObject({ gravity: 0.4, ownerGrace: 6, bounces: 3 });
+    expect(snap.entities.some((e) => Number(e.traits.Snake?.biteCooldown) === 11)).toBe(true);
+
+    const view = createClientView(snap);
+    expect(playerOf(view.sim, 0).get(Aim)?.holdTicks).toBe(17);
+    let cd = -1;
+    let bounced = false;
+    let bite = -1;
+    view.sim.ecs.query(Weapon, NetId).updateEach(([w, n]) => {
+      if (n.id === gun.get(NetId)!.id) cd = w.pickupCooldown;
+    });
+    view.sim.ecs.query(Projectile).updateEach(([p]) => {
+      if (p.bounces === 3 && p.gravity === 0.4 && p.ownerGrace === 6) bounced = true;
+    });
+    view.sim.ecs.query(Snake).updateEach(([s]) => {
+      bite = s.biteCooldown;
+    });
+    expect(cd).toBe(22);
+    expect(bounced).toBe(true);
+    expect(bite).toBe(11);
+  });
+
+  it('deltas include Health-only and Destructible-only changes', () => {
+    const host = makeSim({
+      level: getLevel('test-block.destructible'),
+      seed: 102,
+      settings: { playerCount: 2 },
+    });
+    serializeWorld(host.ecs);
+    drainChangeTrackers(host.ecs);
+    const a = playerOf(host, 0);
+    a.set(Health, { hp: 61, maxHp: 100 });
+    const hpDelta = serializeDelta(host.ecs);
+    expect(hpDelta.entities.some((e) => Number(e.traits.Health?.hp) === 61)).toBe(true);
+    drainChangeTrackers(host.ecs);
+    host.ecs.query(Destructible, Hazard).updateEach(([d, hz]) => {
+      if (hz.kind === HazardKind.Destructible) d.hp = 41;
+    });
+    host.ecs.query(Destructible).updateEach(([d], e) => {
+      e.set(Destructible, { hp: d.hp, maxHp: d.maxHp });
+    });
+    const destDelta = serializeDelta(host.ecs);
+    expect(destDelta.entities.some((e) => Number(e.traits.Destructible?.hp) === 41)).toBe(true);
+  });
+
+  it('full snapshots cover every replicated trait class', () => {
+    const seen = new Set<string>();
+    const absorb = (snap: ReturnType<typeof serializeWorld>) => {
+      seen.add('NetId');
+      if (snap.phase != null) seen.add('RoundState');
+      if (snap.wins) seen.add('MatchState');
+      if (snap.stepScale != null) seen.add('SimClock');
+      if (snap.nextDrop != null) seen.add('DropState');
+      for (const e of snap.entities) {
+        for (const key of Object.keys(e.traits)) {
+          if (key === 'RagdollRoot') seen.add('Player');
+          else if (key === 'OwnedBy' || key === 'Lifetime') continue;
+          else seen.add(key);
+        }
+      }
+    };
+    const gym = makeSim({ seed: 103, settings: { playerCount: 2 } });
+    const p = playerOf(gym, 1);
+    spawnWeapon(gym.ecs, 'pistol', 7, 6);
+    const gun = spawnWeapon(gym.ecs, 'pistol', 8, 6);
+    gun.add(Held(), HeldBy(playerOf(gym, 0)));
+    gun.remove(Loose);
+    p.set(Health, { hp: 0, maxHp: 100 });
+    gym.step([hold({}), hold({}), hold({}), hold({})]);
+    const ms = gym.ecs.get(MatchState)!;
+    gym.ecs.set(MatchState, { ...ms, wins0: 2, firstTo: 5, maxHp: 80 });
+    playerOf(gym, 0).add(Crown());
+    absorb(serializeWorld(gym.ecs));
+    absorb(
+      serializeWorld(
+        makeSim({
+          level: getLevel('test-platform.moving'),
+          seed: 104,
+          settings: { playerCount: 2 },
+        }).ecs,
+      ),
+    );
+    absorb(
+      serializeWorld(
+        makeSim({
+          level: getLevel('halloween-boss'),
+          seed: 105,
+          settings: { playerCount: 2 },
+        }).ecs,
+      ),
+    );
+    const dest = makeSim({
+      level: getLevel('test-block.destructible'),
+      seed: 106,
+      settings: { playerCount: 2 },
+    });
+    spawnSnake(dest.ecs, 6, 5, playerOf(dest, 0), false, false);
+    dest.ecs.spawn(
+      Projectile({
+        kind: 0,
+        damage: 1,
+        speed: 1,
+        bounces: 0,
+        fuse: 0,
+        x: 1,
+        y: 1,
+        vx: 1,
+        vy: 0,
+        gravity: 0,
+        ownerGrace: 0,
+        defId: 0,
+      }),
+      NetId({ id: 8001 }),
+    );
+    absorb(serializeWorld(dest.ecs));
+    const missing = Object.entries(replication)
+      .filter(([, kind]) => kind === 'replicated')
+      .map(([name]) => name)
+      .filter((name) => !seen.has(name));
+    expect(missing, `unreplicated: ${missing.join(', ')}`).toEqual([]);
   });
 });

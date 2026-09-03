@@ -69,6 +69,11 @@ export type WorldSnapshot = {
   lastKiller?: number;
   wins?: number[];
   matchRound?: number;
+  firstTo?: number;
+  levelIndex?: number;
+  rotation?: number;
+  showWins?: number;
+  maxHp?: number;
   nextDrop?: number;
   looseCount?: number;
   stepScale?: number;
@@ -133,10 +138,13 @@ export function serializeWorld(world: World, opts?: { skipOwnedByCache?: boolean
         ducking: c.ducking ? 1 : 0,
         wallSliding: c.wallSliding ? 1 : 0,
         wallDir: c.wallDir,
+        coyote: c.coyote,
+        jumpBuffer: c.jumpBuffer,
+        lockTicks: c.lockTicks,
       };
     }
     const a = entity.get(Aim);
-    if (a) snap.traits.Aim = { x: a.x, y: a.y };
+    if (a) snap.traits.Aim = { x: a.x, y: a.y, holdTicks: a.holdTicks };
     const w = entity.get(Weapon);
     if (w) {
       const holder = entity.has(Held) ? entity.targetFor(HeldBy) : undefined;
@@ -144,6 +152,8 @@ export function serializeWorld(world: World, opts?: { skipOwnedByCache?: boolean
         defId: w.defId,
         ammo: w.ammo,
         thrown: w.thrown,
+        thrownHit: w.thrownHit ? 1 : 0,
+        pickupCooldown: w.pickupCooldown,
         held: entity.has(Held) ? 1 : 0,
         loose: entity.has(Loose) ? 1 : 0,
         holderNetId: holder?.get(NetId)?.id ?? -1,
@@ -161,10 +171,13 @@ export function serializeWorld(world: World, opts?: { skipOwnedByCache?: boolean
         fuse: pr.fuse,
         defId: pr.defId,
         speed: pr.speed,
+        bounces: pr.bounces,
+        gravity: pr.gravity,
+        ownerGrace: pr.ownerGrace,
       };
     }
     const sn = entity.get(Snake);
-    if (sn) snap.traits.Snake = { hp: sn.hp, giant: sn.giant, flying: sn.flying };
+    if (sn) snap.traits.Snake = { hp: sn.hp, giant: sn.giant, flying: sn.flying, biteCooldown: sn.biteCooldown };
     const rp = entity.get(RagdollPart);
     if (rp) {
       const root = entity.targetFor(PartOf);
@@ -215,6 +228,8 @@ export function serializeWorld(world: World, opts?: { skipOwnedByCache?: boolean
     if (entity.has(Static)) snap.traits.Static = { on: 1 };
     if (entity.has(Kinematic)) snap.traits.Kinematic = { on: 1 };
     if (entity.has(Solid)) snap.traits.Solid = { on: 1 };
+    if (entity.has(Loose)) snap.traits.Loose = { on: 1 };
+    if (entity.has(Held)) snap.traits.Held = { on: 1 };
     const path = entity.get(HazardPath);
     if (path) {
       snap.traits.HazardPath = {
@@ -247,6 +262,11 @@ export function serializeWorld(world: World, opts?: { skipOwnedByCache?: boolean
     lastKiller: rs?.lastKiller,
     wins: ms ? [ms.wins0, ms.wins1, ms.wins2, ms.wins3] : undefined,
     matchRound: ms?.round,
+    firstTo: ms?.firstTo,
+    levelIndex: ms?.levelIndex,
+    rotation: ms?.rotation,
+    showWins: ms?.showWins,
+    maxHp: ms?.maxHp,
     nextDrop: drop?.nextDrop,
     looseCount: drop?.looseCount,
     stepScale: clock?.stepScale,
@@ -256,18 +276,19 @@ export function serializeWorld(world: World, opts?: { skipOwnedByCache?: boolean
 }
 
 /** Consume change trackers after a full snapshot so the next delta is incremental. */
+const DELTA_TRAITS = [Transform, Status, Combat, HazardPath, Health, Destructible, Weapon, Hazard, Boss, Snake, Aim] as const;
+
 export function drainChangeTrackers(world: World): void {
-  world.query(Changed(Transform)).forEach(() => undefined);
-  world.query(Changed(Status)).forEach(() => undefined);
-  world.query(Changed(Combat)).forEach(() => undefined);
-  world.query(Changed(HazardPath)).forEach(() => undefined);
+  for (const trait of DELTA_TRAITS) {
+    world.query(Changed(trait)).forEach(() => undefined);
+  }
   world.query(Added(NetId)).forEach(() => undefined);
   world.query(Removed(NetId)).forEach(() => undefined);
   refreshOwnedByCache(world);
 }
 
 /**
- * Delta snapshot: `Changed(Transform|Status|Combat|HazardPath)` + `OwnedBy` diffs
+ * Delta snapshot: Changed on replicated value traits + `OwnedBy` diffs
  * + `Added`/`Removed` on `NetId` (PLAN 4.13). Late join still uses `serializeWorld`.
  */
 export function serializeDelta(world: World): WorldSnapshot {
@@ -282,15 +303,12 @@ export function serializeDelta(world: World): WorldSnapshot {
       if (id != null) include.add(id);
     }
   });
-  world.query(Changed(Status), NetId).updateEach(([_st, net]) => {
-    include.add(net.id);
-  });
-  world.query(Changed(Combat), NetId).updateEach(([_cb, net]) => {
-    include.add(net.id);
-  });
-  world.query(Changed(HazardPath), NetId).updateEach(([_hp, net]) => {
-    include.add(net.id);
-  });
+  for (const trait of DELTA_TRAITS) {
+    if (trait === Transform) continue;
+    world.query(Changed(trait), NetId).updateEach(([_v, net]) => {
+      include.add(net.id);
+    });
+  }
   world.query(Added(NetId)).updateEach(([net]) => {
     include.add(net.id);
     added.push(net.id);
@@ -349,11 +367,21 @@ function applyRecord(world: World, entity: Entity, rec: TraitSnapshot, full: boo
       ducking: c.ducking != null ? Boolean(Number(c.ducking)) : curC.ducking,
       wallSliding: c.wallSliding != null ? Boolean(Number(c.wallSliding)) : curC.wallSliding,
       wallDir: Number(c.wallDir ?? curC.wallDir),
+      coyote: Number(c.coyote ?? curC.coyote),
+      jumpBuffer: Number(c.jumpBuffer ?? curC.jumpBuffer),
+      lockTicks: Number(c.lockTicks ?? curC.lockTicks),
     });
   }
   const a = rec.traits.Aim;
   const curA = entity.get(Aim);
-  if (a && curA) entity.set(Aim, { ...curA, x: Number(a.x), y: Number(a.y) });
+  if (a && curA) {
+    entity.set(Aim, {
+      ...curA,
+      x: Number(a.x),
+      y: Number(a.y),
+      holdTicks: Number(a.holdTicks ?? curA.holdTicks),
+    });
+  }
   const cb = rec.traits.Combat;
   const curCb = entity.get(Combat);
   if (cb && curCb) {
@@ -375,6 +403,8 @@ function applyRecord(world: World, entity: Entity, rec: TraitSnapshot, full: boo
       defId: Number(w.defId ?? curW.defId),
       ammo: Number(w.ammo ?? curW.ammo),
       thrown: Boolean(w.thrown),
+      thrownHit: Boolean(Number(w.thrownHit ?? (curW.thrownHit ? 1 : 0))),
+      pickupCooldown: Number(w.pickupCooldown ?? curW.pickupCooldown),
     });
     applyHeldFlags(world, entity, w);
   }
@@ -388,6 +418,13 @@ function applyRecord(world: World, entity: Entity, rec: TraitSnapshot, full: boo
       vx: Number(pr.vx),
       vy: Number(pr.vy),
       kind: Number(pr.kind ?? curPr.kind),
+      damage: Number(pr.damage ?? curPr.damage),
+      fuse: Number(pr.fuse ?? curPr.fuse),
+      defId: Number(pr.defId ?? curPr.defId),
+      speed: Number(pr.speed ?? curPr.speed),
+      bounces: Number(pr.bounces ?? curPr.bounces),
+      gravity: Number(pr.gravity ?? curPr.gravity),
+      ownerGrace: Number(pr.ownerGrace ?? curPr.ownerGrace),
     });
   }
   const st = rec.traits.Status;
@@ -400,6 +437,17 @@ function applyRecord(world: World, entity: Entity, rec: TraitSnapshot, full: boo
     };
     if (entity.get(Status)) entity.set(Status, next);
     else entity.add(Status(next));
+  }
+  const sn = rec.traits.Snake;
+  const curSn = entity.get(Snake);
+  if (sn && curSn) {
+    entity.set(Snake, {
+      ...curSn,
+      hp: Number(sn.hp ?? curSn.hp),
+      giant: Number(sn.giant ?? curSn.giant),
+      flying: Number(sn.flying ?? curSn.flying),
+      biteCooldown: Number(sn.biteCooldown ?? curSn.biteCooldown),
+    });
   }
   const hz = rec.traits.Hazard;
   const curHz = entity.get(Hazard);
@@ -473,6 +521,8 @@ function applyRecord(world: World, entity: Entity, rec: TraitSnapshot, full: boo
     entity.has(Kinematic),
   );
   addTag('Solid', () => entity.add(Solid()), () => entity.remove(Solid), entity.has(Solid));
+  addTag('Loose', () => entity.add(Loose()), () => entity.remove(Loose), entity.has(Loose));
+  addTag('Held', () => entity.add(Held()), () => entity.remove(Held), entity.has(Held));
   if (h) {
     if (Number(h.hp) <= 0) {
       if (!entity.has(Dead)) entity.add(Dead());
@@ -597,6 +647,11 @@ function applyWorldTraits(world: World, snap: WorldSnapshot): void {
       wins2: snap.wins[2] ?? 0,
       wins3: snap.wins[3] ?? 0,
       round: snap.matchRound ?? ms.round,
+      firstTo: snap.firstTo ?? ms.firstTo,
+      levelIndex: snap.levelIndex ?? ms.levelIndex,
+      rotation: snap.rotation ?? ms.rotation,
+      showWins: snap.showWins ?? ms.showWins,
+      maxHp: snap.maxHp ?? ms.maxHp,
     };
     world.set(MatchState, next);
   }
@@ -654,9 +709,9 @@ function spawnMissing(world: World, rec: TraitSnapshot, newRootNetIds: Set<numbe
       Weapon({
         defId: Number(w.defId),
         ammo: Number(w.ammo ?? 0),
-        pickupCooldown: 0,
+        pickupCooldown: Number(w.pickupCooldown ?? 0),
         thrown: Boolean(w.thrown),
-        thrownHit: false,
+        thrownHit: Boolean(Number(w.thrownHit ?? 0)),
       }),
       Transform({ x, y, angle }),
       PrevTransform({ x, y, angle }),
@@ -680,14 +735,14 @@ function spawnMissing(world: World, rec: TraitSnapshot, newRootNetIds: Set<numbe
         kind: Number(pr.kind ?? 0),
         damage: Number(pr.damage ?? 0),
         speed: Number(pr.speed ?? 0),
-        bounces: 0,
+        bounces: Number(pr.bounces ?? 0),
         fuse: Number(pr.fuse ?? 0),
         x: Number(pr.x ?? x),
         y: Number(pr.y ?? y),
         vx: Number(pr.vx ?? 0),
         vy: Number(pr.vy ?? 0),
-        gravity: 0,
-        ownerGrace: 0,
+        gravity: Number(pr.gravity ?? 0),
+        ownerGrace: Number(pr.ownerGrace ?? 0),
         defId: Number(pr.defId ?? 0),
       }),
       NetId({ id: rec.netId }),
@@ -702,7 +757,7 @@ function spawnMissing(world: World, rec: TraitSnapshot, newRootNetIds: Set<numbe
         hp,
         giant: Number(sn.giant ?? 0),
         flying: Number(sn.flying ?? 0),
-        biteCooldown: 0,
+        biteCooldown: Number(sn.biteCooldown ?? 0),
       }),
       Health({ hp, maxHp: hp }),
       Transform({ x, y, angle }),
