@@ -208,6 +208,7 @@ describe('M8 netcode', () => {
     expect(view!.restored).toBe(true);
     expect(view!.appliedTick).toBeGreaterThan(0);
     expect(Number.isFinite(view!.appliedX)).toBe(true);
+    expect(view!.scoreboardTicksSeen).toBeGreaterThanOrEqual(10 * 80);
   }, 60_000);
 
   it('host applies a remote 3-input bundle to the matching seat', () => {

@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
+import type { Entity } from 'koota';
 import type { World as PhysicsWorld } from 'planck';
 import { createClientView } from '../src/net/clientView';
 import { getLevel } from '../src/levels/catalog';
+import { destroyBody } from '../src/sim/physics/bodies';
 import {
   applyInterpolatedBodyVel,
   drainChangeTrackers,
@@ -417,6 +419,57 @@ describe('M8 snapshot', () => {
       }
     });
     expect(vx).toBeCloseTo(4.2, 1);
+    const density = { n: 0 };
+    view.sim.ecs.query(Hazard, NetId).updateEach(([hz, n], e) => {
+      if (hz.kind !== HazardKind.Crate || n.id !== crateNet) return;
+      density.n = view.sim.ctx.bodies.get(e)?.getFixtureList()?.getDensity() ?? 0;
+    });
+    expect(density.n).toBeCloseTo(0.5, 5);
+  });
+
+  it('spawnMissing late-join crates are Appendix D boxes (density 0.5)', () => {
+    const host = makeSim({
+      level: getLevel('test-crate'),
+      seed: 206,
+      settings: { playerCount: 1 },
+    });
+    let crateNet = -1;
+    host.ecs.query(Hazard, NetId).updateEach(([hz, n], e) => {
+      if (hz.kind !== HazardKind.Crate) return;
+      crateNet = n.id;
+      host.ctx.bodies.get(e)?.setLinearVelocity({ x: 3.1, y: 0.4 });
+    });
+    expect(crateNet).toBeGreaterThanOrEqual(0);
+    const snap = serializeWorld(host.ecs);
+    const view = createClientView(snap, 120, getLevel('test-crate'));
+    const kill: Entity[] = [];
+    view.sim.ecs.query(Hazard, NetId).updateEach(([hz, n], e) => {
+      if (hz.kind === HazardKind.Crate && n.id === crateNet) kill.push(e);
+    });
+    expect(kill.length).toBeGreaterThan(0);
+    for (const e of kill) {
+      destroyBody(view.sim.ecs, e);
+      e.destroy();
+    }
+    let gone = 0;
+    view.sim.ecs.query(Hazard, NetId).updateEach(([hz, n]) => {
+      if (hz.kind === HazardKind.Crate && n.id === crateNet) gone += 1;
+    });
+    expect(gone).toBe(0);
+    restoreWorld(view.sim.ecs, snap);
+    const restored = { n: 0, density: 0, friction: 0, vx: 0 };
+    view.sim.ecs.query(Hazard, NetId).updateEach(([hz, n], e) => {
+      if (hz.kind !== HazardKind.Crate || n.id !== crateNet) return;
+      const fixture = view.sim.ctx.bodies.get(e)?.getFixtureList();
+      restored.n += 1;
+      restored.density = fixture?.getDensity() ?? 0;
+      restored.friction = fixture?.getFriction() ?? 0;
+      restored.vx = view.sim.ctx.bodies.get(e)?.getLinearVelocity().x ?? 0;
+    });
+    expect(restored.n).toBe(1);
+    expect(restored.density).toBeCloseTo(0.5, 5);
+    expect(restored.friction).toBeCloseTo(0.5, 5);
+    expect(restored.vx).toBeCloseTo(3.1, 1);
   });
 
   it('interpolates BodyVel between from/to snapshots', () => {

@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { createClientView, snapshotCanOpenClientView } from '../src/net/clientView';
 import { enqueuePendingSnap, extrasAfterOpen, takeOpenableFromQueue } from '../src/net/lateJoinBuffer';
+import { accumulateScoreboardTicks } from '../src/net/scoreboardTicks';
+import { RoundPhase } from '../src/sim/traits';
 import { parseLevel } from '../src/sim/level/schema';
 import type { WorldSnapshot } from '../src/sim/snapshot';
 import { hold, makeSim } from './helpers';
@@ -108,5 +110,35 @@ describe('late-join snap buffer (no e2e later-snap OR)', () => {
     view.apply(160);
     expect(view.appliedTick).toBe(late.tick);
     expect(view.appliedTick).not.toBe(early.tick);
+  });
+});
+
+describe('client scoreboard tick accumulator (no render-rate OR)', () => {
+  it('counts host tick deltas, ignores same-tick re-apply, and does not accept a single end snap', () => {
+    let seen = 0;
+    let cursor = null as ReturnType<typeof accumulateScoreboardTicks>['cursor'] | null;
+    const apply = (tick: number, phase: number) => {
+      const next = accumulateScoreboardTicks(seen, cursor, { tick, phase });
+      seen = next.seen;
+      cursor = next.cursor;
+    };
+    apply(10, RoundPhase.Fighting);
+    expect(seen).toBe(0);
+    apply(100, RoundPhase.Scoreboard);
+    expect(seen).toBe(1);
+    apply(100, RoundPhase.Scoreboard);
+    expect(seen).toBe(1);
+    apply(103, RoundPhase.Scoreboard);
+    apply(106, RoundPhase.Scoreboard);
+    apply(189, RoundPhase.Scoreboard);
+    expect(seen).toBe(90);
+    apply(190, RoundPhase.Loading);
+    expect(seen).toBe(90);
+
+    const oneShot = accumulateScoreboardTicks(0, { tick: 10, phase: RoundPhase.Fighting }, {
+      tick: 189,
+      phase: RoundPhase.Scoreboard,
+    });
+    expect(oneShot.seen).toBe(1);
   });
 });

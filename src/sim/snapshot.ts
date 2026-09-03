@@ -903,6 +903,34 @@ function spawnMissing(world: World, rec: TraitSnapshot, newRootNetIds: Set<numbe
     return;
   }
 
+  if (hz && t && Number(hz.kind) === HazardKind.Crate) {
+    const hx = Math.max(0.05, Number(hz.param0 ?? 1.1) / 2);
+    const hy = Math.max(0.05, Number(hz.param1 ?? 1.1) / 2);
+    const entity = world.spawn(
+      Transform({ x, y, angle }),
+      PrevTransform({ x, y, angle }),
+      Hazard({
+        kind: HazardKind.Crate,
+        param0: Number(hz.param0 ?? 1.1),
+        param1: Number(hz.param1 ?? 1.1),
+        param2: Number(hz.param2 ?? 0),
+        param3: Number(hz.param3 ?? 0),
+        hp: Number(hz.hp ?? 0),
+        armed: Number(hz.armed ?? 1),
+      }),
+      NetId({ id: rec.netId }),
+    );
+    const body = createBoxBody(ctx.physics, entity, 'prop', x, y, hx, hy, 'dynamic', {
+      density: 0.5,
+      friction: 0.5,
+      restitution: 0.05,
+      fixedRotation: false,
+    });
+    registerBody(world, entity, body);
+    writeBodyVel(world, entity, rec);
+    return;
+  }
+
   if (hz && t && Number(hz.kind) === HazardKind.Debris) {
     const hx = Number(hz.param0 ?? 0.24) / 2;
     const hy = Number(hz.param1 ?? 0.24) / 2;

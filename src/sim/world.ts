@@ -201,8 +201,8 @@ function spawnTestBoxes(world: World, count: number): void {
     );
     assignNetId(world, e);
     const body = createBoxBody(ctx.physics, e, 'prop', x, y, 0.4, 0.4, 'dynamic', {
-      density: 1,
-      friction: 0.4,
+      density: 0.5,
+      friction: 0.5,
       restitution: 0.05,
       fixedRotation: false,
     });

@@ -438,11 +438,7 @@ export function createGame(root: HTMLElement): Game {
     const t0 = performance.now();
     view.push(t0, opened);
     extras.forEach((snap, i) => {
-      try {
-        view.push(t0 + (i + 1) * 16, snap);
-      } catch {
-        /* later snap */
-      }
+      view.push(t0 + (i + 1) * 16, snap);
     });
     view.apply(t0 + extras.length * 16 + 120);
   }
@@ -1253,8 +1249,9 @@ export function createGame(root: HTMLElement): Game {
         sim.ctx.tuning.scoreboardTicks = 90;
       },
       matchRound: handle?.ecs.get(MatchState)?.round ?? 0,
-      scoreboardTicksSeen,
-      scoreboardWindow: handle?.ctx.tuning.scoreboardTicks ?? 90,
+      scoreboardTicksSeen:
+        menus.netRole === 'client' && clientView ? clientView.scoreboardTicksSeen : scoreboardTicksSeen,
+      scoreboardWindow: handle?.ctx.tuning.scoreboardTicks ?? 0,
       clientViewTick: clientView?.appliedTick ?? 0,
       clientAppliedX: clientView?.appliedX ?? 0,
       clientRestored: clientView?.restored ?? false,

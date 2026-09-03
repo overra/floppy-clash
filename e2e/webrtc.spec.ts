@@ -258,6 +258,18 @@ test('four localhost peers connect; 100ms/2% shaping still delivers chat', async
         timeout: 10_000,
       })
       .toBe(hostLevel);
+    await expect
+      .poll(async () => guest.evaluate(() => window.__floppy?.scoreboardWindow ?? 0), {
+        timeout: 10_000,
+      })
+      .toBe(90);
+    await expect
+      .poll(async () => guest.evaluate(() => window.__floppy?.scoreboardTicksSeen ?? 0), {
+        timeout: 20_000,
+      })
+      .toBeGreaterThanOrEqual(10 * 70);
+    const pending = await guest.evaluate(() => window.__floppy?.clientPendingSnaps ?? -1);
+    expect(pending).toBe(0);
   }
   await Promise.all(ctxs.map((c) => c.close()));
 });
@@ -378,6 +390,11 @@ test('guest joining after the match started gets a binary late-join snapshot', a
       timeout: 15_000,
     })
     .toBe(true);
+  await expect
+    .poll(async () => guest.evaluate(() => window.__floppy?.clientPendingSnaps ?? -1), {
+      timeout: 10_000,
+    })
+    .toBe(0);
   const hostX = await host.evaluate(() => window.__floppy?.playerXs?.[0] ?? 0);
   const guestX = await guest.evaluate(() => window.__floppy?.clientAppliedX ?? 0);
   expect(Number.isFinite(hostX)).toBe(true);

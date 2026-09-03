@@ -210,8 +210,9 @@ describe('client interpolation view', () => {
     host.ctx.tuning.slowmoTicks = 1;
     expect(host.ctx.tuning.scoreboardTicks).toBe(90);
     const first = host.snapshot();
-    const view = createClientView(first);
+    const view = createClientView(first, 100);
     expect(view.sim.ctx.level.id).toBe(first.levelId);
+    view.push(0, first);
     let kills = 0;
     let scoreboardSamples = 0;
     for (let i = 0; i < 4000; i++) {
@@ -221,16 +222,21 @@ describe('client interpolation view', () => {
       const tickKills = ev.filter((e) => e.type === 'kill').length;
       if (tickKills > 0) expect(fists).toBe(true);
       kills += tickKills;
+      if (i % 3 === 0) {
+        const snap = host.snapshot();
+        view.push(i * (1000 / 60), snap);
+        view.apply(i * (1000 / 60) + 120);
+      }
       if (host.ctx.level.id !== first.levelId) break;
     }
     expect(kills).toBeGreaterThan(0);
     expect(scoreboardSamples).toBeGreaterThanOrEqual(88);
+    expect(view.scoreboardTicksSeen).toBeGreaterThanOrEqual(88);
     expect(host.ctx.level.id).not.toBe(first.levelId);
     const snap = host.snapshot();
     expect(snap.levelId).toBe(host.ctx.level.id);
-    view.push(0, first);
-    view.push(50, snap);
-    view.apply(200);
+    view.push(4000 * (1000 / 60), snap);
+    view.apply(4000 * (1000 / 60) + 120);
     expect(view.sim.ctx.level.id).toBe(host.ctx.level.id);
     expect(view.sim.ctx.level.bounds.w).toBe(host.ctx.level.bounds.w);
   });

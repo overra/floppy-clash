@@ -22,6 +22,7 @@ import {
   freezeHazardKinematics,
   hold,
   makeSim,
+  pin,
   place,
   playerOf,
   pointOnSweepOutsideCurrent,
@@ -555,6 +556,22 @@ describe('honest PLAN stand-ins (no pin/pred OR, no scoreboard shrink)', () => {
     expect((after?.y ?? top.y) < top.y - 0.15 || Math.abs(after?.angle ?? 0) > 0.3).toBe(true);
   });
 
+  it('place leaves PrevTransform so last-tick sweeps stay honest (pin does not)', () => {
+    const sim = makeSim({ settings: { playerCount: 1 } });
+    const p = playerOf(sim);
+    pin(sim, p, 6, 4);
+    expect(p.get(PrevTransform)?.x).toBeCloseTo(6, 5);
+    expect(p.get(PrevTransform)?.y).toBeCloseTo(4, 5);
+    place(sim, p, 11, 7);
+    expect(p.get(Transform)?.x).toBeCloseTo(11, 5);
+    expect(p.get(Transform)?.y).toBeCloseTo(7, 5);
+    expect(p.get(PrevTransform)?.x).toBeCloseTo(6, 5);
+    expect(p.get(PrevTransform)?.y).toBeCloseTo(4, 5);
+    const body = sim.ctx.bodies.get(p)?.getPosition();
+    expect(body?.x).toBeCloseTo(11, 5);
+    expect(body?.y).toBeCloseTo(7, 5);
+  });
+
   it('crates are dynamic Appendix D boxes (density 0.5, friction 0.5)', () => {
     const sim = makeSim({ level: getLevel('test-crate'), seed: 150, settings: { playerCount: 1 } });
     const seen = { n: 0, density: 0, friction: 0, type: '' };
@@ -569,6 +586,21 @@ describe('honest PLAN stand-ins (no pin/pred OR, no scoreboard shrink)', () => {
     });
     expect(seen.n).toBeGreaterThan(0);
     expect(seen.type).toBe('dynamic');
+    expect(seen.density).toBeCloseTo(0.5, 5);
+    expect(seen.friction).toBeCloseTo(0.5, 5);
+  });
+
+  it('M0 test boxes tagged as crates use Appendix D density/friction', () => {
+    const sim = makeSim({ seed: 152, settings: { playerCount: 0 }, boxes: 3, spawnPlayers: false });
+    const seen = { n: 0, density: 0, friction: 0 };
+    sim.ecs.query(Hazard).updateEach(([hz], e) => {
+      if (hz.kind !== HazardKind.Crate) return;
+      const fixture = sim.ctx.bodies.get(e)?.getFixtureList();
+      seen.n += 1;
+      seen.density = fixture?.getDensity() ?? 0;
+      seen.friction = fixture?.getFriction() ?? 0;
+    });
+    expect(seen.n).toBe(3);
     expect(seen.density).toBeCloseTo(0.5, 5);
     expect(seen.friction).toBeCloseTo(0.5, 5);
   });

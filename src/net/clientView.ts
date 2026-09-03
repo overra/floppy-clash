@@ -1,10 +1,11 @@
 import { gymLevel } from '../levels/gym';
 import { findLevel } from '../levels/catalog';
 import type { LevelDef } from '../sim/level/schema';
-import { NetId, Player, PrevTransform, Transform } from '../sim/traits';
+import { NetId, Player, PrevTransform, RoundState, Transform } from '../sim/traits';
 import { applyInterpolatedBodyVel, mergeSnapshot, restoreWorld, type WorldSnapshot } from '../sim/snapshot';
 import { createSimWorld, type SimHandle } from '../sim/world';
 import { createInterpBuffer } from './interp';
+import { accumulateScoreboardTicks, type ScoreboardTickCursor } from './scoreboardTicks';
 
 export type ClientView = {
   sim: SimHandle;
@@ -12,6 +13,8 @@ export type ClientView = {
   appliedX: number;
   restored: boolean;
   alpha: number;
+  /** Host Scoreboard ticks this view actually applied (not render-frame counts). */
+  scoreboardTicksSeen: number;
   /** Host custom-level JSON for the next rebuild (rotation / late user maps). */
   useLevel: (level: LevelDef) => void;
   push: (at: number, snap: WorldSnapshot) => void;
@@ -85,6 +88,7 @@ export function createClientView(first: WorldSnapshot, delayMs = 120, level?: Le
   restoreWorld(sim.ecs, first);
   const buffer = createInterpBuffer(delayMs);
   let acc: WorldSnapshot = first.full === false ? { ...first, full: true } : first;
+  let scoreboardCursor: ScoreboardTickCursor | null = null;
 
   const view: ClientView = {
     sim,
@@ -92,6 +96,7 @@ export function createClientView(first: WorldSnapshot, delayMs = 120, level?: Le
     appliedX: 0,
     restored: true,
     alpha: 1,
+    scoreboardTicksSeen: 0,
     useLevel(next) {
       levelOverride = next;
     },
@@ -124,6 +129,7 @@ export function createClientView(first: WorldSnapshot, delayMs = 120, level?: Le
       if (from && from !== snap && sameLevel) {
         applyInterpolatedBodyVel(sim.ecs, from, snap, pair?.alpha ?? 1);
       }
+      noteScoreboard(snap);
       view.alpha = pair?.alpha ?? 1;
       view.appliedTick = snap.tick;
       view.restored = true;
@@ -145,8 +151,20 @@ export function createClientView(first: WorldSnapshot, delayMs = 120, level?: Le
     buffer.reset();
     acc = snap.full === false ? { ...snap, full: true } : snap;
     view.sim = sim;
+    noteScoreboard(snap);
   }
 
+  function noteScoreboard(snap: WorldSnapshot): void {
+    const phase = sim.ecs.get(RoundState)?.phase ?? snap.phase ?? 0;
+    const next = accumulateScoreboardTicks(view.scoreboardTicksSeen, scoreboardCursor, {
+      tick: snap.tick,
+      phase,
+    });
+    view.scoreboardTicksSeen = next.seen;
+    scoreboardCursor = next.cursor;
+  }
+
+  noteScoreboard(first);
   sim.ecs.query(Player, Transform).updateEach(([p, t]) => {
     if (p.slot === 0) view.appliedX = t.x;
   });
