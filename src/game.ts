@@ -108,7 +108,12 @@ type FloppyDebug = {
   forceLastStand: () => void;
   armLiveFists: () => void;
   disarmLiveFists: () => void;
-  configureMatch: (partial: { maxHp?: number; enabledWeapons?: string[] | 'all' }) => void;
+  configureMatch: (partial: {
+    maxHp?: number;
+    enabledWeapons?: string[] | 'all';
+    enabledLevels?: string[] | 'all';
+    rotation?: 'random' | 'ordered';
+  }) => void;
   fistKills: number;
   liveFists: boolean;
   speedRounds: () => void;
@@ -1129,6 +1134,21 @@ export function createGame(root: HTMLElement): Game {
         if (partial.enabledWeapons !== undefined) {
           settings.enabledWeapons = partial.enabledWeapons;
           if (sim) sim.ctx.settings.enabledWeapons = partial.enabledWeapons;
+        }
+        if (partial.enabledLevels !== undefined) {
+          settings.enabledLevels = partial.enabledLevels;
+          if (sim) sim.ctx.settings.enabledLevels = partial.enabledLevels;
+        }
+        if (partial.rotation !== undefined) {
+          settings.rotation = partial.rotation;
+          if (sim) {
+            sim.ctx.settings.rotation = partial.rotation;
+            const ms = sim.ecs.get(MatchState);
+            if (ms) {
+              ms.rotation = partial.rotation === 'ordered' ? 1 : 0;
+              sim.ecs.set(MatchState, ms);
+            }
+          }
         }
       },
       fistKills,

@@ -384,7 +384,12 @@ test('local 10-round fists-only match (PLAN M2 stand-in)', async ({ page }) => {
   await page.getByRole('button', { name: 'Start' }).click();
   await page.waitForFunction(() => Boolean(window.__floppy?.configureMatch), null, { timeout: 15_000 });
   await page.evaluate(() => {
-    window.__floppy?.configureMatch?.({ maxHp: 1, enabledWeapons: [] });
+    window.__floppy?.configureMatch?.({
+      maxHp: 1,
+      enabledWeapons: [],
+      enabledLevels: ['fist-pit', 'fist-pit-b'],
+      rotation: 'ordered',
+    });
     window.__floppy?.speedRounds();
     window.__floppy?.armLiveFists();
   });
