@@ -67,9 +67,10 @@ describe('PLAN 4.11 persistent decals', () => {
 
   it('GPU renderer uploads the persistent texture only when dirty', () => {
     const src = readFileSync(resolve(process.cwd(), 'src/render/gpu/renderer.ts'), 'utf8');
-    expect(src).toContain('if (!layer.dirty && decalTex && decalBind) return');
+    expect(src).toContain('if (!decalTex || !decalBind || layer.dirty)');
     expect(src).toContain('device.queue.writeTexture');
-    expect(src).toContain('pass.draw(6, 1)');
+    expect(src).toContain('decalPipeline.with(pass).with(decalBind).draw(6)');
+    expect(src).toContain('createDecalDrawPipeline');
     const canvas = readFileSync(resolve(process.cwd(), 'src/render/canvas/renderer.ts'), 'utf8');
     expect(canvas).toContain('if (layer.dirty)');
     expect(canvas).toContain('renderer.decalUploads += 1');
