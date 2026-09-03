@@ -1,10 +1,60 @@
-import { createQuery, type World } from 'koota';
+import { createQuery, type Entity, type World } from 'koota';
 import { getContext } from '../context';
 import { cloneInput, EMPTY_INPUT } from '../input';
 import { raycastClosest } from '../physics/queries';
-import { Aim, Bot, Controller, Dead, Loose, Player, Transform, Weapon } from '../traits';
+import {
+  Aim,
+  Bot,
+  Controller,
+  Dead,
+  Hazard,
+  HazardKind,
+  Held,
+  HeldBy,
+  Loose,
+  Player,
+  Transform,
+  Weapon,
+} from '../traits';
 
 const bots = createQuery(Player, Controller, Transform, Aim);
+
+const AVOID = new Set<number>([
+  HazardKind.Lava,
+  HazardKind.Spikes,
+  HazardKind.Saw,
+  HazardKind.Spikeball,
+  HazardKind.Crusher,
+  HazardKind.Laser,
+]);
+
+function isArmed(world: World, entity: Entity): boolean {
+  for (const weapon of world.query(Weapon, Held)) {
+    if (weapon.targetFor(HeldBy) === entity) return true;
+  }
+  return false;
+}
+
+function nearestLoose(world: World, x: number, y: number): { x: number; y: number } | undefined {
+  let best: { x: number; y: number; d: number } | undefined;
+  world.query(Weapon, Loose, Transform).updateEach(([_w, lt]) => {
+    const d = Math.hypot(lt.x - x, lt.y - y);
+    if (!best || d < best.d) best = { x: lt.x, y: lt.y, d };
+  });
+  return best;
+}
+
+function hazardAhead(world: World, x: number, y: number, dir: number): boolean {
+  let danger = false;
+  const lookX = x + dir * 1.4;
+  world.query(Hazard, Transform).updateEach(([hz, ht]) => {
+    if (!AVOID.has(hz.kind)) return;
+    if (Math.abs(ht.x - lookX) < 1.6 && Math.abs(ht.y - y) < 2.2) danger = true;
+  });
+  const pit = raycastClosest(world, lookX, y, lookX, y - 3.2);
+  if (!pit) danger = true;
+  return danger;
+}
 
 export function attachBots(world: World, slots: number[]): void {
   world.query(Player).updateEach(([p], e) => {
@@ -28,12 +78,9 @@ export function thinkBots(world: World): void {
         target.cur = { x: ot.x, y: ot.y };
       }
     });
-    const loose = world.queryFirst(Weapon, Loose, Transform);
-    const looseT = loose?.get(Transform);
-    if (looseT && !world.query(Weapon).some((w) => w.targetFor && w.targetFor)) {
-      // pick up if close
-    }
-    if (looseT && Math.hypot(looseT.x - tr.x, looseT.y - tr.y) < 8) {
+    const looseT = nearestLoose(world, tr.x, tr.y);
+    const armed = isArmed(world, entity);
+    if (!armed && looseT && Math.hypot(looseT.x - tr.x, looseT.y - tr.y) < 8) {
       input.moveX = Math.sign(looseT.x - tr.x);
       if (looseT.y > tr.y + 1) input.jump = bot.think % 20 < 2;
     } else if (target.cur) {
@@ -48,6 +95,11 @@ export function thinkBots(world: World): void {
       if (dy > 1.2 || Math.abs(dx) > 3) input.jump = bot.think % 16 < 3;
       const wall = raycastClosest(world, tr.x, tr.y, tr.x + Math.sign(dx) * 0.5, tr.y);
       if (wall && !ctrl.grounded) input.jump = true;
+    }
+    const dir = Math.sign(input.moveX) || ctrl.facing || 1;
+    if (hazardAhead(world, tr.x, tr.y, dir)) {
+      input.moveX = -dir;
+      input.jump = true;
     }
     if (tr.y < ctx.level.bounds.y + 2) input.jump = true;
     ctx.inputs[player.inputIndex] = input;

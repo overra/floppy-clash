@@ -141,10 +141,12 @@ describe('M4 hazard details', () => {
 
   it('ice fixture is low-friction and can be stood on', () => {
     const sim = makeSim({ level: getLevel('test-ice'), seed: 54, settings: { playerCount: 1 } });
-    expect(() => {
-      for (let i = 0; i < 40; i++) sim.step([hold({ moveX: 1 }), hold({}), hold({}), hold({})]);
-    }).not.toThrow();
-    expect(Number.isFinite(playerOf(sim).get(Transform)?.x)).toBe(true);
+    const p = playerOf(sim);
+    sim.ctx.bodies.get(p)?.setPosition({ x: 12, y: 3.2 });
+    for (let i = 0; i < 24; i++) sim.step([hold({ moveX: 1 }), hold({}), hold({}), hold({})]);
+    for (let i = 0; i < 6; i++) sim.step([hold({}), hold({}), hold({}), hold({})]);
+    expect(Math.abs(sim.ctx.bodies.get(p)?.getLinearVelocity().x ?? 0)).toBeGreaterThan(4);
+    expect(Number.isFinite(p.get(Transform)?.x)).toBe(true);
   });
 
   it('destructible block loses HP to bullets and a barrel explodes for 10–55', () => {

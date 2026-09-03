@@ -11,6 +11,8 @@ import {
   Dead,
   Destructible,
   Health,
+  Held,
+  HeldBy,
   Loose,
   OwnedBy,
   Player,
@@ -21,6 +23,7 @@ import {
   Transform,
   Weapon,
 } from '../traits';
+import { disarm } from '../player/combat';
 import { weaponByIndex } from './defs';
 import type { FixtureUserData } from '../physics/categories';
 
@@ -28,6 +31,61 @@ const bullets = createQuery(Projectile);
 
 function ownerOf(entity: Entity): Entity | undefined {
   return entity.targetFor(OwnedBy);
+}
+
+/** Segment intersection; `u` is 0 at A and 1 at B. */
+function segmentHit(
+  ax: number,
+  ay: number,
+  bx: number,
+  by: number,
+  cx: number,
+  cy: number,
+  dx: number,
+  dy: number,
+): { x: number; y: number; u: number } | null {
+  const den = (ax - bx) * (cy - dy) - (ay - by) * (cx - dx);
+  if (Math.abs(den) < 1e-8) return null;
+  const t = ((ax - cx) * (cy - dy) - (ay - cy) * (cx - dx)) / den;
+  const u = ((ax - cx) * (ay - by) - (ay - cy) * (ax - bx)) / den;
+  if (t < 0 || t > 1 || u < 0 || u > 1) return null;
+  return { x: ax + t * (bx - ax), y: ay + t * (by - ay), u };
+}
+
+/**
+ * PLAN 4.9: hits on a held weapon's far end deflect; hits near the hand disarm.
+ * Held bodies are deactivated, so this is a line test against the aim-aligned barrel.
+ */
+function heldWeaponIntercept(
+  world: World,
+  x0: number,
+  y0: number,
+  x1: number,
+  y1: number,
+  owner: Entity | undefined,
+): 'none' | 'deflect' | 'disarm' {
+  let result: 'none' | 'deflect' | 'disarm' = 'none';
+  world.query(Weapon, Held).updateEach(([w], weapon) => {
+    if (result !== 'none') return;
+    const holder = weapon.targetFor(HeldBy);
+    if (!holder || holder === owner) return;
+    const aim = holder.get(Aim);
+    const t = holder.get(Transform);
+    if (!aim || !t) return;
+    const def = weaponByIndex(w.defId);
+    const handX = t.x + aim.x * 0.35;
+    const handY = t.y + aim.y * 0.35;
+    const tipX = handX + aim.x * def.shape.length;
+    const tipY = handY + aim.y * def.shape.length;
+    const hit = segmentHit(x0, y0, x1, y1, handX, handY, tipX, tipY);
+    if (!hit) return;
+    if (hit.u >= 0.55) result = 'deflect';
+    else {
+      result = 'disarm';
+      disarm(world, holder);
+    }
+  });
+  return result;
 }
 
 function applyStatus(target: Entity, status: string, ticks: number): void {
@@ -74,6 +132,7 @@ function explode(world: World, x: number, y: number, defId: number, owner?: Enti
     if (!world.has(target)) return;
     if (target.has(Player) && !target.has(Dead)) {
       takeDamage(world, target, damage * falloff, 'body', owner ?? -1, x, y);
+      if (def.projectile.status !== 'none') applyStatus(target, def.projectile.status, 180);
     }
     if (target.has(Destructible)) {
       const d = target.get(Destructible);
@@ -85,7 +144,7 @@ function explode(world: World, x: number, y: number, defId: number, owner?: Enti
   });
 }
 
-function spawnSnake(world: World, x: number, y: number, owner: Entity | undefined, giant: boolean, flying: boolean): void {
+export function spawnSnake(world: World, x: number, y: number, owner: Entity | undefined, giant: boolean, flying: boolean): void {
   const ctx = getContext(world);
   const hp = (ctx.settings.maxHp || 100) * (giant ? 2 : 1);
   const snake = world.spawn(
@@ -164,6 +223,18 @@ export function projectiles(world: World): void {
     if (proj.kind === ProjectileKind.Bullet || proj.kind === ProjectileKind.Pellet) {
       const nx = proj.x + proj.vx * dt;
       const ny = proj.y + proj.vy * dt;
+      const intercept = heldWeaponIntercept(world, proj.x, proj.y, nx, ny, owner);
+      if (intercept === 'deflect') {
+        proj.vx *= -1;
+        proj.vy *= -1;
+        proj.x = proj.x + proj.vx * dt;
+        proj.y = proj.y + proj.vy * dt;
+        return;
+      }
+      if (intercept === 'disarm') {
+        ctx.pendingDestroy.push(entity);
+        return;
+      }
       const hit = raycastClosest(world, proj.x, proj.y, nx, ny, (h) => {
         if (h.entity === owner && proj.ownerGrace > 0) return true;
         if (h.kind === 'projectile') return true;
@@ -241,10 +312,10 @@ export function projectiles(world: World): void {
       proj.kind === ProjectileKind.Rocket ||
       proj.kind === ProjectileKind.BurstInto ||
       proj.kind === ProjectileKind.Field;
-    if (explosive && proj.ownerGrace <= 0) {
+    if (explosive) {
       let hitSomething = false;
       world.query(Player, Transform, Not(Dead)).updateEach(([_pl, pt], other) => {
-        if (other === owner) return;
+        if (other === owner && proj.ownerGrace > 0) return;
         const ob = ctx.bodies.get(other);
         const ox = ob?.getPosition().x ?? pt.x;
         const oy = ob?.getPosition().y ?? pt.y;
@@ -366,7 +437,9 @@ export function projectiles(world: World): void {
         ),
       );
       if (n.d < 0.55 && snake.biteCooldown <= 0) {
-        takeDamage(world, n.e, snake.giant ? 25 : 5, 'body', ownerOf(entity) ?? entity, n.x, n.y);
+        const duck = n.e.get(Controller)?.ducking ?? false;
+        const zone = hitZoneAt(st.y - n.y, ctx.tuning.height, duck);
+        takeDamage(world, n.e, snake.giant ? 25 : 5, zone, ownerOf(entity) ?? entity, n.x, n.y);
         snake.biteCooldown = 20;
       }
     }

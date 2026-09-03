@@ -197,11 +197,14 @@ export function buildFrame(
     });
     if (hz.kind === HazardKind.Laser && hz.armed >= 1) {
       const reach = hz.param3 || 14;
+      const ang = t.angle;
+      const x2 = x + Math.cos(ang) * reach;
+      const y2 = y + Math.sin(ang) * reach;
       groups.push({
-        minX: x,
-        minY: y - 0.08,
-        maxX: x + reach,
-        maxY: y + 0.08,
+        minX: Math.min(x, x2) - 0.1,
+        minY: Math.min(y, y2) - 0.1,
+        maxX: Math.max(x, x2) + 0.1,
+        maxY: Math.max(y, y2) + 0.1,
         color: hz.armed === 2 ? '#ffcc66' : '#ff3355',
         blend: 'union',
         smoothK: 0,
@@ -211,8 +214,8 @@ export function buildFrame(
             kind: PRIM_CAPSULE,
             ax: x,
             ay: y,
-            bx: x + reach,
-            by: y,
+            bx: x2,
+            by: y2,
             r: hz.armed === 2 ? 0.03 : 0.06,
           },
         ],

@@ -27,6 +27,10 @@ export type SimContext = {
   pendingDestroy: Entity[];
   tick: number;
   fireCd: Map<number, number>;
+  /** Remaining shots in an M16-style burst (PLAN Appendix C). */
+  burstLeft: Map<number, number>;
+  /** Players whose last physics contacts included an ice fixture. */
+  onIce: Set<number>;
   contactHits: Set<number>;
   lastPhysicsMs: number;
   extraLevels: LevelDef[];
@@ -73,6 +77,8 @@ export function makeContext(
     pendingDestroy: [],
     tick: 0,
     fireCd: new Map(),
+    burstLeft: new Map(),
+    onIce: new Set(),
     contactHits: new Set(),
     lastPhysicsMs: 0,
     extraLevels: [],

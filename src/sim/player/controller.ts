@@ -3,7 +3,7 @@ import { Vec2 } from 'planck';
 import { getContext } from '../context';
 import { rising } from '../input';
 import { raycastClosest, type RayHit } from '../physics/queries';
-import { Aim, Controller, Dead, Player, Status } from '../traits';
+import { Aim, Controller, Dead, Hazard, HazardKind, Player, Status, Transform } from '../traits';
 
 const movers = createQuery(Player, Controller, Aim);
 
@@ -11,6 +11,16 @@ function ignoreMover(self: number, hit: RayHit): boolean {
   if (hit.entity === self) return true;
   if (hit.kind === 'sensor' || hit.kind === 'projectile') return true;
   return false;
+}
+
+function iceUnderfoot(world: World, x: number, y: number): boolean {
+  let ice = false;
+  world.query(Hazard, Transform).updateEach(([hz, t]) => {
+    if (hz.kind !== HazardKind.Ice) return;
+    const hw = Math.max(3, hz.param0 / 2 || 3);
+    if (Math.abs(t.x - x) < hw + 0.5 && Math.abs(t.y - y) < 2.8) ice = true;
+  });
+  return ice;
 }
 
 export function controller(world: World): void {
@@ -30,7 +40,14 @@ export function controller(world: World): void {
     const glued = (status?.glued ?? 0) > 0;
     const slowed = (status?.slowed ?? 0) > 0;
     const bubbled = (status?.bubbled ?? 0) > 0;
-    if (bubbled) return;
+    if (bubbled) {
+      body.setGravityScale(0);
+      body.setLinearVelocity(new Vec2(0, 0));
+      ctrl.vx = 0;
+      ctrl.vy = 0;
+      return;
+    }
+    if (body.getGravityScale() !== 1) body.setGravityScale(1);
 
     const vel = body.getLinearVelocity();
     let vx = vel.x;
@@ -78,7 +95,10 @@ export function controller(world: World): void {
       if (input.moveX > 0 && vx < target) vx = Math.min(target, vx + accel);
       if (input.moveX < 0 && vx > target) vx = Math.max(target, vx - accel);
     } else if (ctrl.grounded && !glued) {
-      vx *= 0.75;
+      const onIce =
+        ctx.onIce.has(entity as unknown as number) || iceUnderfoot(world, pos.x, pos.y);
+      if (onIce) vx *= 0.992;
+      else vx *= ctrl.ducking ? 0.45 : 0.75;
     }
 
     if (ctrl.jumpBuffer > 0 && (ctrl.grounded || ctrl.coyote > 0)) {

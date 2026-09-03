@@ -16,6 +16,15 @@ export function loadMaps(): Record<string, PadMap> {
   }
 }
 
+/** PLAN 4.12: unknown / non-`standard` mappings open the remap screen. */
+export function shouldOfferRemap(
+  mapping: string,
+  padId: string,
+  maps: Record<string, PadMap>,
+): boolean {
+  return mapping !== '' && mapping !== 'standard' && !maps[padId];
+}
+
 export function saveMap(padId: string, map: PadMap): void {
   const all = loadMaps();
   all[padId] = map;

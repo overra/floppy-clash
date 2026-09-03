@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { consumeLatch, emptyLatch, radialDeadzone, readPad } from '../src/input/gamepad';
+import { shouldOfferRemap } from '../src/input/remap';
+import { claimDisconnectedSeat, createMenuState, markDisconnectedSeat } from '../src/ui/menus';
 
 function fakePad(partial: { id?: string; mapping?: GamepadMappingType; axes?: number[]; buttons?: boolean[] }): Gamepad {
   const buttons = (partial.buttons ?? []).map((pressed) => ({
@@ -84,6 +86,22 @@ describe('gamepad mapping', () => {
       { x: 1, y: 0 },
     );
     expect(ff.jump).toBe(false);
+  });
+
+  it('offers remap when the mapping is not standard', () => {
+    expect(shouldOfferRemap('standard', 'Xbox', {})).toBe(false);
+    expect(shouldOfferRemap('custom', '054c-0ce6-Wireless Controller', {})).toBe(true);
+  });
+
+  it('first new pad claims the disconnected seat', () => {
+    const menus = createMenuState();
+    menus.seats[0] = { taken: true, ready: true, color: 0, padId: 'pad-a', name: 'A' };
+    menus.seats[1] = { taken: true, ready: true, color: 1, padId: 'pad-b', name: 'B' };
+    expect(markDisconnectedSeat(menus.seats, 'pad-b')).toBe(1);
+    const claim = claimDisconnectedSeat(menus.seats, 'pad-c', 1);
+    expect(claim?.padId).toBe('pad-c');
+    expect(menus.seats[0]?.padId).toBe('pad-a');
+    expect(menus.seats[1]?.padId).toBe('pad-c');
   });
 
   it('honours a custom remap', () => {

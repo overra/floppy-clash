@@ -2,24 +2,26 @@ import { createQuery, Not, type Entity, type World } from 'koota';
 import { Vec2 } from 'planck';
 import { getContext } from '../context';
 import { rising } from '../input';
-import { takeDamage } from './health';
-import { raycastClosest } from '../physics/queries';
+import { hitZoneAt, takeDamage } from './health';
+import { weaponByIndex } from '../weapons/defs';
 import { Aim, Combat, Controller, Dead, Held, HeldBy, Loose, Player, Transform, Weapon } from '../traits';
 
 const fighters = createQuery(Player, Combat, Aim, Controller, Transform);
 
 function disarm(world: World, victim: Entity): void {
-  const held = victim.targetFor(HeldBy);
-  if (held === undefined) {
-    // HeldBy is on the weapon pointing at the player
-  }
   const ctx = getContext(world);
   for (const weapon of world.query(Weapon, Held)) {
     if (weapon.targetFor(HeldBy) === victim) {
+      const w = weapon.get(Weapon);
+      if (w && weaponByIndex(w.defId).id === 'laser') {
+        weapon.remove(Held);
+        weapon.remove(HeldBy('*'));
+        ctx.pendingDestroy.push(weapon);
+        continue;
+      }
       weapon.remove(Held);
       weapon.add(Loose());
       weapon.remove(HeldBy('*'));
-      const w = weapon.get(Weapon);
       if (w) weapon.set(Weapon, { ...w, pickupCooldown: ctx.tuning.pickupCooldownTicks, thrown: false });
       const t = victim.get(Transform);
       const body = ctx.bodies.get(weapon);
@@ -75,7 +77,9 @@ export function combat(world: World): void {
         const dx = otherT.x - hx;
         const dy = otherT.y - hy;
         if (dx * dx + dy * dy <= t.punchRadius * t.punchRadius) {
-          takeDamage(world, other, t.punchDamage, 'body', entity, otherT.x, otherT.y);
+          const duck = other.get(Controller)?.ducking ?? false;
+          const zone = hitZoneAt(hy - otherT.y, t.height, duck);
+          takeDamage(world, other, t.punchDamage, zone, entity, otherT.x, otherT.y);
           const otherBody = ctx.bodies.get(other);
           if (otherBody) {
             const ov = otherBody.getLinearVelocity();
@@ -87,8 +91,6 @@ export function combat(world: World): void {
         }
       });
     }
-    void raycastClosest;
-    void ctrl;
   });
 }
 

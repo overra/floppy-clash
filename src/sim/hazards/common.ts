@@ -42,6 +42,8 @@ export function paramsFromObject(obj: LevelObject): {
         param2: obj.warningTicks ?? 12,
         param3: 14,
       };
+    case 'ice':
+      return { param0: obj.w ?? 6, param1: 0, param2: 0, param3: 0 };
     case 'conveyor':
       return { param0: obj.w ?? 6, param1: obj.speed ?? 4, param2: 0, param3: 0 };
     case 'bounce':

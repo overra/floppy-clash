@@ -62,6 +62,46 @@ test('local play joins on first Space and readies on the second', async ({ page 
   await expect(page.locator('[data-countdown]')).toBeVisible({ timeout: 8_000 });
 });
 
+test('editor can place every hazard type then playtest the draft', async ({ page }) => {
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Level Editor' }).click();
+  await expect(page.locator('text=Level Editor')).toBeVisible();
+  const tools = [
+    'solid',
+    'spikes',
+    'lava',
+    'saw',
+    'crate',
+    'ice',
+    'conveyor',
+    'bounce',
+    'platform.moving',
+    'platform.rotating',
+    'platform.disappearing',
+    'platform.collapsing',
+    'platform.momentum',
+    'laser',
+    'barrel.explosive',
+    'block.destructible',
+    'chain',
+    'spikeball',
+    'crusher',
+    'trigger.drop',
+    'boss',
+  ];
+  for (const tool of tools) {
+    await page.getByRole('button', { name: tool, exact: true }).click();
+    await page.getByRole('button', { name: 'Add at 12,6' }).click();
+  }
+  const json = await page.locator('#edjson').innerText();
+  for (const tool of tools) {
+    expect(json).toContain(`"type": "${tool}"`);
+  }
+  await page.getByRole('button', { name: 'Playtest' }).click();
+  await expect(page.locator('canvas#game')).toBeVisible();
+  await expect(page.locator('[data-countdown]')).toBeVisible({ timeout: 8_000 });
+});
+
 test('settings persist toggles and editor property panel opens', async ({ page }) => {
   await page.goto('/');
   await page.getByRole('button', { name: 'Settings' }).click();

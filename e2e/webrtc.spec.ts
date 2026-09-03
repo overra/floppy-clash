@@ -80,6 +80,7 @@ test('late-join snapshot restores a client interpolation view', async ({ browser
 });
 
 test('four localhost peers connect; 100ms/2% shaping still delivers chat', async ({ browser }) => {
+  test.setTimeout(120_000);
   const ctxs = await Promise.all(Array.from({ length: 4 }, () => browser.newContext()));
   const pages = await Promise.all(ctxs.map((c) => c.newPage()));
   const host = pages[0]!;
@@ -139,5 +140,20 @@ test('four localhost peers connect; 100ms/2% shaping still delivers chat', async
       )
       .toBe(true);
   }
+  await host.getByRole('button', { name: 'Start match' }).click();
+  await expect(host.locator('canvas#game')).toBeVisible({ timeout: 15_000 });
+  await host.waitForFunction(() => window.__floppy?.phase === 2, null, { timeout: 20_000 });
+  await host.evaluate(() => window.__floppy?.speedRounds());
+  for (let r = 0; r < 10; r++) {
+    await host.waitForFunction(() => window.__floppy?.phase === 2, null, { timeout: 15_000 });
+    await host.evaluate(() => window.__floppy?.forceLastStand());
+    await host.waitForFunction(
+      (n) => (window.__floppy?.matchRound ?? 0) > n,
+      r,
+      { timeout: 15_000 },
+    );
+  }
+  const rounds = await host.evaluate(() => window.__floppy?.matchRound ?? 0);
+  expect(rounds).toBeGreaterThanOrEqual(10);
   await Promise.all(ctxs.map((c) => c.close()));
 });

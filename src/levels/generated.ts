@@ -939,6 +939,10 @@ export const western_01: LevelDef = {
   killMargin: 6,
   spawns: [{ x: 4, y: 5 }, { x: 24, y: 5 }, { x: 8, y: 10 }, { x: 20, y: 10 }],
   drops: { enabled: true, xMin: 4, xMax: 24, intervalScale: 1 },
+  startingWeapons: [
+    { weapon: 'revolver', x: 10, y: 4 },
+    { weapon: 'pistol', x: 18, y: 4 },
+  ],
   objects: [
     { type: 'solid', x: 14, y: 1, w: 28, h: 2 },
     { type: 'conveyor', x: 16, y: 2.2, w: 10, h: 0.4, speed: 5 },
@@ -958,6 +962,7 @@ export const western_02: LevelDef = {
   killMargin: 6,
   spawns: [{ x: 4, y: 5 }, { x: 26, y: 5 }, { x: 8, y: 10 }, { x: 22, y: 10 }],
   drops: { enabled: true, xMin: 4, xMax: 26, intervalScale: 1 },
+  startingWeapons: [{ weapon: 'revolver', x: 15, y: 4 }],
   objects: [
     { type: 'solid', x: 15, y: 1, w: 30, h: 2 },
     { type: 'bounce', x: 23, y: 2.3, w: 2, h: 0.4 },
@@ -976,6 +981,7 @@ export const western_03: LevelDef = {
   killMargin: 6,
   spawns: [{ x: 4, y: 5 }, { x: 28, y: 5 }, { x: 8, y: 10 }, { x: 24, y: 10 }],
   drops: { enabled: true, xMin: 4, xMax: 28, intervalScale: 1 },
+  startingWeapons: [{ weapon: 'pistol', x: 16, y: 4 }],
   objects: [
     { type: 'solid', x: 16, y: 1, w: 32, h: 2 },
     { type: 'laser', x: 2, y: 7, onTicks: 40, offTicks: 50, warningTicks: 12 },
@@ -997,6 +1003,7 @@ export const western_04: LevelDef = {
   killMargin: 6,
   spawns: [{ x: 4, y: 5 }, { x: 24, y: 5 }, { x: 8, y: 10 }, { x: 20, y: 10 }],
   drops: { enabled: true, xMin: 4, xMax: 24, intervalScale: 1 },
+  startingWeapons: [{ weapon: 'revolver', x: 14, y: 4 }],
   objects: [
     { type: 'solid', x: 14, y: 1, w: 28, h: 2 },
     { type: 'barrel.explosive', x: 13, y: 3, w: 0.8, h: 1.1, hp: 18 },
@@ -1014,6 +1021,7 @@ export const western_05: LevelDef = {
   killMargin: 6,
   spawns: [{ x: 4, y: 5 }, { x: 26, y: 5 }, { x: 8, y: 10 }, { x: 22, y: 10 }],
   drops: { enabled: true, xMin: 4, xMax: 26, intervalScale: 1 },
+  startingWeapons: [{ weapon: 'pistol', x: 15, y: 4 }],
   objects: [
     { type: 'solid', x: 15, y: 1, w: 30, h: 2 },
     { type: 'crusher', x: 14, y: 8, w: 1.5, h: 6, period: 60 },
@@ -1034,6 +1042,7 @@ export const western_06: LevelDef = {
   killMargin: 6,
   spawns: [{ x: 4, y: 5 }, { x: 28, y: 5 }, { x: 8, y: 10 }, { x: 24, y: 10 }],
   drops: { enabled: true, xMin: 4, xMax: 28, intervalScale: 1 },
+  startingWeapons: [{ weapon: 'revolver', x: 16, y: 4 }],
   objects: [
     { type: 'solid', x: 16, y: 1, w: 32, h: 2 },
     { type: 'block.destructible', x: 7, y: 4, w: 2, h: 2, hp: 60 },
@@ -1053,6 +1062,7 @@ export const western_07: LevelDef = {
   killMargin: 6,
   spawns: [{ x: 4, y: 5 }, { x: 24, y: 5 }, { x: 8, y: 10 }, { x: 20, y: 10 }],
   drops: { enabled: true, xMin: 4, xMax: 24, intervalScale: 1 },
+  startingWeapons: [{ weapon: 'pistol', x: 14, y: 4 }],
   objects: [
     { type: 'solid', x: 14, y: 1, w: 28, h: 2 },
     { type: 'chain', x: 20, y: 14, links: 5 },
@@ -1489,7 +1499,7 @@ export const test_ice: LevelDef = {
   drops: { enabled: false, xMin: 4, xMax: 20, intervalScale: 1 },
   objects: [
     { type: 'solid', x: 12, y: 1, w: 24, h: 2 },
-    { type: 'ice', x: 14, y: 2.2, w: 6, h: 0.5 },
+    { type: 'ice', x: 14, y: 2.2, w: 18, h: 0.5 },
   ],
 };
 

@@ -5,6 +5,7 @@ import { applyExplosion } from '../physics/queries';
 import { takeDamage } from '../player/health';
 import type { FixtureUserData } from '../physics/categories';
 import { Controller, Dead, Destructible, Hazard, HazardKind, Player, Transform } from '../traits';
+import { spawnSnake } from '../weapons/projectiles';
 
 const hazards = createQuery(Hazard, Transform);
 
@@ -41,6 +42,11 @@ export function hazardsStep(world: World): void {
         if (!target || !world.has(target) || !target.has(Player) || target.has(Dead)) return;
         takeDamage(world, target, 10 + 45 * falloff, 'body', -1, t.x, t.y);
       });
+      // PLAN 2.5 / 4.14: Western barrels spawn snakes.
+      if (ctx.level.theme === 'western') {
+        spawnSnake(world, t.x - 0.2, t.y + 0.2, undefined, false, false);
+        spawnSnake(world, t.x + 0.2, t.y + 0.2, undefined, false, false);
+      }
     }
     ctx.pendingDestroy.push(entity);
   });

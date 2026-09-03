@@ -55,7 +55,7 @@ describe('M4 hazards', () => {
     const mid = p.get(Health)?.hp ?? 100;
     sim.step([hold({}), hold({}), hold({}), hold({})]);
     const after = p.get(Health)?.hp ?? 100;
-    expect(mid).toBeLessThanOrEqual(before);
+    expect(before - mid).toBe(35);
     expect(after).toBe(mid);
   });
 

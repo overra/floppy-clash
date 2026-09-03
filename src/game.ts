@@ -6,15 +6,17 @@ import { createKeyboardFallback } from './input/keyboard';
 import { consumeLatch, emptyLatch, pollGamepads, readPad, type Latch } from './input/gamepad';
 import {
   canStartMatch,
+  claimDisconnectedSeat,
   collectPadMap,
   createMenuState,
   cycleSeatColor,
+  markDisconnectedSeat,
   renderMenus,
   takeOrReadySeat,
   takeSeat,
 } from './ui/menus';
 import { scoreboardMarkup } from './ui/scoreboard';
-import { loadMaps, saveMap } from './input/remap';
+import { loadMaps, saveMap, shouldOfferRemap } from './input/remap';
 import { gymLevel } from './levels/catalog';
 import { matchLevelPool } from './levels/catalog';
 import { addShake, createCamera } from './render/camera';
@@ -72,6 +74,8 @@ type FloppyDebug = {
   gpuMs: number;
   phase: number;
   forceLastStand: () => void;
+  speedRounds: () => void;
+  matchRound: number;
   debugDraw: boolean;
   debugHud: boolean;
   freezeCam: boolean;
@@ -486,9 +490,6 @@ export function createGame(root: HTMLElement): Game {
         const startDown = !!pad.buttons[9]?.pressed;
         if (startDown && !joinStartHeld[i]) startIfReady();
         joinStartHeld[i] = startDown;
-        if (pad.mapping && pad.mapping !== 'standard' && !maps[pad.id]) {
-          menus.notice = `Non-standard pad “${pad.id}” — open Settings to remap.`;
-        }
       }
       inputs[i] = readPad(pad, latch, aim, padMapFor(pad.id));
       lastAim[i] = { x: inputs[i]!.aimX, y: inputs[i]!.aimY };
@@ -710,13 +711,20 @@ export function createGame(root: HTMLElement): Game {
       netState: menus.netState,
       netReady: net.ready,
       lastSnapTick: menus.lastSnapTick,
-      forceLastStand: () => {
+          forceLastStand: () => {
         if (!sim) return;
         sim.players().forEach((p) => {
           const slot = p.get(Player)?.slot ?? 0;
           if (slot !== 0) p.set(Health, { hp: 0, maxHp: p.get(Health)?.maxHp ?? 100 });
         });
       },
+      speedRounds: () => {
+        if (!sim) return;
+        sim.ctx.tuning.countdownTicks = 3;
+        sim.ctx.tuning.slowmoTicks = 2;
+        sim.ctx.tuning.scoreboardTicks = 2;
+      },
+      matchRound: sim?.ecs.get(MatchState)?.round ?? 0,
       clientViewTick: clientView?.appliedTick ?? 0,
       clientAppliedX: clientView?.appliedX ?? 0,
       clientRestored: clientView?.restored ?? false,
@@ -954,11 +962,23 @@ export function createGame(root: HTMLElement): Game {
       window.addEventListener('gamepadconnected', (ev) => {
         const pad = (ev as GamepadEvent).gamepad ?? pollGamepads().find(Boolean);
         if (!pad) return;
-        if (pad.mapping && pad.mapping !== 'standard' && !maps[pad.id]) {
-          menus.notice = `Non-standard pad “${pad.id}” — open Settings to remap.`;
+        if (shouldOfferRemap(pad.mapping ?? '', pad.id, maps)) {
+          menus.notice = `Non-standard pad “${pad.id}” — remap offered.`;
+          menus.screen = 'settings';
+          show();
+          return;
         }
         const existing = menus.seats.find((s) => s.padId === pad.id);
         if (existing && menus.screen === 'disconnect') {
+          menus.claimSeat = -1;
+          paused = false;
+          menus.screen = 'play';
+          show();
+          return;
+        }
+        if (menus.screen === 'disconnect') {
+          claimDisconnectedSeat(menus.seats, pad.id, menus.claimSeat);
+          menus.claimSeat = -1;
           paused = false;
           menus.screen = 'play';
           show();
@@ -969,7 +989,9 @@ export function createGame(root: HTMLElement): Game {
           show();
         }
       });
-      window.addEventListener('gamepaddisconnected', () => {
+      window.addEventListener('gamepaddisconnected', (ev) => {
+        const pad = (ev as GamepadEvent).gamepad;
+        menus.claimSeat = markDisconnectedSeat(menus.seats, pad?.id);
         if (menus.screen === 'play') {
           paused = true;
           menus.screen = 'disconnect';

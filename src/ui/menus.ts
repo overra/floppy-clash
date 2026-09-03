@@ -36,6 +36,8 @@ export type MenuState = {
   netRole: '' | 'host' | 'client';
   netState: 'idle' | 'connecting' | 'up' | 'error';
   lastSnapTick: number;
+  /** Seat index opened by a mid-round disconnect; first new pad may claim it. */
+  claimSeat: number;
   wins?: number[];
 };
 
@@ -63,7 +65,27 @@ export function createMenuState(): MenuState {
     netRole: '',
     netState: 'idle',
     lastSnapTick: 0,
+    claimSeat: -1,
   };
+}
+
+/** PLAN 4.12: remember which joined seat lost its pad. */
+export function markDisconnectedSeat(seats: Seat[], padId: string | undefined): number {
+  if (padId) {
+    const idx = seats.findIndex((s) => s.taken && s.padId === padId);
+    if (idx >= 0) return idx;
+  }
+  return seats.findIndex((s) => s.taken && s.padId !== 'keyboard' && s.padId !== 'bot');
+}
+
+/** First newly connected pad claims the disconnected seat (same id already handled by caller). */
+export function claimDisconnectedSeat(seats: Seat[], newPadId: string, claimIndex: number): Seat | undefined {
+  const claim =
+    (claimIndex >= 0 ? seats[claimIndex] : undefined) ??
+    seats.find((s) => s.taken && s.padId !== 'keyboard' && s.padId !== 'bot') ??
+    seats.find((s) => s.taken);
+  if (claim) claim.padId = newPadId;
+  return claim;
 }
 
 const COLORS = ['Yellow', 'Blue', 'Red', 'Green'];
@@ -250,7 +272,7 @@ export function renderMenus(
   } else if (state.screen === 'lobby') {
     renderLobby(card, state, settings, actions);
   } else if (state.screen === 'disconnect') {
-    card.innerHTML = `<h2>Controller disconnected</h2><p>Reconnect the same pad to resume.</p>`;
+    card.innerHTML = `<h2>Controller disconnected</h2><p>Reconnect the same pad to resume, or press a button on a new pad to claim the seat.</p>`;
   }
   if (state.notice) {
     const n = document.createElement('p');

@@ -172,6 +172,7 @@ export function weapons(world: World): void {
     if (!body) return;
 
     if (rising(prev?.throw ?? false, input.throw)) {
+      ctx.burstLeft.delete(entity);
       held.remove(Held);
       held.add(Loose());
       held.remove(HeldBy('*'));
@@ -198,13 +199,20 @@ export function weapons(world: World): void {
       return;
     }
 
-    if (combat.blocking) return;
+    if (combat.blocking) {
+      ctx.burstLeft.delete(entity);
+      return;
+    }
     const fireEdge = rising(prev?.attack ?? false, input.attack);
     const fireHeld = input.attack;
+    if (def.fireMode === 'burst' && fireEdge) {
+      ctx.burstLeft.set(entity, def.burstCount ?? 3);
+    }
+    const bursting = (ctx.burstLeft.get(entity) ?? 0) > 0;
     const canFire =
       (def.fireMode === 'semi' && fireEdge) ||
       (def.fireMode === 'auto' && fireHeld) ||
-      (def.fireMode === 'burst' && fireEdge) ||
+      (def.fireMode === 'burst' && bursting) ||
       (def.fireMode === 'hold' && fireHeld);
     const cd = ctx.fireCd.get(entity) ?? 0;
     if (cd > 0) ctx.fireCd.set(entity, cd - 1);
@@ -221,7 +229,12 @@ export function weapons(world: World): void {
     }
 
     ctx.fireCd.set(entity, def.fireIntervalTicks);
-    const shots = def.projectile.kind === 'pellets' ? def.projectile.count : def.fireMode === 'burst' ? (def.burstCount ?? 3) : 1;
+    if (def.fireMode === 'burst') {
+      const left = (ctx.burstLeft.get(entity) ?? 1) - 1;
+      if (left <= 0) ctx.burstLeft.delete(entity);
+      else ctx.burstLeft.set(entity, left);
+    }
+    const shots = def.projectile.kind === 'pellets' ? def.projectile.count : 1;
     const muzzleX = transform.x + aim.x * (0.45 + def.shape.length * 0.5);
     const muzzleY = transform.y + aim.y * (0.45 + def.shape.length * 0.5);
     for (let i = 0; i < shots; i++) {
