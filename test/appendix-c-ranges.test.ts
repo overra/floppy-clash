@@ -294,7 +294,7 @@ describe('PLAN Appendix C range / duration mapping', () => {
   });
 
   it('bouncer bullets start at 6 bounces and decrement on a wall hit', () => {
-    expect(WEAPON_BY_ID.get('bouncer')!.projectile.bounce).toBe(6);
+    expect(WEAPON_BY_ID.get('bouncer')!.def.projectile.bounce).toBe(6);
     const sim = makeSim({ seed: 350, settings: { playerCount: 1 } });
     const p = playerOf(sim);
     // Gym climb-shaft walls sit at x≈2.5/5.5; stand in open air so the fire tick
