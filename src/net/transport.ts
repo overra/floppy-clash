@@ -81,7 +81,13 @@ function deliver(
   if (!reliable && shape.loss > 0 && Math.random() < shape.loss) return;
   const fire = () => {
     if (ch.readyState !== 'open') return;
-    ch.send(data);
+    if (typeof data === 'string') {
+      ch.send(data);
+    } else {
+      const copy = new ArrayBuffer(data.byteLength);
+      new Uint8Array(copy).set(data);
+      ch.send(copy);
+    }
   };
   if (shape.latencyMs > 0) setTimeout(fire, shape.latencyMs);
   else fire();
