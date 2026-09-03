@@ -19,6 +19,7 @@ import {
   cycleSeatColor,
   hpSelectOptions,
   readMatchSettingsFromCard,
+  screenAfterLeavingSettings,
   shouldOfferRemapOnScreen,
   syncMatchSettingsFromDom,
   takeOrReadySeat,
@@ -189,6 +190,14 @@ describe('join seats (PLAN 4.12)', () => {
     expect(shouldOfferRemapOnScreen('play')).toBe(false);
     expect(shouldOfferRemapOnScreen('pause')).toBe(false);
     expect(shouldOfferRemapOnScreen('disconnect')).toBe(false);
+  });
+
+  it('Save/Back after a remap offer returns to join, not the main menu', () => {
+    expect(screenAfterLeavingSettings('join')).toBe('join');
+    expect(screenAfterLeavingSettings('lobby')).toBe('lobby');
+    expect(screenAfterLeavingSettings('menu')).toBe('menu');
+    expect(screenAfterLeavingSettings('')).toBe('menu');
+    expect(screenAfterLeavingSettings('settings')).toBe('menu');
   });
 
   it('reads HP / first-to from the live form so Start is not stale', () => {

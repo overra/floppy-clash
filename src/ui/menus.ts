@@ -82,6 +82,11 @@ export function shouldOfferRemapOnScreen(screen: Screen): boolean {
   return screen === 'menu' || screen === 'join' || screen === 'lobby' || screen === 'settings';
 }
 
+/** Save / Back after a remap offer must restore join/lobby, not always the main menu. */
+export function screenAfterLeavingSettings(returnScreen: Screen | ''): Screen {
+  return returnScreen && returnScreen !== 'settings' ? returnScreen : 'menu';
+}
+
 /** Read lobby/settings HP + first-to so Start match is not stale vs the form. */
 export function readMatchSettingsFromCard(root: ParentNode, menus: MenuState): void {
   const hp = root.querySelector('#hp') as HTMLInputElement | HTMLSelectElement | null;

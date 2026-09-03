@@ -1,4 +1,30 @@
-import { expect, test } from '@playwright/test';
+import { expect, test, type Page } from '@playwright/test';
+
+const FLAT_ARENA = {
+  id: 'e2e-flat',
+  name: 'E2E Flat',
+  theme: 'woods',
+  bounds: { x: 0, y: 0, w: 32, h: 18 },
+  killMargin: 6,
+  spawns: [
+    { x: 8, y: 4 },
+    { x: 16, y: 4 },
+    { x: 12, y: 4 },
+    { x: 20, y: 4 },
+  ],
+  drops: { enabled: false, xMin: 4, xMax: 28, intervalScale: 1 },
+  objects: [
+    { type: 'solid', x: 16, y: 1, w: 32, h: 2 },
+    { type: 'solid', x: 0.5, y: 9, w: 1, h: 18 },
+    { type: 'solid', x: 31.5, y: 9, w: 1, h: 18 },
+  ],
+};
+
+async function loadFlatArena(page: Page): Promise<void> {
+  await page.waitForFunction(() => Boolean(window.__floppy?.loadLevel));
+  const id = await page.evaluate((level) => window.__floppy?.loadLevel(level), FLAT_ARENA);
+  expect(id).toBe('e2e-flat');
+}
 
 test('boots, joins with keyboard, starts a local match vs bots', async ({ page }) => {
   await page.addInitScript(() => {
@@ -601,6 +627,43 @@ test('non-standard pad on the menu opens remap with that pad id', async ({ page 
   await expect(page.locator('[data-remap-pad]')).toHaveAttribute('data-remap-pad', 'e2e-nonstandard');
 });
 
+test('remap offer from Join returns to Join on Save and Back', async ({ page }) => {
+  await page.addInitScript(() => {
+    const buttons = Array.from({ length: 17 }, () => ({ pressed: false, touched: false, value: 0 }));
+    const pad = {
+      id: 'e2e-join-remap',
+      index: 0,
+      connected: true,
+      mapping: '' as GamepadMappingType,
+      axes: [0, 0, 0, 0],
+      buttons,
+      timestamp: 1,
+      hapticActuators: [],
+      vibrationActuator: null,
+    };
+    Object.defineProperty(navigator, 'getGamepads', { value: () => [pad], configurable: true });
+    (window as unknown as { __e2ePad: typeof pad }).__e2ePad = pad;
+  });
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Local Play' }).click();
+  await expect(page.getByRole('heading', { name: 'Join' })).toBeVisible();
+  await page.evaluate(() => {
+    const pad = (window as unknown as { __e2ePad: Gamepad }).__e2ePad;
+    window.dispatchEvent(Object.assign(new Event('gamepadconnected'), { gamepad: pad }));
+  });
+  await expect(page.getByRole('heading', { name: 'Settings' })).toBeVisible();
+  await expect(page.locator('#padid')).toHaveValue('e2e-join-remap');
+  await page.getByRole('button', { name: 'Save', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Join' })).toBeVisible();
+  await page.evaluate(() => {
+    const pad = (window as unknown as { __e2ePad: Gamepad }).__e2ePad;
+    window.dispatchEvent(Object.assign(new Event('gamepadconnected'), { gamepad: pad }));
+  });
+  await expect(page.getByRole('heading', { name: 'Settings' })).toBeVisible();
+  await page.getByRole('button', { name: 'Back' }).click();
+  await expect(page.getByRole('heading', { name: 'Join' })).toBeVisible();
+});
+
 test('four pads: seat 1 stick moves P2, not P1', async ({ page }) => {
   await page.addInitScript(() => {
     const mk = (id: string, index: number) => {
@@ -622,6 +685,7 @@ test('four pads: seat 1 stick moves P2, not P1', async ({ page }) => {
     (window as unknown as { __e2ePads: typeof pads }).__e2ePads = pads;
   });
   await page.goto('/');
+  await loadFlatArena(page);
   await page.getByRole('button', { name: 'Local Play' }).click();
   await page.evaluate(() => {
     const pads = (window as unknown as { __e2ePads: Gamepad[] }).__e2ePads;
@@ -640,6 +704,7 @@ test('four pads: seat 1 stick moves P2, not P1', async ({ page }) => {
   });
   await page.getByRole('button', { name: 'Start' }).click();
   await page.waitForFunction(() => window.__floppy?.phase === 2, null, { timeout: 15_000 });
+  await expect.poll(async () => page.evaluate(() => window.__floppy?.lastLevelId ?? '')).toBe('e2e-flat');
   const before = await page.evaluate(() => ({
     x0: window.__floppy?.playerXs?.[0] ?? 0,
     x1: window.__floppy?.playerXs?.[1] ?? 0,
@@ -661,47 +726,68 @@ test('saved remap jump button makes the joined seat jump', async ({ page }) => {
       'floppy-clash.padmaps',
       JSON.stringify({ 'e2e-jump-pad': { jump: 2, attack: 7, block: 6, throw: 3, pause: 9 } }),
     );
-    const buttons = Array.from({ length: 17 }, () => ({ pressed: false, touched: false, value: 0 }));
-    const pad = {
-      id: 'e2e-jump-pad',
-      index: 0,
-      connected: true,
-      mapping: 'standard' as const,
-      axes: [0, 0, 0, 0],
-      buttons,
-      timestamp: 1,
-      hapticActuators: [],
-      vibrationActuator: null,
+    const mk = (id: string, index: number) => {
+      const buttons = Array.from({ length: 17 }, () => ({ pressed: false, touched: false, value: 0 }));
+      return {
+        id,
+        index,
+        connected: true,
+        mapping: 'standard' as const,
+        axes: [0, 0, 0, 0],
+        buttons,
+        timestamp: 1,
+        hapticActuators: [],
+        vibrationActuator: null,
+      };
     };
-    Object.defineProperty(navigator, 'getGamepads', { value: () => [pad], configurable: true });
-    (window as unknown as { __e2ePad: typeof pad }).__e2ePad = pad;
+    // Two human seats so matchPlayerCount does not fill slot 1 with a punching bot.
+    const pads = [mk('e2e-jump-pad', 0), mk('e2e-jump-other', 1)];
+    Object.defineProperty(navigator, 'getGamepads', { value: () => pads, configurable: true });
+    (window as unknown as { __e2ePads: typeof pads }).__e2ePads = pads;
   });
   await page.goto('/');
+  await loadFlatArena(page);
   const stored = await page.evaluate(() => localStorage.getItem('floppy-clash.padmaps'));
   expect(stored).toContain('e2e-jump-pad');
   expect(stored).toContain('"jump":2');
   await page.getByRole('button', { name: 'Local Play' }).click();
   await page.evaluate(() => {
-    const pad = (window as unknown as { __e2ePad: Gamepad }).__e2ePad;
-    window.dispatchEvent(Object.assign(new Event('gamepadconnected'), { gamepad: pad }));
+    const pads = (window as unknown as { __e2ePads: Gamepad[] }).__e2ePads;
+    for (const pad of pads) {
+      window.dispatchEvent(Object.assign(new Event('gamepadconnected'), { gamepad: pad }));
+    }
   });
   await page.evaluate(() => {
-    const pad = (window as unknown as { __e2ePad: { buttons: { pressed: boolean }[] } }).__e2ePad;
-    pad.buttons[0]!.pressed = true;
+    const pads = (window as unknown as { __e2ePads: { buttons: { pressed: boolean }[] }[] }).__e2ePads;
+    for (const pad of pads) pad.buttons[0]!.pressed = true;
   });
   await page.waitForTimeout(80);
   await page.evaluate(() => {
-    const pad = (window as unknown as { __e2ePad: { buttons: { pressed: boolean }[] } }).__e2ePad;
-    pad.buttons[0]!.pressed = false;
+    const pads = (window as unknown as { __e2ePads: { buttons: { pressed: boolean }[] }[] }).__e2ePads;
+    for (const pad of pads) pad.buttons[0]!.pressed = false;
   });
   await expect(page.locator('[data-seat="0"]')).toHaveAttribute('data-ready', '1');
+  await expect(page.locator('[data-seat="1"]')).toHaveAttribute('data-ready', '1');
   await page.getByRole('button', { name: 'Start' }).click();
-  await expect(page.locator('[data-countdown]')).toBeVisible({ timeout: 8_000 });
+  await page.waitForFunction(() => window.__floppy?.phase === 2, null, { timeout: 15_000 });
+  await expect.poll(async () => page.evaluate(() => window.__floppy?.lastLevelId ?? '')).toBe('e2e-flat');
+  await expect
+    .poll(async () => page.evaluate(() => window.__floppy?.padMaps?.['e2e-jump-pad']?.jump ?? -1))
+    .toBe(2);
+  await page.waitForFunction(() => window.__floppy?.playerGrounded?.[0] === true, null, { timeout: 8_000 });
+  await page.evaluate(() => {
+    const pads = (window as unknown as { __e2ePads: { buttons: { pressed: boolean }[] }[] }).__e2ePads;
+    pads[0]!.buttons[2]!.pressed = false;
+  });
+  await page.waitForTimeout(50);
   const y0 = await page.evaluate(() => window.__floppy?.playerYs?.[0] ?? 0);
   await page.evaluate(() => {
-    const pad = (window as unknown as { __e2ePad: { buttons: { pressed: boolean }[] } }).__e2ePad;
-    pad.buttons[2]!.pressed = true;
+    const pads = (window as unknown as { __e2ePads: { buttons: { pressed: boolean }[] }[] }).__e2ePads;
+    pads[0]!.buttons[2]!.pressed = true;
   });
+  await expect
+    .poll(async () => page.evaluate(() => window.__floppy?.lastSeatJumps?.[0] === true), { timeout: 4_000 })
+    .toBe(true);
   await expect
     .poll(async () => page.evaluate(() => window.__floppy?.playerYs?.[0] ?? 0), { timeout: 8_000 })
     .toBeGreaterThan(y0 + 0.35);

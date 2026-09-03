@@ -192,12 +192,21 @@ describe('gamepad mapping', () => {
 
   it('honours a custom remap', () => {
     const latch = emptyLatch();
-    const pad = fakePad({
-      id: 'custom',
-      buttons: [false, false, true],
-    });
-    const input = readPad(pad, latch, { x: 1, y: 0 }, { jump: 2, attack: 7, block: 6, throw: 3, pause: 9 });
-    expect(input.jump).toBe(true);
+    const map = { jump: 2, attack: 7, block: 6, throw: 3, pause: 9 };
+    const jumped = readPad(
+      fakePad({ id: 'custom', buttons: [false, false, true] }),
+      latch,
+      { x: 1, y: 0 },
+      map,
+    );
+    expect(jumped.jump).toBe(true);
+    const unusedA = readPad(
+      fakePad({ id: 'custom', buttons: [true, false, false] }),
+      emptyLatch(),
+      { x: 1, y: 0 },
+      map,
+    );
+    expect(unusedA.jump).toBe(false);
   });
 
   it('playRumble calls playEffect when enabled and skips when disabled', () => {

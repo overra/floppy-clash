@@ -20,6 +20,7 @@ import {
   edgePressed,
   markDisconnectedSeat,
   renderMenus,
+  screenAfterLeavingSettings,
   shouldOfferRemapOnScreen,
   syncMatchSettingsFromDom,
   takeOrReadySeat,
@@ -50,6 +51,7 @@ import { blankInputs, EMPTY_INPUT, type PlayerInput } from './sim/input';
 import { inspectWorld, formatInspect } from './sim/inspect';
 import { primitiveSdf } from './render/sdf/primitives';
 import {
+  Controller,
   Dead,
   Health,
   MatchState,
@@ -149,6 +151,9 @@ type FloppyDebug = {
   readFramebuffer: () => Promise<FramebufferReadback>;
   playerColors: number[];
   pausedBy: string | null;
+  playerGrounded: boolean[];
+  lastSeatJumps: boolean[];
+  padMaps: Record<string, { jump: number; attack: number; block: number; throw: number; pause: number }>;
 };
 
 declare global {
@@ -239,6 +244,7 @@ export function createGame(root: HTMLElement): Game {
   let lastFrameColored = 0;
   let pausedBy: string | null = null;
   let routeByJoinSeats = false;
+  let lastSampled = blankInputs(4);
 
   function show() {
     renderMenus(
@@ -284,7 +290,7 @@ export function createGame(root: HTMLElement): Game {
           menus.returnScreen = '';
           menus.remapPadId = '';
           menus.notice = '';
-          menus.screen = ret && ret !== 'settings' ? ret : 'menu';
+          menus.screen = screenAfterLeavingSettings(ret);
           show();
         },
         save: () => {
@@ -294,7 +300,10 @@ export function createGame(root: HTMLElement): Game {
           mixer.sfx = settings.sfx;
           mixer.music = settings.music;
           mixer.applyGains();
-          menus.screen = 'menu';
+          const ret = menus.returnScreen;
+          menus.returnScreen = '';
+          menus.remapPadId = '';
+          menus.screen = screenAfterLeavingSettings(ret);
           show();
         },
         saveRemap: () => {
@@ -702,7 +711,10 @@ export function createGame(root: HTMLElement): Game {
   }
 
   function sampleInputs(): PlayerInput[] {
-    if (chatOpen) return blankInputs(4);
+    if (chatOpen) {
+      lastSampled = blankInputs(4);
+      return lastSampled;
+    }
     const pads = pollGamepads();
     const padInputs = new Map<string, PlayerInput>();
     pads.forEach((pad, i) => {
@@ -753,15 +765,17 @@ export function createGame(root: HTMLElement): Game {
         padInput: (pad) => padInputs.get(pad.id) ?? sampleKeyboardFor(0),
         keyboard: sampleKeyboardFor(0),
       });
+      lastSampled = inputs;
       return inputs;
     }
     const kb = keyboardSeatIndex(menus.seats);
-    return routeSeatInputs({
+    lastSampled = routeSeatInputs({
       seats: menus.seats,
       pads,
       readPad: (pad) => padInputs.get(pad.id) ?? sampleKeyboardFor(0),
       keyboard: kb >= 0 ? sampleKeyboardFor(kb) : null,
     });
+    return lastSampled;
   }
 
   function applyPauseHotkey(): void {
@@ -1051,6 +1065,9 @@ export function createGame(root: HTMLElement): Game {
           : '',
       playerColors: readPlayerColors(handle),
       pausedBy,
+      playerGrounded: readPlayerGrounded(handle),
+      lastSeatJumps: lastSampled.map((i) => i.jump),
+      padMaps: maps,
     };
   }
 
@@ -1110,6 +1127,15 @@ export function createGame(root: HTMLElement): Game {
       if (p.slot >= 0 && p.slot < 4) colors[p.slot] = p.color;
     });
     return colors;
+  }
+
+  function readPlayerGrounded(world: SimHandle | null | undefined): boolean[] {
+    const grounded = [false, false, false, false];
+    if (!world) return grounded;
+    world.ecs.query(Player, Controller).updateEach(([p, ctrl]) => {
+      if (p.slot >= 0 && p.slot < 4) grounded[p.slot] = ctrl.grounded;
+    });
+    return grounded;
   }
 
   function countWeapons(): number {
