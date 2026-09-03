@@ -3,6 +3,7 @@ import {
   exportLevel,
   fromHash,
   hitTest,
+  importLevel,
   loadLibrary,
   moveSelected,
   PALETTE,
@@ -105,7 +106,6 @@ export function mountEditor(root: HTMLElement, state: EditorState, fns: EditorVi
   file.onchange = async () => {
     const text = await file.files?.[0]?.text();
     if (!text) return;
-    const { importLevel } = await import('./editor');
     importLevel(state, text);
     draw();
   };

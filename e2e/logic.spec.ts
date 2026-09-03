@@ -10,7 +10,7 @@ test('boots, joins with keyboard, starts a local match vs bots', async ({ page }
   await page.goto('/');
   await expect(page.locator('text=Floppy Clash')).toBeVisible();
   await page.getByRole('button', { name: 'Solo vs Bots' }).click();
-  await expect(page.locator('text=Join')).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Join' })).toBeVisible();
   await page.keyboard.press('Enter');
   await page.waitForTimeout(1500);
   const canvas = page.locator('canvas#game');
