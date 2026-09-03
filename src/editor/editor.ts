@@ -30,13 +30,15 @@ export type EditorState = {
   level: LevelDef;
   selected: number;
   selectedSpawn: number;
+  selectedStart: number;
+  selectedDecor: number;
   tool: EditorTool;
   grid: number;
   history: LevelDef[];
   future: LevelDef[];
 };
 
-export const EXTRA_TOOLS = ['spawn', 'drop-range'] as const;
+export const EXTRA_TOOLS = ['spawn', 'drop-range', 'starting-weapon', 'decor'] as const;
 
 export function createEditorState(): EditorState {
   return {
@@ -57,6 +59,8 @@ export function createEditorState(): EditorState {
     },
     selected: 0,
     selectedSpawn: 0,
+    selectedStart: 0,
+    selectedDecor: 0,
     tool: 'solid',
     grid: 1,
     history: [],
@@ -92,6 +96,14 @@ export function addObject(state: EditorState, x: number, y: number): void {
     setDropEdge(state, x);
     return;
   }
+  if (state.tool === 'starting-weapon') {
+    addStartingWeapon(state, x, y);
+    return;
+  }
+  if (state.tool === 'decor') {
+    addDecor(state, x, y);
+    return;
+  }
   pushHistory(state);
   const obj: LevelObject = {
     type: state.tool,
@@ -110,6 +122,67 @@ export function addObject(state: EditorState, x: number, y: number): void {
   state.selected = state.level.objects.length - 1;
 }
 
+export function addStartingWeapon(
+  state: EditorState,
+  x: number,
+  y: number,
+  weapon = 'pistol',
+): void {
+  pushHistory(state);
+  const list = state.level.startingWeapons ?? [];
+  list.push({ weapon, x: snap(x, state.grid), y: snap(y, state.grid) });
+  state.level.startingWeapons = list;
+  state.selectedStart = list.length - 1;
+}
+
+export function addDecor(state: EditorState, x: number, y: number, kind = 'tree'): void {
+  pushHistory(state);
+  const list = state.level.decor ?? [];
+  list.push({ kind, x: snap(x, state.grid), y: snap(y, state.grid), scale: 1 });
+  state.level.decor = list;
+  state.selectedDecor = list.length - 1;
+}
+
+/** PLAN 4.15: remove the current selection. Spawns stay at the schema minimum of 4. */
+export function removeSelected(state: EditorState): boolean {
+  if (state.tool === 'spawn') {
+    if (state.level.spawns.length <= 4) return false;
+    const i = state.selectedSpawn;
+    if (i < 0 || i >= state.level.spawns.length) return false;
+    pushHistory(state);
+    state.level.spawns.splice(i, 1);
+    state.selectedSpawn = Math.max(0, i - 1);
+    return true;
+  }
+  if (state.tool === 'starting-weapon') {
+    const list = state.level.startingWeapons ?? [];
+    const i = state.selectedStart;
+    if (i < 0 || i >= list.length) return false;
+    pushHistory(state);
+    list.splice(i, 1);
+    state.level.startingWeapons = list;
+    state.selectedStart = Math.max(0, i - 1);
+    return true;
+  }
+  if (state.tool === 'decor') {
+    const list = state.level.decor ?? [];
+    const i = state.selectedDecor;
+    if (i < 0 || i >= list.length) return false;
+    pushHistory(state);
+    list.splice(i, 1);
+    state.level.decor = list;
+    state.selectedDecor = Math.max(0, i - 1);
+    return true;
+  }
+  if (state.tool === 'drop-range') return false;
+  const i = state.selected;
+  if (i < 0 || i >= state.level.objects.length) return false;
+  pushHistory(state);
+  state.level.objects.splice(i, 1);
+  state.selected = Math.max(0, Math.min(i, state.level.objects.length - 1));
+  return true;
+}
+
 export function addSpawn(state: EditorState, x: number, y: number): void {
   pushHistory(state);
   state.level.spawns.push({ x: snap(x, state.grid), y: snap(y, state.grid) });
@@ -118,6 +191,20 @@ export function addSpawn(state: EditorState, x: number, y: number): void {
 
 export function moveSpawn(state: EditorState, i: number, x: number, y: number): void {
   const s = state.level.spawns[i];
+  if (!s) return;
+  s.x = snap(x, state.grid);
+  s.y = snap(y, state.grid);
+}
+
+export function moveStartingWeapon(state: EditorState, i: number, x: number, y: number): void {
+  const s = state.level.startingWeapons?.[i];
+  if (!s) return;
+  s.x = snap(x, state.grid);
+  s.y = snap(y, state.grid);
+}
+
+export function moveDecor(state: EditorState, i: number, x: number, y: number): void {
+  const s = state.level.decor?.[i];
   if (!s) return;
   s.x = snap(x, state.grid);
   s.y = snap(y, state.grid);
@@ -149,6 +236,34 @@ export function selectSpawnAt(state: EditorState, x: number, y: number): number 
     }
   });
   if (best >= 0) state.selectedSpawn = best;
+  return best;
+}
+
+export function selectStartAt(state: EditorState, x: number, y: number): number {
+  let best = -1;
+  let bestD = 1.2;
+  (state.level.startingWeapons ?? []).forEach((s, i) => {
+    const d = Math.hypot(s.x - x, s.y - y);
+    if (d < bestD) {
+      bestD = d;
+      best = i;
+    }
+  });
+  if (best >= 0) state.selectedStart = best;
+  return best;
+}
+
+export function selectDecorAt(state: EditorState, x: number, y: number): number {
+  let best = -1;
+  let bestD = 1.2;
+  (state.level.decor ?? []).forEach((s, i) => {
+    const d = Math.hypot(s.x - x, s.y - y);
+    if (d < bestD) {
+      bestD = d;
+      best = i;
+    }
+  });
+  if (best >= 0) state.selectedDecor = best;
   return best;
 }
 
@@ -213,6 +328,18 @@ export function applyEditorPad(
       const s = state.level.spawns[state.selectedSpawn];
       if (s) {
         moveSpawn(state, state.selectedSpawn, s.x + dx, s.y + dy);
+        nudged = true;
+      }
+    } else if (state.tool === 'starting-weapon') {
+      const s = state.level.startingWeapons?.[state.selectedStart];
+      if (s) {
+        moveStartingWeapon(state, state.selectedStart, s.x + dx, s.y + dy);
+        nudged = true;
+      }
+    } else if (state.tool === 'decor') {
+      const s = state.level.decor?.[state.selectedDecor];
+      if (s) {
+        moveDecor(state, state.selectedDecor, s.x + dx, s.y + dy);
         nudged = true;
       }
     } else {

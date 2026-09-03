@@ -8,20 +8,32 @@ import {
   IDLE_EDITOR_PAD,
   importLevel,
   loadLibrary,
+  moveDecor,
   moveSelected,
   moveSpawn,
+  moveStartingWeapon,
   PALETTE,
   redo,
+  removeSelected,
   resizeSelected,
   rotateSelected,
   saveLibrary,
+  selectDecorAt,
   selectSpawnAt,
+  selectStartAt,
   shareHash,
   undo,
   type EditorPadButtons,
   type EditorState,
 } from './editor';
-import { applyField, fieldValue, objectSchemaFields } from './properties';
+import {
+  applyField,
+  applyLevelField,
+  fieldValue,
+  levelFieldValue,
+  levelSchemaFields,
+  objectSchemaFields,
+} from './properties';
 import type { LevelDef } from '../sim/level/schema';
 import { joinStartIndex, loadMaps } from '../input/remap';
 import { buttonOn } from '../input/gamepad';
@@ -70,7 +82,8 @@ export function mountEditor(root: HTMLElement, state: EditorState, fns: EditorVi
   fields.id = 'edfields';
   const props = document.createElement('pre');
   props.id = 'edjson';
-  props.style.cssText = 'font-size:11px;max-height:22vh;overflow:auto;background:#151820;padding:8px';
+  props.style.cssText =
+    'font-size:11px;max-height:22vh;overflow:auto;background:#151820;padding:8px';
   const actions = document.createElement('div');
   const mk = (label: string, fn: () => void) => {
     const b = document.createElement('button');
@@ -108,6 +121,10 @@ export function mountEditor(root: HTMLElement, state: EditorState, fns: EditorVi
       resizeSelected(state, (obj.w ?? 2) - state.grid, (obj.h ?? 1) - state.grid);
       draw();
     }),
+    mk('Delete', () => {
+      removeSelected(state);
+      draw();
+    }),
     mk('Export', () => {
       const blob = new Blob([exportLevel(state)], { type: 'application/json' });
       const a = document.createElement('a');
@@ -135,7 +152,8 @@ export function mountEditor(root: HTMLElement, state: EditorState, fns: EditorVi
   };
   const lib = document.createElement('div');
   lib.id = 'edlib';
-  lib.style.cssText = 'font-size:12px;max-height:18vh;overflow:auto;background:#151820;padding:8px;margin:6px 0';
+  lib.style.cssText =
+    'font-size:12px;max-height:18vh;overflow:auto;background:#151820;padding:8px;margin:6px 0';
   side.append(actions, file, fields, lib, props);
 
   wrap.append(pal, mid, side);
@@ -184,6 +202,12 @@ export function mountEditor(root: HTMLElement, state: EditorState, fns: EditorVi
     if (state.tool === 'spawn') {
       const hit = selectSpawnAt(state, w.x, w.y);
       if (hit < 0) addObject(state, w.x, w.y);
+    } else if (state.tool === 'starting-weapon') {
+      const hit = selectStartAt(state, w.x, w.y);
+      if (hit < 0) addObject(state, w.x, w.y);
+    } else if (state.tool === 'decor') {
+      const hit = selectDecorAt(state, w.x, w.y);
+      if (hit < 0) addObject(state, w.x, w.y);
     } else if (state.tool === 'drop-range') {
       addObject(state, w.x, w.y);
     } else {
@@ -197,6 +221,9 @@ export function mountEditor(root: HTMLElement, state: EditorState, fns: EditorVi
     if (!drag) return;
     const w = toWorld(ev);
     if (state.tool === 'spawn') moveSpawn(state, state.selectedSpawn, w.x, w.y);
+    else if (state.tool === 'starting-weapon')
+      moveStartingWeapon(state, state.selectedStart, w.x, w.y);
+    else if (state.tool === 'decor') moveDecor(state, state.selectedDecor, w.x, w.y);
     else if (state.tool !== 'drop-range') moveSelected(state, w.x, w.y);
     draw();
   });
@@ -249,12 +276,25 @@ export function mountEditor(root: HTMLElement, state: EditorState, fns: EditorVi
       addObject(state, 12, 6);
       draw();
     }
+    if (ev.code === 'Delete' || ev.code === 'Backspace') {
+      if ((ev.target as HTMLElement | null)?.tagName === 'INPUT') return;
+      if ((ev.target as HTMLElement | null)?.tagName === 'SELECT') return;
+      if ((ev.target as HTMLElement | null)?.tagName === 'TEXTAREA') return;
+      removeSelected(state);
+      draw();
+    }
   });
 
   function nudge(dx: number, dy: number) {
     if (state.tool === 'spawn') {
       const s = state.level.spawns[state.selectedSpawn];
       if (s) moveSpawn(state, state.selectedSpawn, s.x + dx, s.y + dy);
+    } else if (state.tool === 'starting-weapon') {
+      const s = state.level.startingWeapons?.[state.selectedStart];
+      if (s) moveStartingWeapon(state, state.selectedStart, s.x + dx, s.y + dy);
+    } else if (state.tool === 'decor') {
+      const s = state.level.decor?.[state.selectedDecor];
+      if (s) moveDecor(state, state.selectedDecor, s.x + dx, s.y + dy);
     } else {
       const obj = state.level.objects[state.selected];
       if (obj) moveSelected(state, obj.x + dx, obj.y + dy);
@@ -264,6 +304,76 @@ export function mountEditor(root: HTMLElement, state: EditorState, fns: EditorVi
 
   function paintFields() {
     fields.innerHTML = '';
+    const levelHead = document.createElement('div');
+    levelHead.style.cssText =
+      'margin-bottom:8px;padding-bottom:8px;border-bottom:1px solid #2a3144';
+    for (const field of levelSchemaFields()) {
+      const row = document.createElement('label');
+      row.style.cssText = 'display:block;font-size:12px;margin:4px 0';
+      row.textContent = `${field.key} `;
+      if (field.kind === 'enum' && field.options) {
+        const sel = document.createElement('select');
+        sel.name = field.key;
+        sel.dataset.levelField = field.key;
+        for (const opt of field.options) {
+          const o = document.createElement('option');
+          o.value = opt;
+          o.textContent = opt;
+          if (levelFieldValue(state.level, field.key) === opt) o.selected = true;
+          sel.append(o);
+        }
+        sel.onchange = () => {
+          applyLevelField(state.level, field.key, sel.value);
+          draw();
+        };
+        row.append(sel);
+      } else {
+        const input = document.createElement('input');
+        input.name = field.key;
+        input.dataset.levelField = field.key;
+        input.value = levelFieldValue(state.level, field.key);
+        input.style.width = '70%';
+        input.onchange = () => {
+          applyLevelField(state.level, field.key, input.value);
+          draw();
+        };
+        row.append(input);
+      }
+      levelHead.append(row);
+    }
+    fields.append(levelHead);
+
+    if (state.tool === 'starting-weapon') {
+      const sw = state.level.startingWeapons?.[state.selectedStart];
+      const row = document.createElement('label');
+      row.style.cssText = 'display:block;font-size:12px;margin:4px 0';
+      row.textContent = 'weapon ';
+      const input = document.createElement('input');
+      input.value = sw?.weapon ?? '';
+      input.onchange = () => {
+        if (sw && input.value) sw.weapon = input.value;
+        draw();
+      };
+      row.append(input);
+      fields.append(row);
+      return;
+    }
+    if (state.tool === 'decor') {
+      const dec = state.level.decor?.[state.selectedDecor];
+      const row = document.createElement('label');
+      row.style.cssText = 'display:block;font-size:12px;margin:4px 0';
+      row.textContent = 'kind ';
+      const input = document.createElement('input');
+      input.value = dec?.kind ?? '';
+      input.onchange = () => {
+        if (dec && input.value) dec.kind = input.value;
+        draw();
+      };
+      row.append(input);
+      fields.append(row);
+      return;
+    }
+
     const obj = state.level.objects[state.selected];
     if (!obj) {
       const drop = document.createElement('p');
@@ -358,6 +468,26 @@ export function mountEditor(root: HTMLElement, state: EditorState, fns: EditorVi
       ctx.beginPath();
       ctx.arc(s.x * ppm, sy(s.y), i === state.selectedSpawn ? 8 : 6, 0, Math.PI * 2);
       ctx.fill();
+    });
+    ctx.fillStyle = '#ff8844';
+    (state.level.startingWeapons ?? []).forEach((s, i) => {
+      ctx.beginPath();
+      ctx.arc(s.x * ppm, sy(s.y), i === state.selectedStart ? 7 : 5, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = '#fff';
+      ctx.font = '10px sans-serif';
+      ctx.fillText(s.weapon, s.x * ppm + 6, sy(s.y));
+      ctx.fillStyle = '#ff8844';
+    });
+    ctx.fillStyle = '#c084fc';
+    (state.level.decor ?? []).forEach((s, i) => {
+      ctx.beginPath();
+      ctx.arc(s.x * ppm, sy(s.y), i === state.selectedDecor ? 7 : 5, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = '#fff';
+      ctx.font = '10px sans-serif';
+      ctx.fillText(s.kind, s.x * ppm + 6, sy(s.y));
+      ctx.fillStyle = '#c084fc';
     });
     props.textContent = exportLevel(state);
     paintFields();

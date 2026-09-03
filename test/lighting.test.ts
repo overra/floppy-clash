@@ -3,11 +3,19 @@ import { createRadianceCascades, getCascadeDim } from '@typegpu/radiance-cascade
 import { createJumpFlood } from '@typegpu/sdf';
 import { emptyFrame } from '../src/render/frame';
 import {
+  boxSdf,
+  cascadeSceneSdf,
+  classifyLiveSolidAt,
   emitterContribution,
   jumpFloodSdf,
+  lightingCameraFromFrame,
   lightingEnabled,
+  lightingWorldFromUv,
   occludedEmitterContribution,
+  resolveCascadeSdfWgsl,
+  resolveClassifyWgsl,
   sampleJumpFlood,
+  sceneSolidSdf,
   solidRectsFromFrame,
 } from '../src/render/gpu/lighting';
 
@@ -75,5 +83,53 @@ describe('2D lighting', () => {
       primitives: [],
     });
     expect(solidRectsFromFrame(frame)).toEqual([{ minX: 1, minY: 1, maxX: 3, maxY: 2 }]);
+  });
+
+  it('JFA classify follows live solids, not a fixed center slab', () => {
+    const cam = { x: 16, y: 9, zoom: 40, viewX: 1280, viewY: 720 };
+    const leftWall = { minX: 0, minY: 0, maxX: 8, maxY: 18 };
+    const rightWall = { minX: 24, minY: 0, maxX: 32, maxY: 18 };
+    // UV x=0.15 is world x ≈ 16 + (0.15-0.5)*32 = 4.8 (inside left, outside right).
+    expect(classifyLiveSolidAt([leftWall], cam, 38, 72, 256, 144)).toBe(true);
+    expect(classifyLiveSolidAt([rightWall], cam, 38, 72, 256, 144)).toBe(false);
+    // UV x=0.85 is world x ≈ 27.2 (outside left, inside right).
+    expect(classifyLiveSolidAt([leftWall], cam, 217, 72, 256, 144)).toBe(false);
+    expect(classifyLiveSolidAt([rightWall], cam, 217, 72, 256, 144)).toBe(true);
+    // Empty scene is never inside — a slab would still mark the middle third.
+    expect(classifyLiveSolidAt([], cam, 128, 72, 256, 144)).toBe(false);
+    const mid = lightingWorldFromUv(0.5, 0.5, cam);
+    expect(mid.x).toBeCloseTo(16, 5);
+    expect(mid.y).toBeCloseTo(9, 5);
+  });
+
+  it('cascade SDF is the live solid field, not a disk at uv 0.5', () => {
+    const cam = { x: 16, y: 9, zoom: 40, viewX: 1280, viewY: 720 };
+    const wall = { minX: 2, minY: 0, maxX: 6, maxY: 18 };
+    const leftUv = lightingWorldFromUv(0.15, 0.5, cam);
+    expect(leftUv.x).toBeGreaterThan(2);
+    expect(leftUv.x).toBeLessThan(6);
+    const onWall = cascadeSceneSdf([wall], [], 0.15, 0.5, cam);
+    const center = cascadeSceneSdf([wall], [], 0.5, 0.5, cam);
+    const emptyCenter = cascadeSceneSdf([], [], 0.5, 0.5, cam);
+    expect(onWall).toBeLessThan(0);
+    expect(center).toBeGreaterThan(0);
+    expect(emptyCenter).toBeGreaterThan(center * 0.5);
+    expect(boxSdf(4, 9, wall)).toBeLessThan(0);
+    expect(sceneSolidSdf([wall], 16, 9)).toBeGreaterThan(4);
+    const frame = emptyFrame();
+    frame.camera = { ...frame.camera, x: 16, y: 9, zoom: 40 };
+    expect(lightingCameraFromFrame(frame, 1280, 720).viewX).toBe(1280);
+  });
+
+  it('resolves live-solid classify and cascade DualFns (no slab / disk)', () => {
+    const classify = resolveClassifyWgsl();
+    expect(classify).toMatch(/classifyLiveSolidGpu|fn classifyLiveSolidGpu/);
+    expect(classify).not.toMatch(/size\.x\s*\/\s*4/);
+    expect(classify).not.toMatch(/size\.x \* 3/);
+    const sdf = resolveCascadeSdfWgsl();
+    expect(sdf).toMatch(/cascadeSceneSdfGpu|fn cascadeSceneSdfGpu/);
+    // Old stand-in was `hypot(uv - 0.5) - 0.15`. Live path is box SDF of packed solids.
+    expect(sdf).not.toMatch(/0\.15/);
+    expect(sdf).toMatch(/minX|solids/);
   });
 });

@@ -20,7 +20,12 @@ import {
   sdfFragment,
   sdfVertex,
 } from '../src/render/gpu/shaders';
-import { resolveGlowWgsl } from '../src/render/gpu/lighting';
+import {
+  resolveCascadeBlitWgsl,
+  resolveCascadeSdfWgsl,
+  resolveClassifyWgsl,
+  resolveGlowWgsl,
+} from '../src/render/gpu/lighting';
 import { packGroups } from '../src/render/gpu/pack';
 import { PRIM_DISK } from '../src/render/sdf/primitives';
 
@@ -63,6 +68,9 @@ describe('TypeGPU live SDF draw path (PLAN §4.11)', () => {
     });
     resolveSdfDrawWgsl();
     resolveGlowWgsl();
+    resolveClassifyWgsl();
+    resolveCascadeSdfWgsl();
+    resolveCascadeBlitWgsl();
     resolvePostWgsl();
     resolveBgWgsl();
     spy.mockRestore();
@@ -191,5 +199,19 @@ describe('TypeGPU glow pass', () => {
     expect(wgsl).toMatch(/@fragment/);
     expect(wgsl).not.toMatch(/fn vs\(/);
     expect(wgsl).not.toMatch(/fn fs\(/);
+  });
+});
+
+describe('TypeGPU GI classify / cascades (PLAN 4.11)', () => {
+  it('resolves live-solid classify and scene-geometry cascade DualFns', () => {
+    const classify = resolveClassifyWgsl();
+    expect(classify).toMatch(/classifyLiveSolidGpu|fn classifyLiveSolidGpu/);
+    expect(classify).not.toMatch(/size\.x\s*\/\s*4/);
+    const sdf = resolveCascadeSdfWgsl();
+    expect(sdf).toMatch(/cascadeSceneSdfGpu|fn cascadeSceneSdfGpu/);
+    expect(sdf).not.toMatch(/hypot\(uv\.x - 0\.5/);
+    const blit = resolveCascadeBlitWgsl();
+    expect(blit).toMatch(/@vertex/);
+    expect(blit).toMatch(/@fragment/);
   });
 });
