@@ -156,6 +156,7 @@ export function moveSelected(state: EditorState, x: number, y: number): void {
 export function resizeSelected(state: EditorState, w: number, h: number): void {
   const obj = state.level.objects[state.selected];
   if (!obj) return;
+  pushHistory(state);
   obj.w = Math.max(state.grid, snap(w, state.grid));
   obj.h = Math.max(state.grid, snap(h, state.grid));
 }
@@ -163,6 +164,7 @@ export function resizeSelected(state: EditorState, w: number, h: number): void {
 export function rotateSelected(state: EditorState, delta: number): void {
   const obj = state.level.objects[state.selected];
   if (!obj) return;
+  pushHistory(state);
   obj.angle = (obj.angle ?? 0) + delta;
 }
 

@@ -16,6 +16,7 @@ import {
   redo,
   resetMemoryLibrary,
   resizeSelected,
+  rotateSelected,
   saveLibrary,
   saveMemory,
   shareHash,
@@ -26,6 +27,21 @@ import { hold, makeSim } from './helpers';
 import { installMemoryIndexedDB } from './idb-memory';
 
 describe('M7 editor', () => {
+  it('rotate and resize are undoable and persist on the object (PLAN 4.15)', () => {
+    const state = createEditorState();
+    const obj = state.level.objects[state.selected]!;
+    const w0 = obj.w ?? 2;
+    rotateSelected(state, 0.4);
+    expect(state.level.objects[state.selected]?.angle).toBeCloseTo(0.4);
+    resizeSelected(state, w0 + 2, 3);
+    expect(state.level.objects[state.selected]?.w).toBe(w0 + 2);
+    expect(state.level.objects[state.selected]?.h).toBe(3);
+    undo(state);
+    expect(state.level.objects[state.selected]?.w).toBe(w0);
+    undo(state);
+    expect(state.level.objects[state.selected]?.angle ?? 0).toBeCloseTo(0);
+  });
+
   it('undo/redo restores object placement (PLAN 4.15)', () => {
     const state = createEditorState();
     const start = state.level.objects.length;

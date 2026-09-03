@@ -12,6 +12,7 @@ import {
   moveSpawn,
   PALETTE,
   redo,
+  resizeSelected,
   rotateSelected,
   saveLibrary,
   selectSpawnAt,
@@ -91,6 +92,18 @@ export function mountEditor(root: HTMLElement, state: EditorState, fns: EditorVi
     }),
     mk('Rotate', () => {
       rotateSelected(state, 0.2);
+      draw();
+    }),
+    mk('Resize +', () => {
+      const obj = state.level.objects[state.selected];
+      if (!obj) return;
+      resizeSelected(state, (obj.w ?? 2) + state.grid, (obj.h ?? 1) + state.grid);
+      draw();
+    }),
+    mk('Resize -', () => {
+      const obj = state.level.objects[state.selected];
+      if (!obj) return;
+      resizeSelected(state, (obj.w ?? 2) - state.grid, (obj.h ?? 1) - state.grid);
       draw();
     }),
     mk('Export', () => {
@@ -200,14 +213,16 @@ export function mountEditor(root: HTMLElement, state: EditorState, fns: EditorVi
     if (ev.code === 'BracketLeft') {
       const obj = state.level.objects[state.selected];
       if (obj) {
-        obj.w = Math.max(0.5, (obj.w ?? 2) - state.grid);
+        if (ev.shiftKey) resizeSelected(state, obj.w ?? 2, (obj.h ?? 1) - state.grid);
+        else resizeSelected(state, (obj.w ?? 2) - state.grid, obj.h ?? 1);
         draw();
       }
     }
     if (ev.code === 'BracketRight') {
       const obj = state.level.objects[state.selected];
       if (obj) {
-        obj.w = (obj.w ?? 2) + state.grid;
+        if (ev.shiftKey) resizeSelected(state, obj.w ?? 2, (obj.h ?? 1) + state.grid);
+        else resizeSelected(state, (obj.w ?? 2) + state.grid, obj.h ?? 1);
         draw();
       }
     }
@@ -320,13 +335,17 @@ export function mountEditor(root: HTMLElement, state: EditorState, fns: EditorVi
     state.level.objects.forEach((obj, i) => {
       const w = (obj.w ?? 2) * ppm;
       const h = (obj.h ?? 1) * ppm;
+      ctx.save();
+      ctx.translate(obj.x * ppm, sy(obj.y));
+      ctx.rotate(-(obj.angle ?? 0));
       ctx.fillStyle = i === state.selected ? '#f2c14e' : '#4c8dff';
       ctx.globalAlpha = 0.8;
-      ctx.fillRect(obj.x * ppm - w / 2, sy(obj.y) - h / 2, w, h);
+      ctx.fillRect(-w / 2, -h / 2, w, h);
       ctx.globalAlpha = 1;
       ctx.fillStyle = '#fff';
       ctx.font = '10px sans-serif';
-      ctx.fillText(obj.type, obj.x * ppm - w / 2, sy(obj.y));
+      ctx.fillText(obj.type, -w / 2, 0);
+      ctx.restore();
     });
     ctx.fillStyle = '#3dcf7a';
     state.level.spawns.forEach((s, i) => {

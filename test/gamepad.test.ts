@@ -95,6 +95,20 @@ describe('gamepad mapping', () => {
       { x: 1, y: 0 },
     );
     expect(ff.jump).toBe(false);
+
+    const safari = readPad(
+      fakePad({
+        id: 'Xbox Wireless Controller Extended Gamepad',
+        mapping: 'standard',
+        axes: [0.4, 0, 0.9, 0.1],
+        buttons: [true, false, false, false, false, false, false, true],
+      }),
+      emptyLatch(),
+      { x: 1, y: 0 },
+    );
+    expect(safari.jump).toBe(true);
+    expect(safari.attack).toBe(true);
+    expect(safari.aimX).toBeGreaterThan(0.4);
   });
 
   it('offers remap when the mapping is not standard', () => {

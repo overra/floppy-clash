@@ -93,6 +93,35 @@ function bodyHalfSize(
   const body = ctx.bodies.get(e as number);
   const fix = body?.getFixtureList();
   if (!fix) return null;
+  const shape = fix.getShape() as {
+    m_type?: string;
+    m_vertices?: Array<{ x: number; y: number }>;
+    getType?: () => string;
+    getVertexCount?: () => number;
+    getVertex?: (i: number) => { x: number; y: number };
+  };
+  const type = shape.m_type ?? shape.getType?.() ?? (typeof fix.getType === 'function' ? fix.getType() : '');
+  const verts = shape.m_vertices;
+  if (type === 'polygon' && verts && verts.length) {
+    let hx = 0;
+    let hy = 0;
+    for (const v of verts) {
+      hx = Math.max(hx, Math.abs(v.x));
+      hy = Math.max(hy, Math.abs(v.y));
+    }
+    if (Number.isFinite(hx) && Number.isFinite(hy) && hx >= 0.05 && hy >= 0.05) return { hx, hy };
+  }
+  if (type === 'polygon' && shape.getVertexCount && shape.getVertex) {
+    let hx = 0;
+    let hy = 0;
+    const n = shape.getVertexCount();
+    for (let i = 0; i < n; i++) {
+      const v = shape.getVertex(i);
+      hx = Math.max(hx, Math.abs(v.x));
+      hy = Math.max(hy, Math.abs(v.y));
+    }
+    if (Number.isFinite(hx) && Number.isFinite(hy) && hx >= 0.05 && hy >= 0.05) return { hx, hy };
+  }
   const aabb = fix.getAABB(0);
   const hx = (aabb.upperBound.x - aabb.lowerBound.x) * 0.5;
   const hy = (aabb.upperBound.y - aabb.lowerBound.y) * 0.5;
@@ -101,14 +130,19 @@ function bodyHalfSize(
 }
 
 /** PLAN §4.11: spikes use triangles; saw teeth use `sdPie`; lava stays a rounded box. */
-function hazardPrimitives(kind: number, x: number, y: number, hx = 1.2, hy = 0.35) {
-  const body = { kind: PRIM_ROUNDED_BOX, ax: x, ay: y, bx: hx, by: hy, r: 0.05 };
+function hazardPrimitives(kind: number, x: number, y: number, hx = 1.2, hy = 0.35, angle = 0) {
+  const body = { kind: PRIM_ROUNDED_BOX, ax: x, ay: y, bx: hx, by: hy, r: 0.05, cx: angle };
   if (kind === HazardKind.Spikes) {
+    const c = Math.cos(angle);
+    const s = Math.sin(angle);
+    const rot = (lx: number, ly: number) => ({ x: x + lx * c - ly * s, y: y + lx * s + ly * c });
     return [
       body,
-      { kind: PRIM_TRIANGLE, ax: x - 0.45, ay: y + 0.15, bx: x - 0.2, by: y + 0.15, r: 0.45 },
-      { kind: PRIM_TRIANGLE, ax: x - 0.05, ay: y + 0.15, bx: x + 0.2, by: y + 0.15, r: 0.45 },
-      { kind: PRIM_TRIANGLE, ax: x + 0.35, ay: y + 0.15, bx: x + 0.6, by: y + 0.15, r: 0.45 },
+      ...[-0.45, -0.05, 0.35].map((lx) => {
+        const a = rot(lx, 0.15);
+        const b = rot(lx + 0.25, 0.15);
+        return { kind: PRIM_TRIANGLE, ax: a.x, ay: a.y, bx: b.x, by: b.y, r: 0.45 };
+      }),
     ];
   }
   if (kind === HazardKind.Saw) {
@@ -165,6 +199,7 @@ export function buildFrame(
   world.query(Hazard, Transform, PrevTransform).updateEach(([hz, t, prev], e) => {
     const x = lerp(prev.x, t.x, alpha);
     const y = lerp(prev.y, t.y, alpha);
+    const ang = lerpAngle(prev.angle, t.angle, alpha);
     if (hz.kind === HazardKind.Lava) {
       lights.push({ x, y, radius: 4.5, r: 1, g: 0.35, b: 0.08, intensity: 0.9 });
     }
@@ -174,7 +209,7 @@ export function buildFrame(
     }
     const fx = hz.kind === HazardKind.Lava ? ('lava' as const) : undefined;
     const size = bodyHalfSize(ctx, e);
-    const primitives = hazardPrimitives(hz.kind, x, y, size?.hx ?? 1.2, size?.hy ?? 0.35);
+    const primitives = hazardPrimitives(hz.kind, x, y, size?.hx ?? 1.2, size?.hy ?? 0.35, ang);
     const dest = e.get(Destructible);
     if (dest && dest.hp < dest.maxHp) {
       const cracks = Math.min(3, 1 + Math.floor((1 - dest.hp / dest.maxHp) * 3));

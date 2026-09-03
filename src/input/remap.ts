@@ -30,3 +30,8 @@ export function saveMap(padId: string, map: PadMap): void {
   all[padId] = map;
   localStorage.setItem('floppy-clash.padmaps', JSON.stringify(all));
 }
+
+/** PLAN 4.12: Start on join uses the remapped pause / Options button. */
+export function joinStartIndex(map?: PadMap): number {
+  return map?.pause ?? DEFAULT_MAP.pause;
+}

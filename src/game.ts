@@ -4,6 +4,7 @@ import { createFixedStepLoop, interpolationAlpha } from './core/loop';
 import { createMixer } from './audio/mixer';
 import { createKeyboardFallback } from './input/keyboard';
 import {
+  buttonOn,
   consumeLatch,
   emptyLatch,
   pollGamepads,
@@ -14,11 +15,13 @@ import {
 import {
   canStartMatch,
   claimDisconnectedSeat,
+  clearJoinSeats,
   collectPadMap,
   createMenuState,
   cycleSeatColor,
   edgePressed,
   markDisconnectedSeat,
+  rememberTakenSeats,
   renderMenus,
   screenAfterLeavingSettings,
   shouldOfferRemapOnScreen,
@@ -28,7 +31,7 @@ import {
 } from './ui/menus';
 import { scoreboardMarkup } from './ui/scoreboard';
 import { playRumble } from './input/haptics';
-import { loadMaps, saveMap, shouldOfferRemap } from './input/remap';
+import { joinStartIndex, loadMaps, saveMap, shouldOfferRemap } from './input/remap';
 import {
   canResumePause,
   humanSeatAssignments,
@@ -154,6 +157,7 @@ type FloppyDebug = {
   playerGrounded: boolean[];
   lastSeatJumps: boolean[];
   padMaps: Record<string, { jump: number; attack: number; block: number; throw: number; pause: number }>;
+  matchWins: number[];
 };
 
 declare global {
@@ -252,11 +256,15 @@ export function createGame(root: HTMLElement): Game {
       menus,
       {
         local: () => {
+          rememberTakenSeats(menus.seats, menus.padMemory);
+          clearJoinSeats(menus.seats);
           menus.screen = 'join';
           menus.bots = 0;
           show();
         },
         bots: () => {
+          rememberTakenSeats(menus.seats, menus.padMemory);
+          clearJoinSeats(menus.seats);
           menus.screen = 'join';
           menus.bots = 3;
           menus.seats[0] = { taken: true, ready: true, color: 0, padId: 'keyboard', name: 'You' };
@@ -317,6 +325,7 @@ export function createGame(root: HTMLElement): Game {
           requestResume('*');
         },
         quit: () => {
+          rememberTakenSeats(menus.seats, menus.padMemory);
           sim = null;
           paused = false;
           pausedBy = null;
@@ -726,14 +735,14 @@ export function createGame(root: HTMLElement): Game {
         if (edgePressed(joinLeftHeld[i] ?? false, leftDown)) {
           const seat = menus.seats.find((s) => s.padId === pad.id);
           if (seat) {
-            cycleSeatColor(seat, -1);
+            cycleSeatColor(seat, -1, menus.padMemory);
             show();
           }
         }
         if (edgePressed(joinRightHeld[i] ?? false, rightDown)) {
           const seat = menus.seats.find((s) => s.padId === pad.id);
           if (seat) {
-            cycleSeatColor(seat, 1);
+            cycleSeatColor(seat, 1, menus.padMemory);
             show();
           }
         }
@@ -741,11 +750,11 @@ export function createGame(root: HTMLElement): Game {
         joinRightHeld[i] = rightDown;
         const aDown = !!(pad.buttons[0]?.pressed || pad.buttons[4]?.pressed);
         if (aDown && !joinAHeld[i]) {
-          takeOrReadySeat(menus.seats, pad.id);
+          takeOrReadySeat(menus.seats, pad.id, menus.padMemory);
           show();
         }
         joinAHeld[i] = aDown;
-        const startDown = !!pad.buttons[9]?.pressed;
+        const startDown = buttonOn(pad.buttons[joinStartIndex(padMapFor(pad.id))]);
         if (startDown && !joinStartHeld[i]) startIfReady();
         joinStartHeld[i] = startDown;
       }
@@ -1068,6 +1077,7 @@ export function createGame(root: HTMLElement): Game {
       playerGrounded: readPlayerGrounded(handle),
       lastSeatJumps: lastSampled.map((i) => i.jump),
       padMaps: maps,
+      matchWins: readMatchWins(handle),
     };
   }
 
@@ -1127,6 +1137,11 @@ export function createGame(root: HTMLElement): Game {
       if (p.slot >= 0 && p.slot < 4) colors[p.slot] = p.color;
     });
     return colors;
+  }
+
+  function readMatchWins(world: SimHandle | null | undefined): number[] {
+    const ms = world?.ecs.get(MatchState);
+    return [ms?.wins0 ?? 0, ms?.wins1 ?? 0, ms?.wins2 ?? 0, ms?.wins3 ?? 0];
   }
 
   function readPlayerGrounded(world: SimHandle | null | undefined): boolean[] {
@@ -1355,6 +1370,7 @@ export function createGame(root: HTMLElement): Game {
         }
         const existing = menus.seats.find((s) => s.padId === pad.id);
         if (existing && menus.screen === 'disconnect') {
+          rememberTakenSeats(menus.seats, menus.padMemory);
           menus.claimSeat = -1;
           paused = false;
           menus.screen = 'play';
@@ -1362,7 +1378,7 @@ export function createGame(root: HTMLElement): Game {
           return;
         }
         if (menus.screen === 'disconnect') {
-          claimDisconnectedSeat(menus.seats, pad.id, menus.claimSeat);
+          claimDisconnectedSeat(menus.seats, pad.id, menus.claimSeat, menus.padMemory);
           menus.claimSeat = -1;
           paused = false;
           menus.screen = 'play';
@@ -1370,7 +1386,7 @@ export function createGame(root: HTMLElement): Game {
           return;
         }
         if (menus.screen === 'join') {
-          takeSeat(menus.seats, pad.id);
+          takeSeat(menus.seats, pad.id, menus.padMemory);
           show();
         }
       });
@@ -1412,13 +1428,13 @@ export function createGame(root: HTMLElement): Game {
           if (e.code === 'ArrowLeft' || e.code === 'ArrowRight') {
             const seat = [...menus.seats].reverse().find((s) => s.taken) ?? menus.seats[0];
             if (seat?.taken) {
-              cycleSeatColor(seat, e.code === 'ArrowRight' ? 1 : -1);
+              cycleSeatColor(seat, e.code === 'ArrowRight' ? 1 : -1, menus.padMemory);
               show();
             }
             return;
           }
           if (e.code === 'Space' || e.code === 'KeyA') {
-            takeOrReadySeat(menus.seats, 'keyboard');
+            takeOrReadySeat(menus.seats, 'keyboard', menus.padMemory);
             show();
             return;
           }

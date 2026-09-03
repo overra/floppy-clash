@@ -25,6 +25,7 @@ import {
   Transform,
   Weapon,
 } from '../src/sim/traits';
+import { droppableWeapons } from '../src/sim/weapons/defs';
 import { hold, makeSim, playerOf } from './helpers';
 
 function countLoose(sim: ReturnType<typeof makeSim>): number {
@@ -36,6 +37,32 @@ function countLoose(sim: ReturnType<typeof makeSim>): number {
 }
 
 describe('PLAN gaps closed this audit', () => {
+  it('editor angle is applied to the physics body (PLAN 4.15)', () => {
+    const level = {
+      ...woodsClearing,
+      id: 'tilt-slab',
+      objects: [
+        { type: 'solid' as const, x: 16, y: 1, w: 32, h: 2 },
+        { type: 'solid' as const, x: 16, y: 6, w: 8, h: 1, angle: 0.35 },
+      ],
+    };
+    const sim = makeSim({ level, seed: 501, settings: { playerCount: 1 } });
+    const tilted = { angle: 0, found: false };
+    sim.ecs.query(Hazard, Transform).updateEach(([hz, t], e) => {
+      if (hz.kind !== HazardKind.Solid || Math.abs(t.y - 6) > 0.2) return;
+      tilted.angle = sim.ctx.bodies.get(e)?.getAngle() ?? 0;
+      tilted.found = true;
+    });
+    expect(tilted.found).toBe(true);
+    expect(tilted.angle).toBeCloseTo(0.35, 2);
+  });
+
+  it('enabledWeapons filters the sky-drop pool (PLAN 4.9)', () => {
+    expect(droppableWeapons(['pistol']).map((d) => d.id)).toEqual(['pistol']);
+    expect(droppableWeapons(['rpg']).every((d) => d.id === 'rpg')).toBe(true);
+    expect(droppableWeapons([]).length).toBe(0);
+  });
+
   it('sky drops wait firstDropDelay after countdown, not during it', () => {
     const sim = makeSim({
       level: woodsClearing,

@@ -119,6 +119,33 @@ describe('PLAN §4.11 theme pass', () => {
     expect(frame.groups.some((g) => g.fx === 'hole')).toBe(true);
   });
 
+  it('rotated solids keep local half-extents, not the world AABB', () => {
+    const level = {
+      ...woodsClearing,
+      id: 'tilt-render',
+      objects: [
+        { type: 'solid' as const, x: 16, y: 1, w: 32, h: 2 },
+        { type: 'solid' as const, x: 16, y: 8, w: 6, h: 1, angle: Math.PI / 4 },
+      ],
+    };
+    const sim = makeSim({ level, seed: 7, settings: { playerCount: 1 } });
+    const frame = buildFrame(sim, createCamera(sim.ctx.level.bounds), 0, 1280, 720, [], {
+      freezeCamera: true,
+    });
+    const slab = frame.groups.find(
+      (g) =>
+        g.layer === 1 &&
+        g.primitives.some(
+          (p) => p.kind === PRIM_ROUNDED_BOX && Math.abs(p.ay - 8) < 0.2 && Math.abs(p.cx ?? 0) > 0.5,
+        ),
+    );
+    expect(slab).toBeTruthy();
+    const box = slab!.primitives.find((p) => p.kind === PRIM_ROUNDED_BOX && Math.abs(p.ay - 8) < 0.2)!;
+    expect(box.bx).toBeCloseTo(3, 1);
+    expect(box.by).toBeCloseTo(0.5, 1);
+    expect(box.cx).toBeCloseTo(Math.PI / 4, 2);
+  });
+
   it('colorblind palette swaps player group colors', () => {
     const sim = makeSim({ seed: 3, settings: { playerCount: 1 } });
     const cam = createCamera(sim.ctx.level.bounds);

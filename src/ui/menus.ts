@@ -25,6 +25,8 @@ export type Seat = {
   name: string;
 };
 
+export type PadSeatMemory = Record<string, { slot: number; color: number }>;
+
 export type MenuState = {
   screen: Screen;
   seats: Seat[];
@@ -45,6 +47,8 @@ export type MenuState = {
   /** Screen to restore after Settings opened by remap / Back. */
   returnScreen: Screen | '';
   wins?: number[];
+  /** PLAN 4.12: pad `id` → slot/color for the session (survives join resets). */
+  padMemory: PadSeatMemory;
 };
 
 export type MenuActions = {
@@ -74,7 +78,30 @@ export function createMenuState(): MenuState {
     claimSeat: -1,
     remapPadId: '',
     returnScreen: '',
+    padMemory: {},
   };
+}
+
+export function rememberPad(memory: PadSeatMemory, padId: string, slot: number, color: number): void {
+  if (!padId || padId === 'bot') return;
+  memory[padId] = { slot, color };
+}
+
+export function rememberTakenSeats(seats: Seat[], memory: PadSeatMemory): void {
+  seats.forEach((s, i) => {
+    if (s.taken) rememberPad(memory, s.padId, i, s.color);
+  });
+}
+
+/** Clear join occupancy; `padMemory` is kept so a later A-press restores color/slot. */
+export function clearJoinSeats(seats: Seat[]): void {
+  for (const s of seats) {
+    s.taken = false;
+    s.ready = false;
+    s.padId = '';
+    s.name = '';
+    s.color = 0;
+  }
 }
 
 /** PLAN 4.12: offer remap at connect time, not mid-round (play/pause/disconnect). */
@@ -115,51 +142,67 @@ export function markDisconnectedSeat(seats: Seat[], padId: string | undefined): 
 }
 
 /** First newly connected pad claims the disconnected seat (same id already handled by caller). */
-export function claimDisconnectedSeat(seats: Seat[], newPadId: string, claimIndex: number): Seat | undefined {
+export function claimDisconnectedSeat(
+  seats: Seat[],
+  newPadId: string,
+  claimIndex: number,
+  memory: PadSeatMemory = {},
+): Seat | undefined {
   const claim =
     (claimIndex >= 0 ? seats[claimIndex] : undefined) ??
     seats.find((s) => s.taken && s.padId !== 'keyboard' && s.padId !== 'bot') ??
     seats.find((s) => s.taken);
-  if (claim) claim.padId = newPadId;
+  if (claim) {
+    claim.padId = newPadId;
+    rememberPad(memory, newPadId, seats.indexOf(claim), claim.color);
+  }
   return claim;
 }
 
 const COLORS = ['Yellow', 'Blue', 'Red', 'Green'];
 
-export function cycleSeatColor(seat: Seat, dir: number): void {
+export function cycleSeatColor(seat: Seat, dir: number, memory?: PadSeatMemory): void {
   seat.color = (seat.color + dir + 4) % 4;
+  if (memory && seat.padId) {
+    rememberPad(memory, seat.padId, memory[seat.padId]?.slot ?? 0, seat.color);
+  }
 }
 
 /** First press takes the next free seat; the same pad/keyboard pressing again readies (PLAN 4.12). */
-export function takeOrReadySeat(seats: Seat[], padId: string): Seat | undefined {
+export function takeOrReadySeat(
+  seats: Seat[],
+  padId: string,
+  memory: PadSeatMemory = {},
+): Seat | undefined {
   const existing = seats.find((s) => s.taken && s.padId === padId);
   if (existing) {
     existing.ready = true;
+    rememberPad(memory, padId, seats.indexOf(existing), existing.color);
     return existing;
   }
-  const empty = seats.find((s) => !s.taken);
-  if (!empty) return undefined;
-  empty.taken = true;
-  empty.padId = padId;
-  empty.ready = false;
-  empty.color = seats.indexOf(empty);
-  empty.name = padId === 'keyboard' ? 'You' : '';
-  return empty;
+  return takeSeat(seats, padId, memory);
 }
 
 /** Connection / first sighting of a pad: occupy a seat, do not ready yet. */
-export function takeSeat(seats: Seat[], padId: string): Seat | undefined {
+export function takeSeat(seats: Seat[], padId: string, memory: PadSeatMemory = {}): Seat | undefined {
   const existing = seats.find((s) => s.padId === padId);
   if (existing) {
     existing.taken = true;
+    const mem = memory[padId];
+    if (mem) existing.color = mem.color;
+    rememberPad(memory, padId, seats.indexOf(existing), existing.color);
     return existing;
   }
-  const empty = seats.find((s) => !s.taken);
+  const mem = memory[padId];
+  const preferred = mem && seats[mem.slot] && !seats[mem.slot]!.taken ? seats[mem.slot] : undefined;
+  const empty = preferred ?? seats.find((s) => !s.taken);
   if (!empty) return undefined;
   empty.taken = true;
   empty.padId = padId;
   empty.ready = false;
-  empty.color = seats.indexOf(empty);
+  empty.color = mem?.color ?? seats.indexOf(empty);
+  empty.name = padId === 'keyboard' ? 'You' : '';
+  rememberPad(memory, padId, seats.indexOf(empty), empty.color);
   return empty;
 }
 

@@ -130,6 +130,7 @@ export function createStaticBox(
       friction: opts.friction ?? 0.6,
       restitution: opts.restitution ?? 0,
       sensor: opts.sensor,
+      angle: obj.angle ?? 0,
     },
   );
   registerBody(world, entity, body);
@@ -150,6 +151,7 @@ export function createDynamicBox(
     density: opts.density ?? 0.5,
     friction: opts.friction ?? 0.5,
     fixedRotation: false,
+    angle: obj.angle ?? 0,
   });
   registerBody(world, entity, body);
   if (opts.destructible != null)
@@ -182,7 +184,12 @@ export function createKinematicBox(
     w,
     h,
     opts.dynamic ? 'dynamic' : 'kinematic',
-    { friction: opts.friction ?? 0.8, density: opts.density ?? 0, sensor: opts.sensor },
+    {
+      friction: opts.friction ?? 0.8,
+      density: opts.density ?? 0,
+      sensor: opts.sensor,
+      angle: obj.angle ?? 0,
+    },
   );
   registerBody(world, entity, body);
   if (opts.tag !== false) entity.add(Kinematic());

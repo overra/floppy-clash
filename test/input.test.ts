@@ -15,9 +15,11 @@ import {
 } from '../src/input/seats';
 import {
   canStartMatch,
+  clearJoinSeats,
   createMenuState,
   cycleSeatColor,
   hpSelectOptions,
+  rememberTakenSeats,
   readMatchSettingsFromCard,
   screenAfterLeavingSettings,
   shouldOfferRemapOnScreen,
@@ -25,8 +27,10 @@ import {
   takeOrReadySeat,
   takeSeat,
 } from '../src/ui/menus';
+import { joinStartIndex } from '../src/input/remap';
 import { Health, Player } from '../src/sim/traits';
 import { hold, makeSim, playerOf } from './helpers';
+import { joinStartIndex } from '../src/input/remap';
 import { EMPTY_INPUT, type PlayerInput } from '../src/sim/input';
 
 describe('input', () => {
@@ -71,6 +75,22 @@ describe('join seats (PLAN 4.12)', () => {
     takeOrReadySeat(menus.seats, 'keyboard');
     expect(menus.seats[1]?.taken).toBe(true);
     expect(menus.seats[1]?.ready).toBe(false);
+  });
+
+  it('remembers pad slot and color after join seats are cleared (PLAN 4.12)', () => {
+    const menus = createMenuState();
+    takeSeat(menus.seats, 'pad-blue', menus.padMemory);
+    cycleSeatColor(menus.seats[0]!, 1, menus.padMemory);
+    expect(menus.seats[0]?.color).toBe(1);
+    rememberTakenSeats(menus.seats, menus.padMemory);
+    clearJoinSeats(menus.seats);
+    menus.seats[0] = { taken: true, ready: true, color: 0, padId: 'keyboard', name: 'You' };
+    rememberTakenSeats(menus.seats, menus.padMemory);
+    clearJoinSeats(menus.seats);
+    expect(menus.seats[0]?.taken).toBe(false);
+    const again = takeSeat(menus.seats, 'pad-blue', menus.padMemory);
+    expect(again?.color).toBe(1);
+    expect(menus.seats.indexOf(again!)).toBe(0);
   });
 
   it('left/right cycles seat color (PLAN 4.12)', () => {
@@ -173,6 +193,11 @@ describe('join seats (PLAN 4.12)', () => {
     const markup = hpSelectOptions(25);
     for (const hp of HP_PRESETS) expect(markup).toContain(`value="${hp}"`);
     expect(markup).toContain('selected');
+  });
+
+  it('join Start uses the remapped pause button (PLAN 4.12)', () => {
+    expect(joinStartIndex()).toBe(9);
+    expect(joinStartIndex({ jump: 0, attack: 7, block: 6, throw: 3, pause: 8 })).toBe(8);
   });
 
   it('Start/Options pause is a rising edge (hold does not re-fire)', () => {

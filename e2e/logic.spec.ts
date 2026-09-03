@@ -507,6 +507,9 @@ test('same-id pad reconnect resumes play after disconnect overlay', async ({ pag
   await expect
     .poll(async () => page.evaluate(() => window.__floppy?.phase ?? 0))
     .toBeGreaterThanOrEqual(2);
+  await expect.poll(async () => page.evaluate(() => window.__floppy?.playerColors?.[0])).toBe(0);
+  const wins = await page.evaluate(() => window.__floppy?.matchWins ?? []);
+  expect(wins.length).toBe(4);
 });
 
 test('HP preset 25 is the spawned match Health', async ({ page }) => {
@@ -791,6 +794,141 @@ test('saved remap jump button makes the joined seat jump', async ({ page }) => {
   await expect
     .poll(async () => page.evaluate(() => window.__floppy?.playerYs?.[0] ?? 0), { timeout: 8_000 })
     .toBeGreaterThan(y0 + 0.35);
+});
+
+test('Local Play after Solo vs Bots does not keep the leftover keyboard seat', async ({ page }) => {
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Solo vs Bots' }).click();
+  await expect(page.locator('[data-seat="0"]')).toContainText(/keyboard|You/i);
+  await page.getByRole('button', { name: 'Back' }).click();
+  await page.getByRole('button', { name: 'Local Play' }).click();
+  await expect(page.getByRole('heading', { name: 'Join' })).toBeVisible();
+  await expect(page.locator('[data-seat="0"]')).toContainText(/empty/i);
+});
+
+test('same pad rejoins the remembered color after a fresh Local Play', async ({ page }) => {
+  await page.addInitScript(() => {
+    const buttons = Array.from({ length: 17 }, () => ({ pressed: false, touched: false, value: 0 }));
+    const pad = {
+      id: 'e2e-memory-pad',
+      index: 0,
+      connected: true,
+      mapping: 'standard' as const,
+      axes: [0, 0, 0, 0],
+      buttons,
+      timestamp: 1,
+      hapticActuators: [],
+      vibrationActuator: null,
+    };
+    Object.defineProperty(navigator, 'getGamepads', { value: () => [pad], configurable: true });
+    (window as unknown as { __e2ePad: typeof pad }).__e2ePad = pad;
+  });
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Local Play' }).click();
+  await page.evaluate(() => {
+    const pad = (window as unknown as { __e2ePad: Gamepad }).__e2ePad;
+    window.dispatchEvent(Object.assign(new Event('gamepadconnected'), { gamepad: pad }));
+  });
+  await expect(page.locator('[data-seat="0"]')).toContainText(/Yellow/i);
+  await page.evaluate(() => {
+    const pad = (window as unknown as { __e2ePad: { buttons: { pressed: boolean }[] } }).__e2ePad;
+    pad.buttons[15]!.pressed = true;
+  });
+  await page.waitForTimeout(80);
+  await page.evaluate(() => {
+    const pad = (window as unknown as { __e2ePad: { buttons: { pressed: boolean }[] } }).__e2ePad;
+    pad.buttons[15]!.pressed = false;
+  });
+  await expect(page.locator('[data-seat="0"]')).toContainText(/Blue/i);
+  await page.getByRole('button', { name: 'Back' }).click();
+  await page.getByRole('button', { name: 'Solo vs Bots' }).click();
+  await expect(page.locator('[data-seat="0"]')).toContainText(/keyboard|You/i);
+  await page.getByRole('button', { name: 'Back' }).click();
+  await page.getByRole('button', { name: 'Local Play' }).click();
+  await expect(page.locator('[data-seat="0"]')).toContainText(/empty/i);
+  await page.evaluate(() => {
+    const pad = (window as unknown as { __e2ePad: Gamepad }).__e2ePad;
+    window.dispatchEvent(Object.assign(new Event('gamepadconnected'), { gamepad: pad }));
+  });
+  await expect(page.locator('[data-seat="0"]')).toContainText(/Blue/i);
+});
+
+test('first new pad claims the disconnected seat and keeps its color', async ({ page }) => {
+  await page.addInitScript(() => {
+    const mk = (id: string, index: number) => {
+      const buttons = Array.from({ length: 17 }, () => ({ pressed: false, touched: false, value: 0 }));
+      return {
+        id,
+        index,
+        connected: true,
+        mapping: 'standard' as const,
+        axes: [0, 0, 0, 0],
+        buttons,
+        timestamp: 1,
+        hapticActuators: [],
+        vibrationActuator: null,
+      };
+    };
+    const pads = [mk('e2e-claim-a', 0), mk('e2e-claim-b', 1)];
+    Object.defineProperty(navigator, 'getGamepads', { value: () => pads, configurable: true });
+    (window as unknown as { __e2ePads: typeof pads }).__e2ePads = pads;
+  });
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Local Play' }).click();
+  await page.evaluate(() => {
+    const pads = (window as unknown as { __e2ePads: Gamepad[] }).__e2ePads;
+    for (const pad of pads) {
+      window.dispatchEvent(Object.assign(new Event('gamepadconnected'), { gamepad: pad }));
+    }
+  });
+  await page.evaluate(() => {
+    const pads = (window as unknown as { __e2ePads: { buttons: { pressed: boolean }[] }[] }).__e2ePads;
+    pads[1]!.buttons[15]!.pressed = true;
+  });
+  await page.waitForTimeout(80);
+  await page.evaluate(() => {
+    const pads = (window as unknown as { __e2ePads: { buttons: { pressed: boolean }[] }[] }).__e2ePads;
+    pads[1]!.buttons[15]!.pressed = false;
+    for (const pad of pads) pad.buttons[0]!.pressed = true;
+  });
+  await page.waitForTimeout(80);
+  await page.evaluate(() => {
+    const pads = (window as unknown as { __e2ePads: { buttons: { pressed: boolean }[] }[] }).__e2ePads;
+    for (const pad of pads) pad.buttons[0]!.pressed = false;
+  });
+  await expect(page.locator('[data-seat="1"]')).toContainText(/Blue/i);
+  await expect(page.locator('[data-seat="0"]')).toHaveAttribute('data-ready', '1');
+  await page.getByRole('button', { name: 'Start' }).click();
+  await page.waitForFunction(() => window.__floppy?.phase === 2, null, { timeout: 15_000 });
+  await expect.poll(async () => page.evaluate(() => window.__floppy?.playerColors?.[1])).toBe(1);
+  await page.evaluate(() => {
+    const pads = (window as unknown as { __e2ePads: Gamepad[] }).__e2ePads;
+    window.dispatchEvent(Object.assign(new Event('gamepaddisconnected'), { gamepad: pads[1] }));
+  });
+  await expect(page.getByRole('heading', { name: 'Controller disconnected' })).toBeVisible();
+  await page.evaluate(() => {
+    const pads = (window as unknown as { __e2ePads: { id: string; index: number }[] }).__e2ePads;
+    pads[1]!.id = 'e2e-claim-new';
+    window.dispatchEvent(Object.assign(new Event('gamepadconnected'), { gamepad: pads[1] }));
+  });
+  await expect(page.getByRole('heading', { name: 'Controller disconnected' })).toHaveCount(0);
+  await expect.poll(async () => page.evaluate(() => window.__floppy?.playerColors?.[1])).toBe(1);
+});
+
+test('editor Rotate writes angle into the draft JSON', async ({ page }) => {
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Level Editor' }).click();
+  await expect(page.locator('text=Level Editor')).toBeVisible();
+  const before = await page.locator('#edjson').innerText();
+  expect(before).not.toMatch(/"angle":/);
+  await page.getByRole('button', { name: 'Rotate' }).click();
+  await expect(page.locator('#edjson')).toContainText('"angle":');
+  await page.getByRole('button', { name: 'Resize +' }).click();
+  const after = await page.locator('#edjson').innerText();
+  expect(after).toContain('"angle":');
+  await page.getByRole('button', { name: 'Undo' }).click();
+  await page.getByRole('button', { name: 'Undo' }).click();
+  await expect(page.locator('#edjson')).not.toContainText('"angle":');
 });
 
 test('online lobby has room code and chat', async ({ page }) => {
