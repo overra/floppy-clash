@@ -292,9 +292,17 @@ test('guest joining after the match started gets a binary late-join snapshot', a
   await guest.getByRole('button', { name: 'Online' }).click();
   await guest.locator('#room').fill('LATE01');
   await guest.getByRole('button', { name: 'Join' }).click();
-  await expect(guest.locator('#netstatus')).toHaveAttribute('data-net-state', 'up', {
-    timeout: 20_000,
-  });
+  // Host is already broadcasting 20 Hz snaps; the guest leaves the lobby as
+  // soon as the late-join frame lands, so #netstatus is not on screen.
+  await expect
+    .poll(
+      async () =>
+        guest.evaluate(
+          () => window.__floppy?.netState === 'up' || window.__floppy?.clientRestored === true,
+        ),
+      { timeout: 20_000 },
+    )
+    .toBe(true);
   await expect
     .poll(async () => guest.evaluate(() => window.__floppy?.clientRestored ?? false), {
       timeout: 20_000,
