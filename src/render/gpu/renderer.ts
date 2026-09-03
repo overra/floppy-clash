@@ -1,172 +1,24 @@
-import { tgpu } from 'typegpu';
-import { sdDisk, sdLine, sdRoundedBox2d, opSmoothUnion } from '@typegpu/sdf';
+import { isRenderPipeline, tgpu, type TgpuRoot } from 'typegpu';
+import * as d from 'typegpu/data';
 import type { Renderer } from '../canvas/renderer';
 import type { RenderFrame } from '../frame';
-import { primitiveSdf } from '../sdf/primitives';
 import { createLightingPass, type LightingPass } from './lighting';
 import { packGroups, parseHex } from './pack';
 import type { PersistentDecalLayer } from '../fx/decals';
-
-const WGSL = /* wgsl */ `
-struct Camera {
-  x: f32,
-  y: f32,
-  zoom: f32,
-  pad: f32,
-  view: vec2f,
-  shake: vec2f,
-}
-struct Prim {
-  kind: u32,
-  ax: f32,
-  ay: f32,
-  bx: f32,
-  by: f32,
-  r: f32,
-  pad: f32,
-}
-struct Group {
-  minx: f32,
-  miny: f32,
-  maxx: f32,
-  maxy: f32,
-  color: vec4f,
-  start: u32,
-  count: u32,
-  blend: u32,
-  k: f32,
-  fx: u32,
-}
-@group(0) @binding(0) var<uniform> camera: Camera;
-@group(0) @binding(1) var<storage, read> groups: array<Group>;
-@group(0) @binding(2) var<storage, read> prims: array<Prim>;
-
-struct VSOut {
-  @builtin(position) pos: vec4f,
-  @location(0) @interpolate(flat) gid: u32,
-}
-
-@vertex
-fn vs(@builtin(vertex_index) vid: u32, @builtin(instance_index) iid: u32) -> VSOut {
-  var o: VSOut;
-  let g = groups[iid];
-  let corners = array<vec2f, 6>(
-    vec2f(g.minx, g.miny), vec2f(g.maxx, g.miny), vec2f(g.maxx, g.maxy),
-    vec2f(g.minx, g.miny), vec2f(g.maxx, g.maxy), vec2f(g.minx, g.maxy),
-  );
-  let w = corners[vid];
-  let ppm = camera.zoom;
-  let sx = (w.x - camera.x) * ppm + camera.view.x * 0.5 + camera.shake.x;
-  let sy = camera.view.y * 0.5 - (w.y - camera.y) * ppm + camera.shake.y;
-  let ndc = vec2f((sx / camera.view.x) * 2.0 - 1.0, 1.0 - (sy / camera.view.y) * 2.0);
-  o.pos = vec4f(ndc, 0.0, 1.0);
-  o.gid = iid;
-  return o;
-}
-
-fn sd_disk(p: vec2f, c: vec2f, r: f32) -> f32 { return length(p - c) - r; }
-fn sd_line(p: vec2f, a: vec2f, b: vec2f) -> f32 {
-  let pa = p - a; let ba = b - a;
-  let h = clamp(dot(pa, ba) / max(dot(ba, ba), 1e-5), 0.0, 1.0);
-  return length(pa - ba * h);
-}
-fn sd_rbox(p: vec2f, c: vec2f, hs: vec2f, r: f32) -> f32 {
-  let q = abs(p - c) - hs + vec2f(r);
-  return length(max(q, vec2f(0.0))) + min(max(q.x, q.y), 0.0) - r;
-}
-fn smin(a: f32, b: f32, k: f32) -> f32 {
-  let h = max(k - abs(a - b), 0.0) / max(k, 1e-5);
-  return min(a, b) - h * h * k * 0.25;
-}
-
-@fragment
-fn fs(input: VSOut) -> @location(0) vec4f {
-  let g = groups[input.gid];
-  let ppm = camera.zoom;
-  let sx = input.pos.x;
-  let sy = input.pos.y;
-  let wx = ((sx / camera.view.x) - 0.5) * camera.view.x / ppm + camera.x;
-  let wy = (0.5 - (sy / camera.view.y)) * camera.view.y / ppm + camera.y;
-  var p = vec2f(wx, wy);
-  if (g.fx == 1u) {
-    p = p + vec2f(sin(p.x * 9.0 + p.y * 3.0), cos(p.y * 7.0)) * 0.05;
-  }
-  if (g.fx == 2u) {
-    let o = p - vec2f(g.minx + g.maxx, g.miny + g.maxy) * 0.5;
-    let r2 = max(dot(o, o), 0.05);
-    p = p + o * (0.12 / r2);
-  }
-  var d = 1e5;
-  for (var i = 0u; i < g.count; i++) {
-    let pr = prims[g.start + i];
-    var pd = 1e5;
-    if (pr.kind == 0u) { pd = sd_disk(p, vec2f(pr.ax, pr.ay), pr.r); }
-    else if (pr.kind == 1u) { pd = sd_line(p, vec2f(pr.ax, pr.ay), vec2f(pr.bx, pr.by)) - pr.r; }
-    else { pd = sd_rbox(p, vec2f(pr.ax, pr.ay), vec2f(pr.bx, pr.by), pr.r); }
-    if (g.blend == 1u) { d = smin(d, pd, max(g.k, 0.05)); }
-    else { d = min(d, pd); }
-  }
-  let aa = max(fwidth(d), 0.002);
-  let cov = 1.0 - smoothstep(-aa, aa, d);
-  let outline = 1.0 - smoothstep(0.0, aa * 2.4, abs(d));
-  let glow = exp(-max(d, 0.0) * 10.0);
-  let shade = 0.82 + 0.18 * saturate(-d * 4.0);
-  let rgb = g.color.rgb * shade + vec3f(glow * 0.2);
-  let alpha = max(cov, outline * 0.55);
-  if (alpha < 0.01) { discard; }
-  return vec4f(rgb, alpha);
-}
-`;
-
-const DECAL_WGSL = /* wgsl */ `
-struct Camera {
-  x: f32,
-  y: f32,
-  zoom: f32,
-  pad: f32,
-  view: vec2f,
-  shake: vec2f,
-}
-struct Bounds {
-  minx: f32,
-  miny: f32,
-  maxx: f32,
-  maxy: f32,
-}
-@group(0) @binding(0) var<uniform> camera: Camera;
-@group(0) @binding(1) var decalTex: texture_2d<f32>;
-@group(0) @binding(2) var decalSamp: sampler;
-@group(0) @binding(3) var<uniform> bounds: Bounds;
-struct VSOut {
-  @builtin(position) pos: vec4f,
-  @location(0) uv: vec2f,
-}
-@vertex
-fn vs(@builtin(vertex_index) vid: u32) -> VSOut {
-  var o: VSOut;
-  let corners = array<vec2f, 6>(
-    vec2f(bounds.minx, bounds.maxy), vec2f(bounds.maxx, bounds.maxy), vec2f(bounds.maxx, bounds.miny),
-    vec2f(bounds.minx, bounds.maxy), vec2f(bounds.maxx, bounds.miny), vec2f(bounds.minx, bounds.miny),
-  );
-  let uvs = array<vec2f, 6>(
-    vec2f(0.0, 0.0), vec2f(1.0, 0.0), vec2f(1.0, 1.0),
-    vec2f(0.0, 0.0), vec2f(1.0, 1.0), vec2f(0.0, 1.0),
-  );
-  let w = corners[vid];
-  let ppm = camera.zoom;
-  let sx = (w.x - camera.x) * ppm + camera.view.x * 0.5 + camera.shake.x;
-  let sy = camera.view.y * 0.5 - (w.y - camera.y) * ppm + camera.shake.y;
-  o.pos = vec4f((sx / camera.view.x) * 2.0 - 1.0, 1.0 - (sy / camera.view.y) * 2.0, 0.0, 1.0);
-  o.uv = uvs[vid];
-  return o;
-}
-@fragment
-fn fs(input: VSOut) -> @location(0) vec4f {
-  let c = textureSample(decalTex, decalSamp, input.uv);
-  if (c.a < 0.01) { discard; }
-  return c;
-}
-`;
+import {
+  createDecalDrawPipeline,
+  createSdfDrawPipeline,
+  decalLayout,
+  GPU_DRAW_BACKEND,
+  GPU_DRAW_PIPELINE_API,
+  GpuBounds,
+  GpuCamera,
+  GpuGroup,
+  GpuPrimitive,
+  MAX_GROUPS,
+  MAX_PRIMS,
+  sdfLayout,
+} from './shaders';
 
 async function withTimeout<T>(p: Promise<T>, ms: number): Promise<T | null> {
   return Promise.race([
@@ -181,11 +33,14 @@ export type GpuRendererOpts = {
   lighting?: boolean;
 };
 
-async function createGpuRenderer(canvas: HTMLCanvasElement, opts: GpuRendererOpts = {}): Promise<Renderer | null> {
+async function createGpuRenderer(
+  canvas: HTMLCanvasElement,
+  opts: GpuRendererOpts = {},
+): Promise<Renderer | null> {
   if (!('gpu' in navigator) || !navigator.gpu) return null;
   const adapter = await navigator.gpu.requestAdapter();
   if (!adapter) return null;
-  let root;
+  let root: TgpuRoot;
   try {
     root = await tgpu.init();
   } catch {
@@ -197,24 +52,25 @@ async function createGpuRenderer(canvas: HTMLCanvasElement, opts: GpuRendererOpt
   const format = navigator.gpu.getPreferredCanvasFormat();
   context.configure({ device, format, alphaMode: 'premultiplied' });
 
-  const module = device.createShaderModule({ code: WGSL });
-  const pipeline = device.createRenderPipeline({
-    layout: 'auto',
-    vertex: { module, entryPoint: 'vs' },
-    fragment: { module, entryPoint: 'fs', targets: [{ format, blend: { color: { srcFactor: 'src-alpha', dstFactor: 'one-minus-src-alpha', operation: 'add' }, alpha: { srcFactor: 'one', dstFactor: 'one-minus-src-alpha', operation: 'add' } } }] },
-    primitive: { topology: 'triangle-list' },
-  });
+  const pipeline = createSdfDrawPipeline(root, format);
+  if (!isRenderPipeline(pipeline) || pipeline.resourceType !== 'render-pipeline') {
+    return null;
+  }
+  const decalPipeline = createDecalDrawPipeline(root, format);
+  try {
+    pipeline.initSync();
+    decalPipeline.initSync();
+  } catch {
+    return null;
+  }
 
-  const cameraBuf = device.createBuffer({ size: 32, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
-  const groupBuf = device.createBuffer({ size: 64 * 1024, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
-  const primBuf = device.createBuffer({ size: 256 * 1024, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
-  const bind = device.createBindGroup({
-    layout: pipeline.getBindGroupLayout(0),
-    entries: [
-      { binding: 0, resource: { buffer: cameraBuf } },
-      { binding: 1, resource: { buffer: groupBuf } },
-      { binding: 2, resource: { buffer: primBuf } },
-    ],
+  const cameraBuf = root.createBuffer(GpuCamera).$usage('uniform');
+  const groupBuf = root.createBuffer(d.arrayOf(GpuGroup, MAX_GROUPS)).$usage('storage');
+  const primBuf = root.createBuffer(d.arrayOf(GpuPrimitive, MAX_PRIMS)).$usage('storage');
+  const bind = root.createBindGroup(sdfLayout, {
+    camera: cameraBuf,
+    groups: groupBuf,
+    prims: primBuf,
   });
 
   let lighting: LightingPass | null = null;
@@ -225,71 +81,48 @@ async function createGpuRenderer(canvas: HTMLCanvasElement, opts: GpuRendererOpt
       lighting = null;
     }
   }
-  const decalModule = device.createShaderModule({ code: DECAL_WGSL });
-  const decalPipeline = device.createRenderPipeline({
-    layout: 'auto',
-    vertex: { module: decalModule, entryPoint: 'vs' },
-    fragment: {
-      module: decalModule,
-      entryPoint: 'fs',
-      targets: [{
-        format,
-        blend: {
-          color: { srcFactor: 'src-alpha', dstFactor: 'one-minus-src-alpha', operation: 'add' },
-          alpha: { srcFactor: 'one', dstFactor: 'one-minus-src-alpha', operation: 'add' },
-        },
-      }],
-    },
-    primitive: { topology: 'triangle-list' },
-  });
-  const decalBoundsBuf = device.createBuffer({ size: 16, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
-  const decalSampler = device.createSampler({ magFilter: 'linear', minFilter: 'linear' });
+
+  const decalBoundsBuf = root.createBuffer(GpuBounds).$usage('uniform');
+  const decalSampler = root.createSampler({ magFilter: 'linear', minFilter: 'linear' });
   let decalTex: GPUTexture | null = null;
   let decalTexW = 0;
   let decalTexH = 0;
-  let decalBind: GPUBindGroup | null = null;
-
-  const query = device.createQuerySet?.({ type: 'timestamp', count: 2 });
-  void query;
-  void sdDisk;
-  void sdLine;
-  void sdRoundedBox2d;
-  void opSmoothUnion;
-  void primitiveSdf;
+  let decalBind: ReturnType<typeof root.createBindGroup> | null = null;
 
   function uploadDecals(layer: PersistentDecalLayer): void {
-    if (!layer.dirty && decalTex && decalBind) return;
-    if (!decalTex || decalTexW !== layer.width || decalTexH !== layer.height) {
-      decalTex?.destroy();
-      decalTex = device.createTexture({
-        size: { width: layer.width, height: layer.height },
-        format: 'rgba8unorm',
-        usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
+    if (!decalTex || !decalBind || layer.dirty) {
+      if (!decalTex || decalTexW !== layer.width || decalTexH !== layer.height) {
+        decalTex?.destroy();
+        decalTex = device.createTexture({
+          size: { width: layer.width, height: layer.height },
+          format: 'rgba8unorm',
+          usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
+        });
+        decalTexW = layer.width;
+        decalTexH = layer.height;
+      }
+      device.queue.writeTexture(
+        { texture: decalTex },
+        layer.pixels,
+        { bytesPerRow: layer.width * 4 },
+        { width: layer.width, height: layer.height },
+      );
+      decalBind = root.createBindGroup(decalLayout, {
+        camera: cameraBuf,
+        decalTex: decalTex.createView(),
+        decalSamp: decalSampler,
+        bounds: decalBoundsBuf,
       });
-      decalTexW = layer.width;
-      decalTexH = layer.height;
+      layer.dirty = false;
+      renderer.decalUploads += 1;
     }
-    device.queue.writeTexture(
-      { texture: decalTex },
-      layer.pixels,
-      { bytesPerRow: layer.width * 4 },
-      { width: layer.width, height: layer.height },
-    );
-    decalBind = device.createBindGroup({
-      layout: decalPipeline.getBindGroupLayout(0),
-      entries: [
-        { binding: 0, resource: { buffer: cameraBuf } },
-        { binding: 1, resource: decalTex.createView() },
-        { binding: 2, resource: decalSampler },
-        { binding: 3, resource: { buffer: decalBoundsBuf } },
-      ],
-    });
-    layer.dirty = false;
-    renderer.decalUploads += 1;
   }
 
   const renderer: Renderer = {
     kind: 'gpu',
+    pipelineBackend: GPU_DRAW_BACKEND,
+    pipelineResourceType: pipeline.resourceType,
+    pipelineApi: GPU_DRAW_PIPELINE_API,
     canvas,
     lastGpuMs: 0,
     decalUploads: 0,
@@ -304,11 +137,17 @@ async function createGpuRenderer(canvas: HTMLCanvasElement, opts: GpuRendererOpt
       const t0 = performance.now();
       const w = canvas.width;
       const h = canvas.height;
-      const cam = new Float32Array([frame.camera.x, frame.camera.y, frame.camera.zoom, 0, w, h, frame.camera.shakeX, frame.camera.shakeY]);
-      device.queue.writeBuffer(cameraBuf, 0, cam);
-      const packed = packGroups(frame.groups);
-      device.queue.writeBuffer(groupBuf, 0, packed.groupBytes);
-      device.queue.writeBuffer(primBuf, 0, packed.primBytes);
+      cameraBuf.write({
+        x: frame.camera.x,
+        y: frame.camera.y,
+        zoom: frame.camera.zoom,
+        pad: 0,
+        view: d.vec2f(w, h),
+        shake: d.vec2f(frame.camera.shakeX, frame.camera.shakeY),
+      });
+      const packed = packGroups(frame.groups.slice(0, MAX_GROUPS));
+      groupBuf.write(packed.groupBytes);
+      primBuf.write(packed.primBytes);
       const encoder = device.createCommandEncoder();
       const pass = encoder.beginRenderPass({
         colorAttachments: [
@@ -322,17 +161,15 @@ async function createGpuRenderer(canvas: HTMLCanvasElement, opts: GpuRendererOpt
       });
       if (frame.decalLayer && frame.decalLayer.stamped > 0) {
         const b = frame.decalLayer.bounds;
-        device.queue.writeBuffer(decalBoundsBuf, 0, new Float32Array([b.x, b.y, b.x + b.w, b.y + b.h]));
+        decalBoundsBuf.write({ minx: b.x, miny: b.y, maxx: b.x + b.w, maxy: b.y + b.h });
         uploadDecals(frame.decalLayer);
         if (decalBind) {
-          pass.setPipeline(decalPipeline);
-          pass.setBindGroup(0, decalBind);
-          pass.draw(6, 1);
+          decalPipeline.with(pass).with(decalBind).draw(6);
         }
       }
-      pass.setPipeline(pipeline);
-      pass.setBindGroup(0, bind);
-      if (frame.groups.length) pass.draw(6, frame.groups.length);
+      if (frame.groups.length) {
+        pipeline.with(pass).with(bind).draw(6, Math.min(frame.groups.length, MAX_GROUPS));
+      }
       pass.end();
       device.queue.submit([encoder.finish()]);
       renderer.lastGpuMs = performance.now() - t0;
@@ -342,7 +179,10 @@ async function createGpuRenderer(canvas: HTMLCanvasElement, opts: GpuRendererOpt
   return renderer;
 }
 
-export async function tryCreateGpuRenderer(canvas: HTMLCanvasElement, opts: GpuRendererOpts = {}): Promise<Renderer | null> {
+export async function tryCreateGpuRenderer(
+  canvas: HTMLCanvasElement,
+  opts: GpuRendererOpts = {},
+): Promise<Renderer | null> {
   try {
     return await withTimeout(createGpuRenderer(canvas, opts), 4000);
   } catch {

@@ -2,8 +2,14 @@ import { worldToScreen, type CameraState } from '../camera';
 import type { RenderFrame } from '../frame';
 import { coverage, opSmoothUnion, opUnion, primitiveSdf } from '../sdf/primitives';
 
+export type PipelineBackend = 'typegpu' | 'none';
+
 export type Renderer = {
   kind: 'canvas' | 'gpu';
+  /** Live draw path: TypeGPU `root.createRenderPipeline`, or none for Canvas. */
+  pipelineBackend: PipelineBackend;
+  pipelineResourceType: 'render-pipeline' | '';
+  pipelineApi: 'root.createRenderPipeline' | '';
   render(frame: RenderFrame): void;
   resize(w: number, h: number): void;
   canvas: HTMLCanvasElement;
@@ -23,6 +29,9 @@ export function createCanvasRenderer(canvas: HTMLCanvasElement): Renderer {
 
   const renderer: Renderer = {
     kind: 'canvas',
+    pipelineBackend: 'none',
+    pipelineResourceType: '',
+    pipelineApi: '',
     canvas,
     lastGpuMs: 0,
     decalUploads: 0,
@@ -99,7 +108,12 @@ export function createCanvasRenderer(canvas: HTMLCanvasElement): Renderer {
         ctx.strokeStyle = '#0f0';
         for (const b of frame.debug.bodies) {
           const s = worldToScreen(cam, b.x, b.y, w, h);
-          ctx.strokeRect(s.x - b.hx * cam.zoom, s.y - b.hy * cam.zoom, b.hx * 2 * cam.zoom, b.hy * 2 * cam.zoom);
+          ctx.strokeRect(
+            s.x - b.hx * cam.zoom,
+            s.y - b.hy * cam.zoom,
+            b.hx * 2 * cam.zoom,
+            b.hy * 2 * cam.zoom,
+          );
         }
       }
       void coverage;
@@ -144,7 +158,14 @@ function blitDecals(
   ctx.restore();
 }
 
-function roundRect(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number): void {
+function roundRect(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+  r: number,
+): void {
   const rr = Math.min(r, w / 2, h / 2);
   ctx.moveTo(x + rr, y);
   ctx.arcTo(x + w, y, x + w, y + h, rr);

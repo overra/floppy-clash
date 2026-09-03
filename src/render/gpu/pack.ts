@@ -1,4 +1,5 @@
 import type { ShapeGroup } from '../frame';
+import { GROUP_STRIDE, PRIM_STRIDE } from './shaders';
 
 /** Pack RenderFrame groups into GPU storage-buffer layouts (CPU-testable). */
 export function packGroups(groups: ShapeGroup[]): {
@@ -9,14 +10,14 @@ export function packGroups(groups: ShapeGroup[]): {
 } {
   let primCount = 0;
   for (const g of groups) primCount += g.primitives.length;
-  const groupBytes = new ArrayBuffer(Math.max(256, groups.length * 64));
-  const primBytes = new ArrayBuffer(Math.max(256, primCount * 32));
+  const groupBytes = new ArrayBuffer(Math.max(256, groups.length * GROUP_STRIDE));
+  const primBytes = new ArrayBuffer(Math.max(256, primCount * PRIM_STRIDE));
   const gv = new DataView(groupBytes);
   const pv = new DataView(primBytes);
   let po = 0;
   let pi = 0;
   groups.forEach((g, i) => {
-    const off = i * 64;
+    const off = i * GROUP_STRIDE;
     gv.setFloat32(off, g.minX, true);
     gv.setFloat32(off + 4, g.minY, true);
     gv.setFloat32(off + 8, g.maxX, true);
@@ -38,7 +39,7 @@ export function packGroups(groups: ShapeGroup[]): {
       pv.setFloat32(po + 12, p.bx, true);
       pv.setFloat32(po + 16, p.by, true);
       pv.setFloat32(po + 20, p.r, true);
-      po += 32;
+      po += PRIM_STRIDE;
       pi += 1;
     }
   });

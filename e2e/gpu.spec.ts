@@ -3,7 +3,9 @@ import { expect, test } from '@playwright/test';
 test('GPU renderer initialises or the fallback notice is shown', async ({ page }) => {
   await page.goto('/');
   await expect(page.getByRole('heading', { name: 'Floppy Clash' })).toBeVisible();
-  await expect(page.locator('.notice').first()).toHaveText(/SDF renderer|Canvas fallback/, { timeout: 15_000 });
+  await expect(page.locator('.notice').first()).toHaveText(/SDF renderer|Canvas fallback/, {
+    timeout: 15_000,
+  });
   await page.getByRole('button', { name: 'Solo vs Bots' }).click();
   await expect(page.getByRole('heading', { name: 'Join' })).toBeVisible();
   await page.keyboard.press('Enter');
@@ -36,8 +38,18 @@ test('GPU renderer initialises or the fallback notice is shown', async ({ page }
     kind: window.__floppy?.rendererKind,
     groups: window.__floppy?.lastFrameGroups ?? 0,
     colored: window.__floppy?.lastFrameColored ?? 0,
+    backend: window.__floppy?.gpuPipelineBackend,
+    api: window.__floppy?.gpuPipelineApi,
+    resourceType: window.__floppy?.gpuPipelineResourceType,
   }));
   expect(frame.kind === 'gpu' || frame.kind === 'canvas').toBe(true);
   expect(frame.groups + frame.colored).toBeGreaterThan(0);
+  if (frame.kind === 'gpu') {
+    expect(frame.backend).toBe('typegpu');
+    expect(frame.api).toBe('root.createRenderPipeline');
+    expect(frame.resourceType).toBe('render-pipeline');
+  } else {
+    expect(frame.backend === 'none' || frame.backend === undefined).toBe(true);
+  }
   await page.screenshot({ path: 'test-results/gpu-xvfb.png', fullPage: true });
 });

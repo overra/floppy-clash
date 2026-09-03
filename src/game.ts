@@ -95,6 +95,9 @@ type FloppyDebug = {
   lastFrameGroups: number;
   lastFrameColored: number;
   inspect: string;
+  gpuPipelineBackend: 'typegpu' | 'none';
+  gpuPipelineApi: 'root.createRenderPipeline' | '';
+  gpuPipelineResourceType: string;
 };
 
 declare global {
@@ -727,6 +730,9 @@ export function createGame(root: HTMLElement): Game {
       lastChat: menus.chat[menus.chat.length - 1] ?? '',
       lastFrameGroups,
       lastFrameColored,
+      gpuPipelineBackend: renderer?.pipelineBackend ?? 'none',
+      gpuPipelineApi: renderer?.pipelineApi ?? '',
+      gpuPipelineResourceType: renderer?.pipelineResourceType ?? '',
       inspect:
         (sim ?? clientView?.sim)
           ? formatInspect(inspectWorld((sim ?? clientView!.sim).ecs, 12))
