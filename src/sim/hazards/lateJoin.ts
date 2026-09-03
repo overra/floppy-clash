@@ -148,7 +148,8 @@ export function lateJoinBodySpec(
           hx: 0.1,
           hy: 0.1,
           density: 0,
-          friction: 0.6,
+          // Host `createBoxBody` default friction (not createStaticBox's 0.6).
+          friction: 0.4,
           fixtureKind: 'solid',
         });
       }

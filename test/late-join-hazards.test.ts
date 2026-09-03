@@ -130,7 +130,7 @@ describe('lateJoinBodySpec Appendix D materials', () => {
       flags: { isStatic: true, chainDeck: false, spikeStyle: 0 },
       bodyType: 'static',
       density: 0,
-      friction: 0.6,
+      friction: 0.4,
     },
     { name: 'momentum', kind: HazardKind.Momentum, bodyType: 'dynamic', density: 0.35, friction: 0.8 },
     { name: 'collapsing', kind: HazardKind.Collapsing, bodyType: 'dynamic', density: 0, friction: 0.8 },
