@@ -544,7 +544,7 @@ describe('spawnMissing restores host hazard density/type', () => {
       e.destroy();
     }
     restoreWorld(view.sim.ecs, snap);
-    view.sim.ecs.query(Hazard, NetId).updateEach(([hz, n], e) => {
+    view.sim.ecs.query(Hazard, NetId).updateEach(([_hz, n], e) => {
       const ext = boxExtents(view.sim, e);
       if (n.id === crate.id) {
         expect(ext.hx).toBeCloseTo(1, 5);
