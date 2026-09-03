@@ -568,7 +568,7 @@ export function createGame(root: HTMLElement): Game {
         if (menus.netRole === 'host') {
           for (const ev of events) {
             if (ev.type === 'round-phase') net.send({ t: 'event', kind: 'round-phase', payload: ev.phase });
-            if (ev.type === 'spawn' || ev.type === 'despawn') {
+            if (ev.type === 'spawn' || ev.type === 'despawn' || ev.type === 'shot') {
               net.send({ t: 'event', kind: ev.type, payload: JSON.stringify(ev) });
             }
           }
