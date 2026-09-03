@@ -1110,7 +1110,11 @@ export function createGame(root: HTMLElement): Game {
         }
       });
       await attachPreferredRenderer();
-      if (menus.screen !== 'play') show();
+      if (location.hash.startsWith('#l=')) {
+        openEditor();
+      } else if (menus.screen !== 'play' && menus.screen !== 'editor') {
+        show();
+      }
       bindDebug();
       if ('serviceWorker' in navigator) void navigator.serviceWorker.register('/sw.js');
       raf = requestAnimationFrame(tick);

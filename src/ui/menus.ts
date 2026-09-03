@@ -206,6 +206,7 @@ export function renderMenus(
     achievements?: { firstBlood?: boolean; firstWin?: boolean; tenKos?: boolean };
   },
 ): void {
+  if (state.screen === 'editor') return;
   root.innerHTML = '';
   if (state.screen === 'play') return;
   const wrap = document.createElement('div');
