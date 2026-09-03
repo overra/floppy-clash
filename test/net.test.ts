@@ -1,11 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import { createInterpBuffer } from '../src/net/interp';
-import { bundleInputs, createSimulatedLink } from '../src/net/simnet';
+import { applyInputBundle, bundleInputs, createSimulatedLink } from '../src/net/simnet';
 import { hostContentMessages, lateJoinSnapshotMessage, snapshotBytes } from '../src/net/protocol';
 import { SeededRng } from '../src/core/rng';
 import { blankInputs } from '../src/sim/input';
 import { Health, MatchState, RoundPhase, RoundState } from '../src/sim/traits';
-import { hold, makeSim, playerOf } from './helpers';
+import { hold, makeSim, playerOf, pos } from './helpers';
 
 describe('M8 netcode', () => {
   it('bundles the last 3 inputs and interpolates snapshots', () => {
@@ -59,6 +59,17 @@ describe('M8 netcode', () => {
     expect(kBps).toBeLessThan(30);
     expect(link.sent()).toBeGreaterThan(0);
   }, 60_000);
+
+  it('host applies a remote 3-input bundle to the matching seat', () => {
+    const host = makeSim({ settings: { playerCount: 2 } });
+    const x0 = pos(host, 1).x;
+    const bundle = bundleInputs([hold({ moveX: 1 }), hold({ moveX: 1 }), hold({ moveX: 1 })]);
+    for (let i = 0; i < 36; i++) {
+      const inputs = applyInputBundle([hold({}), hold({}), hold({}), hold({})], 1, bundle);
+      host.step(inputs);
+    }
+    expect(pos(host, 1).x).toBeGreaterThan(x0 + 0.4);
+  });
 
   it('host sends settings/level JSON and a late-join snapshot', () => {
     const host = makeSim({ settings: { playerCount: 2 } });

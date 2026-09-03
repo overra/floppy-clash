@@ -48,6 +48,7 @@ test('late-join snapshot restores a client interpolation view', async ({ browser
   await expect.poll(async () => guest.evaluate(() => window.__floppy?.clientViewTick ?? 0), { timeout: 10_000 }).toBeGreaterThan(0);
   const x = await guest.evaluate(() => window.__floppy?.clientAppliedX ?? 0);
   expect(Number.isFinite(x)).toBe(true);
+  await expect.poll(async () => guest.evaluate(() => window.__floppy?.netSlot ?? 0), { timeout: 10_000 }).toBeGreaterThan(0);
   await hostCtx.close();
   await guestCtx.close();
 });

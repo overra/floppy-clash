@@ -1,5 +1,6 @@
 import { gymLevel } from '../levels/gym';
 import { getLevel } from '../levels/catalog';
+import type { LevelDef } from '../sim/level/schema';
 import { NetId, Player, PrevTransform, Transform } from '../sim/traits';
 import { restoreWorld, type WorldSnapshot } from '../sim/snapshot';
 import { createSimWorld, type SimHandle } from '../sim/world';
@@ -15,9 +16,9 @@ export type ClientView = {
   apply: (now: number) => WorldSnapshot | null;
 };
 
-export function worldFromSnapshot(snap: WorldSnapshot): SimHandle {
-  let level = gymLevel;
-  if (snap.levelId) {
+export function worldFromSnapshot(snap: WorldSnapshot, levelOverride?: LevelDef): SimHandle {
+  let level = levelOverride ?? gymLevel;
+  if (!levelOverride && snap.levelId) {
     try {
       level = getLevel(snap.levelId);
     } catch {
@@ -56,8 +57,8 @@ export function applyLateJoinSnapshot(sim: SimHandle, snap: WorldSnapshot, prev?
   restoreWorld(sim.ecs, snap);
 }
 
-export function createClientView(first: WorldSnapshot, delayMs = 120): ClientView {
-  const sim = worldFromSnapshot(first);
+export function createClientView(first: WorldSnapshot, delayMs = 120, level?: LevelDef): ClientView {
+  const sim = worldFromSnapshot(first, level);
   restoreWorld(sim.ecs, first);
   const buffer = createInterpBuffer(delayMs);
   const view: ClientView = {

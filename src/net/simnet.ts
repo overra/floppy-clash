@@ -53,3 +53,12 @@ export function createSimulatedLink(opts: LinkOpts) {
 export function bundleInputs(history: PlayerInput[]): PlayerInput[] {
   return history.slice(-3);
 }
+
+/** Host applies the newest input in a loss-tolerant 3-input bundle to a slot. */
+export function applyInputBundle(inputs: PlayerInput[], slot: number, bundle: PlayerInput[]): PlayerInput[] {
+  const last = bundle[bundle.length - 1];
+  if (!last || slot < 0 || slot >= inputs.length) return inputs;
+  const next = inputs.slice();
+  next[slot] = last;
+  return next;
+}

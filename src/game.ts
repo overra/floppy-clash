@@ -32,6 +32,7 @@ import { tuning } from './sim/tuning';
 import { loadSettings, saveSettings, type UserSettings } from './ui/settingsStore';
 import { loadStats, recordKos, recordMatch } from './ui/statsStore';
 import { hostContentMessages, lateJoinSnapshotMessage } from './net/protocol';
+import { applyInputBundle, bundleInputs } from './net/simnet';
 import { createEditorState, fromHash, loadLibrary, type EditorState } from './editor/editor';
 import { mountEditor } from './editor/view';
 import { createLocalLoopback, createWebRtcSession, signalingUrlFromLocation, type NetSession } from './net/transport';
@@ -70,6 +71,7 @@ type FloppyDebug = {
   lastReplayBytes: number;
   lastReplayName: string;
   netPeers: number;
+  netSlot: number;
   entities: number;
 };
 
@@ -109,6 +111,12 @@ export function createGame(root: HTMLElement): Game {
   let decalLayer: PersistentDecalLayer = createDecalLayer(gymLevel.bounds);
   let clientView: ClientView | null = null;
   let rendererSwitches = 0;
+  let netName = 'guest';
+  let netSlot = 0;
+  let nextGuestSlot = 0;
+  let pendingLevel: LevelDef | undefined;
+  const remoteBySlot: Array<PlayerInput | null> = [null, null, null, null];
+  const inputHist: PlayerInput[] = [];
   let raf = 0;
   let last = performance.now();
   let paused = false;
@@ -222,7 +230,8 @@ export function createGame(root: HTMLElement): Game {
 
   async function beginMatch() {
     const taken = menus.seats.filter((s) => s.taken).length;
-    const humans = Math.max(1, taken);
+    const online = menus.netRole === 'host' && net.peerCount > 0 ? 1 + net.peerCount : 0;
+    const humans = online || Math.max(1, taken);
     extraLevels = settings.includeUserLevels ? await loadLibrary().catch(() => []) : [];
     const pool = matchLevelPool(settings.enabledLevels, extraLevels);
     const level =
@@ -253,14 +262,28 @@ export function createGame(root: HTMLElement): Game {
       }
       if (msg.t === 'level') {
         menus.notice = 'Host level JSON received';
+        try {
+          const parsed = JSON.parse(msg.json) as LevelDef;
+          if (parsed?.id && parsed.bounds) pendingLevel = parsed;
+        } catch {
+          /* id-only payload */
+        }
         if (menus.screen === 'lobby') show();
+      }
+      if (msg.t === 'input' && session.role === 'host') {
+        const last = msg.bundle[msg.bundle.length - 1];
+        if (last && msg.slot > 0 && msg.slot < 4) remoteBySlot[msg.slot] = last;
+      }
+      if (msg.t === 'event' && msg.kind === 'slot') {
+        const [name, slot] = msg.payload.split(':');
+        if (name === netName) netSlot = Number(slot) || 0;
       }
       if (msg.t === 'snapshot') {
         menus.lastSnapTick = msg.snap.tick;
         menus.notice = `Late-join snapshot tick ${msg.snap.tick}`;
         if (session.role === 'client') {
           if (!clientView) {
-            clientView = createClientView(msg.snap);
+            clientView = createClientView(msg.snap, 120, pendingLevel);
             cam = createCamera(clientView.sim.ctx.level.bounds);
             clearFx(fx);
             decalLayer = createDecalLayer(clientView.sim.ctx.level.bounds);
@@ -279,9 +302,11 @@ export function createGame(root: HTMLElement): Game {
         if (menus.screen === 'lobby') show();
       }
       if (msg.t === 'hello' && session.role === 'host') {
+        nextGuestSlot = Math.min(3, nextGuestSlot + 1);
+        session.send({ t: 'event', kind: 'slot', payload: `${msg.name}:${nextGuestSlot}` });
         for (const m of hostContentMessages(
           JSON.stringify({ maxHp: settings.maxHp, firstTo: settings.firstTo }),
-          JSON.stringify({ id: sim?.ctx.level.id ?? 'host-level' }),
+          JSON.stringify(sim?.ctx.level ?? { id: 'host-level' }),
         )) {
           session.send(m);
         }
@@ -313,11 +338,15 @@ export function createGame(root: HTMLElement): Game {
           ? `* hosted room ${menus.roomCode} (WebRTC, HP ${menus.maxHp})`
           : `* joined ${menus.roomCode} (WebRTC)`,
       );
-      if (role === 'client') session.send({ t: 'hello', name: 'guest' });
+      if (role === 'client') {
+        netName = `g${Math.random().toString(36).slice(2, 6)}`;
+        session.send({ t: 'hello', name: netName });
+      }
       if (role === 'host') {
+        nextGuestSlot = 0;
         for (const msg of hostContentMessages(
           JSON.stringify({ maxHp: settings.maxHp, firstTo: settings.firstTo }),
-          JSON.stringify({ id: 'host-level' }),
+          JSON.stringify(sim?.ctx.level ?? { id: 'host-level' }),
         )) {
           session.send(msg);
         }
@@ -372,6 +401,7 @@ export function createGame(root: HTMLElement): Game {
     decalLayer = createDecalLayer(level.bounds);
     menus.screen = 'play';
     show();
+    net.send({ t: 'level', json: JSON.stringify(level) });
     net.send(lateJoinSnapshotMessage(sim.snapshot()));
   }
 
@@ -462,6 +492,12 @@ export function createGame(root: HTMLElement): Game {
     if (viewSim && menus.screen === 'play' && !paused) {
       if (clientView && menus.netRole === 'client') {
         clientView.apply(performance.now());
+        const sampled = sampleInputs();
+        const mine = sampled[0];
+        if (mine && netSlot > 0) {
+          inputHist.push(mine);
+          net.send({ t: 'input', tick: clientView.appliedTick, slot: netSlot, bundle: bundleInputs(inputHist) }, false);
+        }
         stepFxParticles(fx, dt);
         const frame = buildFrame(
           clientView.sim,
@@ -489,7 +525,13 @@ export function createGame(root: HTMLElement): Game {
       }
       const scale = viewSim.ecs.get(RoundState)?.phase === RoundPhase.LastKill ? tuning.lastKillSlowmo : 1;
       const steps = loop.consume(dt, scale);
-      const sampled = sampleInputs();
+      let sampled = sampleInputs();
+      if (menus.netRole === 'host') {
+        for (let s = 1; s < 4; s++) {
+          const remote = remoteBySlot[s];
+          if (remote) sampled = applyInputBundle(sampled, s, [remote]);
+        }
+      }
       for (let i = 0; i < steps; i++) {
         if (hitStop > 0) {
           hitStop -= 1;
@@ -587,6 +629,7 @@ export function createGame(root: HTMLElement): Game {
       lastReplayBytes: recorder.lastBytes(),
       lastReplayName: recorder.lastName(),
       netPeers: net.peerCount,
+      netSlot,
       entities: sim?.ctx.bodies.size ?? clientView?.sim.ctx.bodies.size ?? 0,
     };
   }
