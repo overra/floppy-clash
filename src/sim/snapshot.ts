@@ -1,5 +1,6 @@
 import { createAdded, createChanged, createRemoved, type Entity, type World } from 'koota';
 import { fnv1a, hashToHex, quantize } from '../core/hash';
+import { createLateJoinHazardBody, lateJoinBodySpec } from './hazards/lateJoin';
 import { createBoxBody, createCircleBody, destroyBody, registerBody } from './physics/bodies';
 import { getContext } from './context';
 import { spawnPlayer } from './level/loader';
@@ -903,59 +904,52 @@ function spawnMissing(world: World, rec: TraitSnapshot, newRootNetIds: Set<numbe
     return;
   }
 
-  if (hz && t && Number(hz.kind) === HazardKind.Crate) {
-    const hx = Math.max(0.05, Number(hz.param0 ?? 1.1) / 2);
-    const hy = Math.max(0.05, Number(hz.param1 ?? 1.1) / 2);
+  if (hz) {
+    const kind = Number(hz.kind ?? 0);
+    const params = {
+      param0: Number(hz.param0 ?? 0),
+      param1: Number(hz.param1 ?? 0),
+      param2: Number(hz.param2 ?? 0),
+      param3: Number(hz.param3 ?? 0),
+    };
+    const spec = lateJoinBodySpec(kind, params, {
+      isStatic: Boolean(rec.traits.Static),
+      chainDeck: kind === HazardKind.Chain && params.param3 === 1,
+      spikeStyle: kind === HazardKind.Spikeball ? params.param2 : 0,
+    });
+    const dest = rec.traits.Destructible;
+    const life = rec.traits.Lifetime;
+    const boss = rec.traits.Boss;
     const entity = world.spawn(
       Transform({ x, y, angle }),
       PrevTransform({ x, y, angle }),
       Hazard({
-        kind: HazardKind.Crate,
-        param0: Number(hz.param0 ?? 1.1),
-        param1: Number(hz.param1 ?? 1.1),
-        param2: Number(hz.param2 ?? 0),
-        param3: Number(hz.param3 ?? 0),
+        kind,
+        param0: params.param0,
+        param1: params.param1,
+        param2: params.param2,
+        param3: params.param3,
         hp: Number(hz.hp ?? 0),
         armed: Number(hz.armed ?? 1),
       }),
       NetId({ id: rec.netId }),
     );
-    const body = createBoxBody(ctx.physics, entity, 'prop', x, y, hx, hy, 'dynamic', {
-      density: 0.5,
-      friction: 0.5,
-      restitution: 0.05,
-      fixedRotation: false,
-    });
-    registerBody(world, entity, body);
-    writeBodyVel(world, entity, rec);
-    return;
-  }
-
-  if (hz && t && Number(hz.kind) === HazardKind.Debris) {
-    const hx = Number(hz.param0 ?? 0.24) / 2;
-    const hy = Number(hz.param1 ?? 0.24) / 2;
-    const entity = world.spawn(
-      Transform({ x, y, angle }),
-      PrevTransform({ x, y, angle }),
-      Hazard({
-        kind: HazardKind.Debris,
-        param0: Number(hz.param0 ?? 0.24),
-        param1: Number(hz.param1 ?? 0.24),
-        param2: Number(hz.param2 ?? 0),
-        param3: Number(hz.param3 ?? 0),
-        hp: Number(hz.hp ?? 0),
-        armed: Number(hz.armed ?? 1),
-      }),
-      Lifetime({ ticksLeft: Number(rec.traits.Lifetime?.ticksLeft ?? 50) }),
-      NetId({ id: rec.netId }),
-    );
-    const body = createBoxBody(ctx.physics, entity, 'prop', x, y, hx, hy, 'dynamic', {
-      density: 0.35,
-      friction: 0.4,
-      restitution: 0.15,
-      fixedRotation: false,
-    });
-    registerBody(world, entity, body);
+    if (dest) entity.add(Destructible({ hp: Number(dest.hp), maxHp: Number(dest.maxHp ?? dest.hp) }));
+    if (life) entity.add(Lifetime({ ticksLeft: Number(life.ticksLeft ?? 50) }));
+    if (boss) {
+      entity.add(
+        Boss({
+          hp: Number(boss.hp ?? 200),
+          bite: Number(boss.bite ?? 0),
+          speed: Number(boss.speed ?? 3.2),
+        }),
+      );
+    }
+    if (spec.bodyType === 'static') entity.add(Static());
+    if (spec.bodyType === 'kinematic') entity.add(Kinematic());
+    if (spec.fixtureKind === 'solid') entity.add(Solid());
+    createLateJoinHazardBody(world, entity, spec, x, y, angle);
+    applyRecord(world, entity, rec, true);
     writeBodyVel(world, entity, rec);
     return;
   }
