@@ -1049,11 +1049,6 @@ test('editor remapped Start playtests the draft', async ({ page }) => {
     const pad = (window as unknown as { __e2ePad: { buttons: { pressed: boolean }[] } }).__e2ePad;
     pad.buttons[8]!.pressed = true;
   });
-  await page.waitForTimeout(80);
-  await page.evaluate(() => {
-    const pad = (window as unknown as { __e2ePad: { buttons: { pressed: boolean }[] } }).__e2ePad;
-    pad.buttons[8]!.pressed = false;
-  });
   await expect(page.locator('[data-countdown]')).toBeVisible({ timeout: 8_000 });
 });
 
