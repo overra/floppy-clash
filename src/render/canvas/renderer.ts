@@ -79,6 +79,10 @@ export function createCanvasRenderer(canvas: HTMLCanvasElement): Renderer {
         }
         ctx.restore();
       }
+      if ((frame.hud.flash ?? 0) > 0) {
+        ctx.fillStyle = `rgba(255,255,255,${Math.min(0.35, frame.hud.flash! * 0.12)})`;
+        ctx.fillRect(0, 0, w, h);
+      }
       if (frame.hud.countdown > 0) {
         ctx.fillStyle = 'rgba(0,0,0,0.35)';
         ctx.fillRect(0, 0, w, h);

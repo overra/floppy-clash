@@ -13,6 +13,7 @@ export type ShapeGroup = {
   smoothK: number;
   layer: number;
   primitives: Primitive[];
+  fx?: 'none' | 'lava' | 'hole';
 };
 
 export type RenderFrame = {
@@ -37,6 +38,7 @@ export type RenderFrame = {
     physicsMs?: number;
     gpuMs?: number;
     entities?: number;
+    flash?: number;
   };
 };
 

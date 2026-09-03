@@ -95,7 +95,9 @@ export function createSimWorld(opts: CreateSimOptions): SimHandle {
     ctx.events = [];
     ctx.contactHits.clear();
     ctx.prevInputs = ctx.inputs.map((i) => ({ ...i }));
-    ctx.inputs = (inputs ?? blankInputs(4)).map(normalizeInput);
+    const incoming = inputs ?? blankInputs(4);
+    ctx.rawInputs = incoming.map((i) => ({ ...i }));
+    ctx.inputs = incoming.map(normalizeInput);
     thinkBots(ecs);
     applyInputs(ecs);
     controller(ecs);

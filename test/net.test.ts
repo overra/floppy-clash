@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { createInterpBuffer } from '../src/net/interp';
 import { bundleInputs, createSimulatedLink } from '../src/net/simnet';
-import { snapshotBytes } from '../src/net/protocol';
+import { hostContentMessages, lateJoinSnapshotMessage, snapshotBytes } from '../src/net/protocol';
 import { SeededRng } from '../src/core/rng';
 import { blankInputs } from '../src/sim/input';
 import { Health, MatchState, RoundPhase, RoundState } from '../src/sim/traits';
@@ -59,4 +59,14 @@ describe('M8 netcode', () => {
     expect(kBps).toBeLessThan(30);
     expect(link.sent()).toBeGreaterThan(0);
   }, 60_000);
+
+  it('host sends settings/level JSON and a late-join snapshot', () => {
+    const host = makeSim({ settings: { playerCount: 2 } });
+    const msgs = hostContentMessages(JSON.stringify({ maxHp: 50 }), JSON.stringify({ id: 'woods-01' }));
+    expect(msgs[0]).toMatchObject({ t: 'settings' });
+    expect(msgs[1]).toMatchObject({ t: 'level' });
+    const late = lateJoinSnapshotMessage(host.snapshot());
+    expect(late.t).toBe('snapshot');
+    expect(late.snap.entities.length).toBeGreaterThan(0);
+  });
 });

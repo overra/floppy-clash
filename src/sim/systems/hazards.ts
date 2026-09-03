@@ -3,6 +3,7 @@ import { Vec2 } from 'planck';
 import { getContext } from '../context';
 import { takeDamage } from '../player/health';
 import { spawnWeapon } from './weapons';
+import { weaponByIndex } from '../weapons/defs';
 import { Controller, Dead, Destructible, Hazard, HazardKind, Player, StandingOn, Transform } from '../traits';
 
 const hazards = createQuery(Hazard, Transform);
@@ -92,7 +93,8 @@ export function hazardsStep(world: World): void {
       }
       case HazardKind.TriggerDrop: {
         if (hz.armed && ctx.tick >= hz.param0) {
-          spawnWeapon(world, 'revolver', tr.x, tr.y);
+          const def = weaponByIndex(hz.param1 || 1);
+          spawnWeapon(world, def.id, tr.x, tr.y);
           hz.armed = 0;
         }
         break;

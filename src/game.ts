@@ -4,7 +4,15 @@ import { createFixedStepLoop, interpolationAlpha } from './core/loop';
 import { createMixer } from './audio/mixer';
 import { createKeyboardFallback } from './input/keyboard';
 import { consumeLatch, emptyLatch, pollGamepads, readPad, type Latch } from './input/gamepad';
-import { collectPadMap, createMenuState, cycleSeatColor, renderMenus } from './ui/menus';
+import {
+  canStartMatch,
+  collectPadMap,
+  createMenuState,
+  cycleSeatColor,
+  renderMenus,
+  takeOrReadySeat,
+  takeSeat,
+} from './ui/menus';
 import { loadMaps, saveMap } from './input/remap';
 import { gymLevel } from './levels/catalog';
 import { matchLevelPool } from './levels/catalog';
@@ -19,6 +27,8 @@ import { createSimWorld, type SimHandle } from './sim/world';
 import { spawnWeapon } from './sim/systems/weapons';
 import { tuning } from './sim/tuning';
 import { loadSettings, saveSettings, type UserSettings } from './ui/settingsStore';
+import { loadStats, recordKos, recordMatch } from './ui/statsStore';
+import { hostContentMessages, lateJoinSnapshotMessage } from './net/protocol';
 import { createEditorState, fromHash, loadLibrary, type EditorState } from './editor/editor';
 import { mountEditor } from './editor/view';
 import { createLocalLoopback } from './net/transport';
@@ -37,6 +47,8 @@ type FloppyDebug = {
   countdown: number;
   physicsMs: number;
   gpuMs: number;
+  phase: number;
+  forceLastStand: () => void;
 };
 
 declare global {
@@ -65,6 +77,8 @@ export function createGame(root: HTMLElement): Game {
     { x: 1, y: 0 },
     { x: -1, y: 0 },
   ];
+  const joinAHeld = [false, false, false, false];
+  const joinStartHeld = [false, false, false, false];
   let renderer: Renderer | null = null;
   let rendererKind: 'gpu' | 'canvas' = 'canvas';
   let sim: SimHandle | null = null;
@@ -83,6 +97,8 @@ export function createGame(root: HTMLElement): Game {
   let freezeCam = false;
   let recorder = createRecorder(0, 'gym');
   let maps = loadMaps();
+  let hitStop = 0;
+  let stats = loadStats();
 
   function show() {
     renderMenus(
@@ -109,7 +125,7 @@ export function createGame(root: HTMLElement): Game {
           menus.screen = 'settings';
           show();
         },
-        start: () => void beginMatch(),
+        start: () => startIfReady(),
         back: () => {
           menus.screen = 'menu';
           show();
@@ -146,6 +162,12 @@ export function createGame(root: HTMLElement): Game {
           settings.firstTo = menus.firstTo;
           saveSettings(settings);
           menus.chat.push(`* hosted room ${menus.roomCode} (HP ${menus.maxHp}, first-to ${menus.firstTo || 'endless'})`);
+          for (const msg of hostContentMessages(
+            JSON.stringify({ maxHp: settings.maxHp, firstTo: settings.firstTo }),
+            JSON.stringify({ id: 'host-level' }),
+          )) {
+            net.send(msg);
+          }
           show();
         },
         joinRoom: () => {
@@ -162,6 +184,7 @@ export function createGame(root: HTMLElement): Game {
       },
       settings,
       maps,
+      stats,
     );
   }
 
@@ -193,6 +216,15 @@ export function createGame(root: HTMLElement): Game {
         ? (pool[0] ?? gymLevel)
         : (pool[Math.floor(Math.random() * pool.length)] ?? gymLevel);
     startSim(level, { playerCount: humans, bots: menus.bots, maxHp: settings.maxHp, firstTo: settings.firstTo });
+  }
+
+  function startIfReady() {
+    if (!canStartMatch(menus.seats)) {
+      menus.notice = 'Join and press A / Space again to ready, then Start.';
+      show();
+      return;
+    }
+    void beginMatch();
   }
 
   function startSim(level: LevelDef, opts: { playerCount: number; bots: number; maxHp?: number; firstTo?: number }) {
@@ -228,6 +260,7 @@ export function createGame(root: HTMLElement): Game {
     decals.length = 0;
     menus.screen = 'play';
     show();
+    net.send(lateJoinSnapshotMessage(sim.snapshot()));
   }
 
   function padMapFor(id: string) {
@@ -256,6 +289,15 @@ export function createGame(root: HTMLElement): Game {
             show();
           }
         }
+        const aDown = !!(pad.buttons[0]?.pressed || pad.buttons[4]?.pressed);
+        if (aDown && !joinAHeld[i]) {
+          takeOrReadySeat(menus.seats, pad.id);
+          show();
+        }
+        joinAHeld[i] = aDown;
+        const startDown = !!pad.buttons[9]?.pressed;
+        if (startDown && !joinStartHeld[i]) startIfReady();
+        joinStartHeld[i] = startDown;
         if (pad.mapping && pad.mapping !== 'standard' && !maps[pad.id]) {
           menus.notice = `Non-standard pad “${pad.id}” — open Settings to remap.`;
         }
@@ -263,10 +305,14 @@ export function createGame(root: HTMLElement): Game {
       inputs[i] = readPad(pad, latch, aim, padMapFor(pad.id));
       lastAim[i] = { x: inputs[i]!.aimX, y: inputs[i]!.aimY };
       if (latch.pause) {
-        paused = !paused;
-        menus.screen = paused ? 'pause' : 'play';
-        show();
         latch.pause = false;
+        if (menus.screen === 'join') {
+          startIfReady();
+        } else {
+          paused = !paused;
+          menus.screen = paused ? 'pause' : 'play';
+          show();
+        }
       }
     });
     const joinedPad = pads.some(Boolean);
@@ -305,10 +351,22 @@ export function createGame(root: HTMLElement): Game {
       const steps = loop.consume(dt, scale);
       const sampled = sampleInputs();
       for (let i = 0; i < steps; i++) {
+        if (hitStop > 0) {
+          hitStop -= 1;
+          continue;
+        }
         recorder.push(sampled);
         const events = sim.step(sampled);
         mixer.handle(events);
         emitFromEvents(events, particles, decals);
+        if (events.some((e) => e.type === 'kill')) {
+          hitStop = 3;
+          recordKos(events.filter((e) => e.type === 'kill').length);
+        }
+        if (events.some((e) => e.type === 'round-phase' && e.phase === 'match-over')) {
+          const ms = sim.ecs.get(MatchState);
+          stats = recordMatch((ms?.wins0 ?? 0) >= (ms?.firstTo || 1));
+        }
         if (events.some((e) => e.type === 'explosion' || e.type === 'kill') && !settings.reduceShake) {
           addShake(cam, events.some((e) => e.type === 'explosion') ? 10 : 5);
         }
@@ -325,7 +383,13 @@ export function createGame(root: HTMLElement): Game {
         canvas.clientWidth || 1280,
         canvas.clientHeight || 720,
         settings.reduceBlood ? [] : particles,
-        { debug: debugDraw, freezeCamera: freezeCam, colorblind: settings.colorblind },
+        {
+          debug: debugDraw,
+          freezeCamera: freezeCam,
+          colorblind: settings.colorblind,
+          decals: settings.reduceBlood ? [] : decals,
+          flash: hitStop,
+        },
       );
       frame.hud.hash = sim.hash();
       frame.hud.gpuMs = renderer?.lastGpuMs ?? 0;
@@ -338,6 +402,14 @@ export function createGame(root: HTMLElement): Game {
         countdown: frame.hud.countdown,
         physicsMs: frame.hud.physicsMs ?? 0,
         gpuMs: frame.hud.gpuMs ?? 0,
+        phase: frame.hud.phase ?? 0,
+        forceLastStand: () => {
+          if (!sim) return;
+          sim.players().forEach((p) => {
+            const slot = p.get(Player)?.slot ?? 0;
+            if (slot !== 0) p.set(Health, { hp: 0, maxHp: p.get(Health)?.maxHp ?? 100 });
+          });
+        },
       };
     } else if (renderer && menus.screen !== 'editor') {
       renderer.render({
@@ -369,11 +441,22 @@ export function createGame(root: HTMLElement): Game {
         (frame.hud.firstTo ? `   first to ${frame.hud.firstTo}` : '');
       hudEl.append(bar);
     }
-    if (frame.hud.phase === RoundPhase.Scoreboard || frame.hud.phase === RoundPhase.MatchOver) {
+    if (
+      frame.hud.phase === RoundPhase.LastKill ||
+      frame.hud.phase === RoundPhase.Scoreboard ||
+      frame.hud.phase === RoundPhase.MatchOver
+    ) {
       const board = document.createElement('div');
+      board.dataset.roundOver = '1';
       board.style.cssText =
         'position:absolute;top:20%;left:50%;transform:translateX(-50%);background:rgba(10,12,16,0.75);padding:16px 24px;border-radius:12px;text-align:center';
-      board.innerHTML = `<h2 style="margin:0 0 8px">${frame.hud.phase === RoundPhase.MatchOver ? 'Match over' : 'Round over'}</h2>
+      const title =
+        frame.hud.phase === RoundPhase.MatchOver
+          ? 'Match over'
+          : frame.hud.phase === RoundPhase.LastKill
+            ? 'Last standing'
+            : 'Round over';
+      board.innerHTML = `<h2 style="margin:0 0 8px">${title}</h2>
         <p>${(frame.hud.wins ?? []).map((w, i) => `P${i + 1}: ${w}`).join(' · ')}</p>`;
       hudEl.append(board);
     }
@@ -469,12 +552,8 @@ export function createGame(root: HTMLElement): Game {
           show();
           return;
         }
-        const seat = menus.seats.find((s) => !s.taken);
-        if (seat && menus.screen === 'join') {
-          seat.taken = true;
-          seat.padId = pad.id;
-          seat.color = menus.seats.findIndex((s) => s === seat);
-          seat.ready = true;
+        if (menus.screen === 'join') {
+          takeSeat(menus.seats, pad.id);
           show();
         }
       });
@@ -495,16 +574,14 @@ export function createGame(root: HTMLElement): Game {
             }
             return;
           }
-          if (e.code === 'Space' || e.code === 'Enter') {
-            const seat = menus.seats.find((s) => !s.taken);
-            if (seat) {
-              seat.taken = true;
-              seat.ready = true;
-              seat.padId = 'keyboard';
-              seat.color = menus.seats.findIndex((s) => s === seat);
-            }
-            if (e.code === 'Enter') void beginMatch();
+          if (e.code === 'Space' || e.code === 'KeyA') {
+            takeOrReadySeat(menus.seats, 'keyboard');
             show();
+            return;
+          }
+          if (e.code === 'Enter') {
+            startIfReady();
+            return;
           }
         }
       });

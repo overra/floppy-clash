@@ -21,12 +21,21 @@ describe('schemas', () => {
       'lava',
       'saw',
       'platform.moving',
+      'platform.rotating',
+      'platform.disappearing',
+      'platform.collapsing',
+      'platform.momentum',
       'crate',
       'ice',
       'conveyor',
+      'bounce',
       'laser',
       'chain',
       'crusher',
+      'barrel.explosive',
+      'block.destructible',
+      'spikeball',
+      'trigger.drop',
     ]) {
       expect(ids.some((id) => id.includes(kind))).toBe(true);
     }

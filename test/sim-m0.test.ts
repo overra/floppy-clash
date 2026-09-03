@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { gymLevel } from '../src/levels/gym';
+import { spawnWeapon } from '../src/sim/systems/weapons';
+import { Loose, Weapon } from '../src/sim/traits';
 import { createSimWorld } from '../src/sim/world';
 import { hold, makeSim, pos, stepMany } from './helpers';
 
@@ -37,6 +39,30 @@ describe('M0 scaffold', () => {
     expect(hash).toBe(run());
     // Deliberate pin — update only when a sim change is intentional (PLAN §6).
     expect(hash).toBe('b83084a7');
+  });
+
+  it('golden hash with scripted spawns/destroys is stable', () => {
+    const run = () => {
+      const sim = makeSim({ seed: 44, settings: { playerCount: 2, bots: 0 }, boxes: 2 });
+      for (let i = 0; i < 200; i++) {
+        if (i === 20) spawnWeapon(sim.ecs, 'pistol', 10, 8);
+        if (i === 80) {
+          sim.ecs.query(Weapon).updateEach((_, e) => {
+            if (e.has(Loose)) sim.ctx.pendingDestroy.push(e);
+          });
+        }
+        sim.step([
+          hold({ moveX: i % 16 < 8 ? 1 : -1, jump: i % 40 === 0 }),
+          hold({}),
+          hold({}),
+          hold({}),
+        ]);
+      }
+      return sim.hash();
+    };
+    const hash = run();
+    expect(hash).toBe(run());
+    expect(hash).toBe('1ed1a44e');
   });
 
   it('player transform stays finite', () => {

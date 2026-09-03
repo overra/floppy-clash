@@ -46,4 +46,29 @@ describe('M2 combat and rounds', () => {
     void Player;
     void hp;
   });
+
+  it('first-to-1 reaches MatchOver', () => {
+    const sim = makeSim({ level: woodsClearing, seed: 10, settings: { playerCount: 2, firstTo: 1 } });
+    sim.ctx.tuning.countdownTicks = 2;
+    sim.ctx.tuning.slowmoTicks = 2;
+    for (let i = 0; i < 10; i++) sim.step();
+    expect(sim.ecs.get(RoundState)?.phase).toBe(RoundPhase.Fighting);
+    playerOf(sim, 1).set(Health, { hp: 0, maxHp: 100 });
+    for (let i = 0; i < 8; i++) sim.step();
+    expect(sim.ecs.get(RoundState)?.phase).toBe(RoundPhase.MatchOver);
+    expect(sim.ecs.get(MatchState)?.wins0).toBeGreaterThanOrEqual(1);
+  });
+
+  it('same-tick double kill is a draw and awards no win', () => {
+    const sim = makeSim({ level: woodsClearing, seed: 11, settings: { playerCount: 2, firstTo: 0 } });
+    sim.ctx.tuning.countdownTicks = 2;
+    for (let i = 0; i < 10; i++) sim.step();
+    expect(sim.ecs.get(RoundState)?.phase).toBe(RoundPhase.Fighting);
+    playerOf(sim, 0).set(Health, { hp: 0, maxHp: 100 });
+    playerOf(sim, 1).set(Health, { hp: 0, maxHp: 100 });
+    const ev = sim.step();
+    const match = sim.ecs.get(MatchState);
+    expect((match?.wins0 ?? 0) + (match?.wins1 ?? 0)).toBe(0);
+    expect(ev.some((e) => e.type === 'round-phase' && e.phase === 'draw')).toBe(true);
+  });
 });

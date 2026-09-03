@@ -61,6 +61,8 @@ describe('M4 hazards', () => {
       'block.destructible',
       'platform.disappearing',
       'platform.collapsing',
+      'platform.rotating',
+      'platform.momentum',
       'spikeball',
     ];
     for (const kind of kinds) {
@@ -69,5 +71,15 @@ describe('M4 hazards', () => {
         for (let i = 0; i < 60; i++) sim.step();
       }).not.toThrow();
     }
+  });
+
+  it('trigger.drop spawns the named weapon at atTick', () => {
+    const sim = makeSim({ level: getLevel('test-trigger.drop'), seed: 31, settings: { playerCount: 1 } });
+    let spawned = false;
+    for (let i = 0; i < 220; i++) {
+      const ev = sim.step([hold({}), hold({}), hold({}), hold({})]);
+      if (ev.some((e) => e.type === 'spawn' && String(e.kind).includes('weapon'))) spawned = true;
+    }
+    expect(spawned).toBe(true);
   });
 });

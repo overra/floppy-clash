@@ -19,6 +19,7 @@ export type SimContext = {
   entityOf: WeakMap<Body, Entity>;
   prevInputs: PlayerInput[];
   inputs: PlayerInput[];
+  rawInputs: PlayerInput[];
   level: LevelDef;
   settings: MatchSettings;
   tuning: Tuning;
@@ -64,6 +65,7 @@ export function makeContext(
     entityOf: new WeakMap(),
     prevInputs: [],
     inputs: [],
+    rawInputs: [],
     level,
     settings,
     tuning: cloneTuning(),

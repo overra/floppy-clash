@@ -30,7 +30,10 @@ export function poseToPrimitives(pose: FigurePose, secondary: LimbState = { hipS
   const headR = 0.18;
   const torsoTop = pose.y + h * 0.28;
   const head = { x: pose.x, y: pose.y + h * 0.42 };
-  const hip = { x: pose.x + secondary.hipSway, y: pose.y - h * 0.05 };
+  const hip = {
+    x: pose.x + secondary.hipSway + (pose.wallSliding ? -0.12 * pose.facing : 0),
+    y: pose.y - h * 0.05,
+  };
   const run = pose.grounded && Math.abs(pose.vx) > 0.4 ? Math.sin(pose.phase * 10) : 0;
   const air = pose.grounded ? 0 : Math.sign(pose.vy);
   const shoulder = { x: pose.x + secondary.shoulderSway, y: torsoTop };

@@ -312,4 +312,26 @@ export function mountEditor(root: HTMLElement, state: EditorState, fns: EditorVi
   }
   requestAnimationFrame(draw);
   new ResizeObserver(() => draw()).observe(mid);
+
+  const padEdge = { left: false, right: false, up: false, down: false };
+  const pollPad = () => {
+    if (!wrap.isConnected) return;
+    const pad = typeof navigator !== 'undefined' ? navigator.getGamepads?.().find(Boolean) : null;
+    if (pad) {
+      const left = !!pad.buttons[14]?.pressed;
+      const right = !!pad.buttons[15]?.pressed;
+      const up = !!pad.buttons[12]?.pressed;
+      const down = !!pad.buttons[13]?.pressed;
+      if (left && !padEdge.left) nudge(-state.grid, 0);
+      if (right && !padEdge.right) nudge(state.grid, 0);
+      if (up && !padEdge.up) nudge(0, state.grid);
+      if (down && !padEdge.down) nudge(0, -state.grid);
+      padEdge.left = left;
+      padEdge.right = right;
+      padEdge.up = up;
+      padEdge.down = down;
+    }
+    requestAnimationFrame(pollPad);
+  };
+  requestAnimationFrame(pollPad);
 }

@@ -41,17 +41,45 @@ describe('M3 weapons', () => {
     gun.remove(Loose);
     const combat = b.get(Combat);
     if (combat) b.set(Combat, { ...combat, blocking: true, blockStartTick: sim.ctx.tick, blockMeter: 1 });
+    let reflected = false;
     for (let i = 0; i < 20; i++) {
-      sim.step([
+      const ev = sim.step([
         hold({ attack: i === 1, aimX: 1, aimY: 0 }),
         hold({ block: true, aimX: -1, aimY: 0 }),
         hold({}),
         hold({}),
       ]);
+      if (ev.some((e) => e.type === 'block' && e.reflected)) reflected = true;
     }
-    const events = sim.ctx.events;
-    void events;
+    expect(reflected).toBe(true);
     expect(b.get(Health)?.hp ?? 0).toBeGreaterThan(50);
+  });
+
+  it('bullet hit events carry a finite world hit point', () => {
+    const sim = makeSim({ level: woodsClearing, seed: 16, settings: { playerCount: 2 } });
+    const a = playerOf(sim, 0);
+    const b = playerOf(sim, 1);
+    sim.ctx.bodies.get(a)?.setPosition({ x: 10, y: 4 });
+    sim.ctx.bodies.get(b)?.setPosition({ x: 12.5, y: 4 });
+    a.set(Transform, { x: 10, y: 4, angle: 0 });
+    b.set(Transform, { x: 12.5, y: 4, angle: 0 });
+    const gun = spawnWeapon(sim.ecs, 'pistol', 10, 5);
+    gun.add(Held(), HeldBy(a));
+    gun.remove(Loose);
+    let hit: { x: number; y: number } | undefined;
+    for (let i = 0; i < 30; i++) {
+      const ev = sim.step([
+        hold({ attack: i === 1, aimX: 1, aimY: 0 }),
+        hold({}),
+        hold({}),
+        hold({}),
+      ]);
+      const h = ev.find((e) => e.type === 'hit');
+      if (h && h.type === 'hit') hit = { x: h.x, y: h.y };
+    }
+    expect(hit).toBeTruthy();
+    expect(Number.isFinite(hit!.x)).toBe(true);
+    expect(Number.isFinite(hit!.y)).toBe(true);
   });
 
   it('pickup cooldown blocks an immediate re-grab after throw', () => {

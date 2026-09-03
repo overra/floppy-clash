@@ -1,4 +1,5 @@
 import type { SimEvents } from '../sim/events';
+import { WEAPON_BY_ID } from '../sim/weapons/defs';
 import { playSfx, playTone, type SfxId } from './synth';
 
 export type Mixer = {
@@ -32,7 +33,10 @@ export function createMixer(): Mixer {
     handle(events) {
       if (!ctx || !sfxGain || mixer.muted) return;
       for (const ev of events) {
-        if (ev.type === 'shot') playSfx(ctx, sfxGain, ev.weaponId.startsWith('shot') ? (ev.weaponId as SfxId) : 'shot.small');
+        if (ev.type === 'shot') {
+          const sound = WEAPON_BY_ID.get(ev.weaponId)?.def.sound;
+          playSfx(ctx, sfxGain, (sound as SfxId | undefined) ?? 'shot.small');
+        }
         if (ev.type === 'hit') playSfx(ctx, sfxGain, 'hit');
         if (ev.type === 'explosion') playSfx(ctx, sfxGain, 'explosion');
         if (ev.type === 'pickup') playSfx(ctx, sfxGain, 'pickup');

@@ -12,9 +12,10 @@ const applyOne = ([player, controller, aim]: [
 ], entity: { has: (t: typeof Dead) => boolean }, world: World) => {
   if (entity.has(Dead)) return;
   const ctx = getContext(world);
-  const raw = ctx.inputs[player.inputIndex] ?? ctx.inputs[player.slot];
-  if (!raw) return;
-  const input = normalizeInput(raw);
+  const cooked = ctx.inputs[player.inputIndex] ?? ctx.inputs[player.slot];
+  if (!cooked) return;
+  const raw = ctx.rawInputs[player.inputIndex] ?? ctx.rawInputs[player.slot] ?? cooked;
+  const input = normalizeInput(cooked);
   const t = ctx.tuning;
   const stickActive = Math.hypot(raw.aimX, raw.aimY) > 0.01;
   if (stickActive) {

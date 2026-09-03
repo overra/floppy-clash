@@ -49,6 +49,43 @@ export function cycleSeatColor(seat: Seat, dir: number): void {
   seat.color = (seat.color + dir + 4) % 4;
 }
 
+/** First press takes the next free seat; the same pad/keyboard pressing again readies (PLAN 4.12). */
+export function takeOrReadySeat(seats: Seat[], padId: string): Seat | undefined {
+  const existing = seats.find((s) => s.taken && s.padId === padId);
+  if (existing) {
+    existing.ready = true;
+    return existing;
+  }
+  const empty = seats.find((s) => !s.taken);
+  if (!empty) return undefined;
+  empty.taken = true;
+  empty.padId = padId;
+  empty.ready = false;
+  empty.color = seats.indexOf(empty);
+  empty.name = padId === 'keyboard' ? 'You' : '';
+  return empty;
+}
+
+/** Connection / first sighting of a pad: occupy a seat, do not ready yet. */
+export function takeSeat(seats: Seat[], padId: string): Seat | undefined {
+  const existing = seats.find((s) => s.padId === padId);
+  if (existing) {
+    existing.taken = true;
+    return existing;
+  }
+  const empty = seats.find((s) => !s.taken);
+  if (!empty) return undefined;
+  empty.taken = true;
+  empty.padId = padId;
+  empty.ready = false;
+  empty.color = seats.indexOf(empty);
+  return empty;
+}
+
+export function canStartMatch(seats: Seat[]): boolean {
+  return seats.some((s) => s.taken && s.ready);
+}
+
 export function collectSettings(card: HTMLElement, menus: MenuState, settings: UserSettings): UserSettings {
   const num = (id: string, fallback: number) => {
     const el = card.querySelector(`#${id}`) as HTMLInputElement | null;
@@ -113,6 +150,7 @@ export function renderMenus(
   actions: MenuActions,
   settings: UserSettings = DEFAULT_USER_SETTINGS,
   maps: Record<string, PadMap> = {},
+  stats?: { matches: number; wins: number; kos: number },
 ): void {
   root.innerHTML = '';
   if (state.screen === 'play') return;
@@ -125,6 +163,7 @@ export function renderMenus(
   if (state.screen === 'menu') {
     card.innerHTML = `<h1 style="margin:0 0 8px;font-size:42px">Floppy Clash</h1>
       <p style="color:#9aa3b2">Couch physics brawler. Press a button on a pad — or use the keyboard fallback.</p>
+      <p id="localstats" style="color:#9aa3b2;font-size:13px"></p>
       <div style="display:flex;flex-wrap:wrap;gap:10px;margin-top:18px"></div>`;
     const row = card.querySelector('div')!;
     for (const [label, id] of [
@@ -136,13 +175,19 @@ export function renderMenus(
     ] as const) {
       row.append(btn(label, () => actions[id]?.()));
     }
+    const statEl = card.querySelector('#localstats');
+    if (statEl && stats) {
+      statEl.textContent = `Local stats — matches ${stats.matches} · wins ${stats.wins} · KOs ${stats.kos}`;
+    }
   } else if (state.screen === 'join') {
-    card.innerHTML = `<h2>Join</h2><p>Press A / Space to join a seat. Left/Right (or Arrow keys) change color. Start / Enter to begin.</p>`;
+    card.innerHTML = `<h2>Join</h2><p>Press A / Space to join a seat. A / Space again readies. Left/Right change color. Start / Enter on a readied pad begins.</p>`;
     state.seats.forEach((s, i) => {
       const line = document.createElement('div');
       line.style.cssText = `margin:8px 0;padding:10px;border-radius:8px;background:${s.taken ? '#2a3144' : '#151820'}`;
+      line.dataset.seat = String(i);
+      if (s.ready) line.dataset.ready = '1';
       line.textContent = s.taken
-        ? `P${i + 1} ${COLORS[s.color]} ${s.ready ? 'READY' : ''} (${s.padId})`
+        ? `P${i + 1} ${COLORS[s.color]} ${s.ready ? 'READY' : 'joined — press A / Space to ready'} (${s.padId})`
         : `P${i + 1} empty`;
       card.append(line);
     });
@@ -155,7 +200,7 @@ export function renderMenus(
     card.append(btn('Resume', () => actions.resume?.()));
     card.append(btn('Quit', () => actions.quit?.()));
   } else if (state.screen === 'scoreboard') {
-    card.innerHTML = `<h2>Round over</h2><p>Next level incoming…</p>`;
+    card.innerHTML = `<h2 data-round-over="1">Round over</h2><p>Next level incoming…</p>`;
   } else if (state.screen === 'lobby') {
     renderLobby(card, state, settings, actions);
   } else if (state.screen === 'disconnect') {

@@ -42,6 +42,9 @@ test('boots, joins with keyboard, starts a local match vs bots', async ({ page }
     return colored;
   });
   expect(pixels).toBeGreaterThan(10);
+  await page.waitForFunction(() => window.__floppy?.phase === 2, null, { timeout: 15_000 });
+  await page.evaluate(() => window.__floppy?.forceLastStand());
+  await expect(page.locator('[data-round-over]')).toBeVisible({ timeout: 15_000 });
 });
 
 test('settings persist toggles and editor property panel opens', async ({ page }) => {

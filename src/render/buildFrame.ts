@@ -6,8 +6,11 @@ import {
   Combat,
   Controller,
   Dead,
+  Crown,
   Hazard,
   HazardKind,
+  Held,
+  HeldBy,
   MatchState,
   Player,
   PrevTransform,
@@ -22,7 +25,7 @@ import type { LightEmitter } from './gpu/lighting';
 import { weaponByIndex } from '../sim/weapons/defs';
 import type { SimHandle } from '../sim/world';
 import { updateCamera, type CameraState } from './camera';
-import type { Particle } from './fx/particles';
+import type { Decal, Particle } from './fx/particles';
 import { groupBounds, type RenderFrame, type ShapeGroup } from './frame';
 import { poseToPrimitives, secondaryFromVelocity, type LimbState } from './figure';
 import { PRIM_CAPSULE, PRIM_DISK, PRIM_ROUNDED_BOX } from './sdf/primitives';
@@ -35,6 +38,8 @@ export type BuildFrameOpts = {
   debug?: boolean;
   freezeCamera?: boolean;
   colorblind?: boolean;
+  decals?: Decal[];
+  flash?: number;
 };
 
 export function buildFrame(
@@ -61,12 +66,14 @@ export function buildFrame(
       lights.push({ x, y, radius: 4.5, r: 1, g: 0.35, b: 0.08, intensity: 0.9 });
     }
     const color = hz.kind === 4 ? theme.hazard : hz.kind === 3 ? '#222' : theme.solid;
+    const fx = hz.kind === HazardKind.Lava ? 'lava' as const : undefined;
     groups.push({
       ...groupBounds([{ kind: PRIM_ROUNDED_BOX, ax: x, ay: y, bx: 1, by: 0.4, r: 0.08 }]),
       color,
       blend: 'union',
       smoothK: 0,
       layer: 1,
+      fx,
       primitives: [{ kind: PRIM_ROUNDED_BOX, ax: x, ay: y, bx: 1.2, by: 0.35, r: 0.05 }],
     });
   });
@@ -149,7 +156,114 @@ export function buildFrame(
       layer: 5,
       primitives: prims,
     });
+    if (e.has(Crown) && !e.has(Dead)) {
+      groups.push({
+        minX: x - 0.25,
+        minY: y + 0.85,
+        maxX: x + 0.25,
+        maxY: y + 1.2,
+        color: '#f2c14e',
+        blend: 'union',
+        smoothK: 0,
+        layer: 7,
+        primitives: [{ kind: PRIM_DISK, ax: x, ay: y + 1.02, bx: x, by: y + 1.02, r: 0.14 }],
+      });
+    }
+    if (combat.blocking && !e.has(Dead)) {
+      const arc = (ctx.tuning.blockArcDeg * Math.PI) / 180 / 2;
+      const base = Math.atan2(aim.y, aim.x);
+      const a0 = base - arc;
+      const a1 = base + arc;
+      groups.push({
+        minX: x - 1.2,
+        minY: y - 1.2,
+        maxX: x + 1.2,
+        maxY: y + 1.2,
+        color: '#c8dcff',
+        blend: 'union',
+        smoothK: 0,
+        layer: 7,
+        primitives: [
+          {
+            kind: PRIM_CAPSULE,
+            ax: x + Math.cos(a0) * 0.7,
+            ay: y + Math.sin(a0) * 0.7,
+            bx: x + Math.cos(a1) * 0.7,
+            by: y + Math.sin(a1) * 0.7,
+            r: 0.06,
+          },
+        ],
+      });
+    }
   });
+
+  world.query(Weapon, Held).updateEach(([w], e) => {
+    const def = weaponByIndex(w.defId);
+    if (!def.laserSight) return;
+    const holder = e.targetFor(HeldBy);
+    if (!holder) return;
+    const aim = holder.get(Aim);
+    const t = holder.get(Transform);
+    if (!aim || !t) return;
+    groups.push({
+      minX: t.x - 8,
+      minY: t.y - 8,
+      maxX: t.x + 8,
+      maxY: t.y + 8,
+      color: '#ff4d6d',
+      blend: 'union',
+      smoothK: 0,
+      layer: 7,
+      primitives: [
+        { kind: PRIM_CAPSULE, ax: t.x, ay: t.y, bx: t.x + aim.x * 10, by: t.y + aim.y * 10, r: 0.02 },
+      ],
+    });
+  });
+
+  world.query(Projectile).updateEach(([p]) => {
+    if (p.kind !== 6) return;
+    groups.push({
+      minX: p.x - (p.speed || 2),
+      minY: p.y - (p.speed || 2),
+      maxX: p.x + (p.speed || 2),
+      maxY: p.y + (p.speed || 2),
+      color: '#1a0a22',
+      blend: 'union',
+      smoothK: 0,
+      layer: 6,
+      fx: 'hole',
+      primitives: [{ kind: PRIM_DISK, ax: p.x, ay: p.y, bx: p.x, by: p.y, r: 0.8 }],
+    });
+  });
+
+  for (const d of ctx.level.decor ?? []) {
+    const s = d.scale ?? 1;
+    groups.push({
+      minX: d.x - s,
+      minY: d.y,
+      maxX: d.x + s,
+      maxY: d.y + 2 * s,
+      color: theme.accent,
+      blend: 'union',
+      smoothK: 0,
+      layer: 0,
+      primitives: [{ kind: PRIM_CAPSULE, ax: d.x, ay: d.y, bx: d.x, by: d.y + 1.6 * s, r: 0.12 * s }],
+    });
+  }
+
+  for (const decal of opts.decals ?? []) {
+    groups.push({
+      minX: decal.x - decal.r,
+      minY: decal.y - decal.r,
+      maxX: decal.x + decal.r,
+      maxY: decal.y + decal.r,
+      color: decal.color,
+      blend: 'union',
+      smoothK: 0,
+      layer: 2,
+      primitives: [{ kind: PRIM_DISK, ax: decal.x, ay: decal.y, bx: decal.x, by: decal.y, r: decal.r }],
+    });
+  }
 
   for (const part of particles) {
     if (part.color === '#fff4c2' || part.color.includes('ff')) {
@@ -196,6 +310,7 @@ export function buildFrame(
       tick: ctx.tick,
       physicsMs: ctx.lastPhysicsMs,
       entities: ctx.bodies.size,
+      flash: opts.flash ?? 0,
     },
   };
 }

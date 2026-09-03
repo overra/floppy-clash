@@ -30,6 +30,7 @@ export function packGroups(groups: ShapeGroup[]): {
     gv.setUint32(off + 36, g.primitives.length, true);
     gv.setUint32(off + 40, g.blend === 'smoothUnion' ? 1 : 0, true);
     gv.setFloat32(off + 44, g.smoothK, true);
+    gv.setUint32(off + 48, g.fx === 'lava' ? 1 : g.fx === 'hole' ? 2 : 0, true);
     for (const p of g.primitives) {
       pv.setUint32(po, p.kind, true);
       pv.setFloat32(po + 4, p.ax, true);

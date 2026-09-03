@@ -50,6 +50,17 @@ export function decode(raw: string): NetMessage {
   return JSON.parse(raw) as NetMessage;
 }
 
+export function hostContentMessages(settingsJson: string, levelJson: string): NetMessage[] {
+  return [
+    { t: 'settings', json: settingsJson },
+    { t: 'level', json: levelJson },
+  ];
+}
+
+export function lateJoinSnapshotMessage(snap: WorldSnapshot): NetMessage {
+  return { t: 'snapshot', snap };
+}
+
 export function quantizeInput(input: PlayerInput): PlayerInput {
   return {
     ...input,

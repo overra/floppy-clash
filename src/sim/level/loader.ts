@@ -3,6 +3,7 @@ import { getContext } from '../context';
 import { RevoluteJoint } from 'planck';
 import { assignNetId, createBoxBody, createCircleBody, createPlayerCapsule, registerBody } from '../physics/bodies';
 import { spawnWeapon } from '../systems/weapons';
+import { weaponIndex } from '../weapons/defs';
 import {
   Aim,
   Combat,
@@ -71,8 +72,14 @@ function spawnObject(world: World, obj: LevelObject): Entity {
     PrevTransform({ x: obj.x, y: obj.y, angle: obj.angle ?? 0 }),
     Hazard({
       kind,
-      param0: obj.speed ?? obj.period ?? obj.w ?? 0,
-      param1: obj.path?.length ?? obj.rate ?? obj.offTicks ?? obj.h ?? 0,
+      param0:
+        obj.type === 'trigger.drop'
+          ? (obj.atTick ?? 180)
+          : (obj.speed ?? obj.period ?? obj.w ?? 0),
+      param1:
+        obj.type === 'trigger.drop'
+          ? weaponIndex(obj.weapon ?? 'pistol')
+          : (obj.path?.length ?? obj.rate ?? obj.offTicks ?? obj.h ?? 0),
       param2: obj.mode === 'pingpong' ? 1 : (obj.delay ?? obj.warningTicks ?? 0),
       param3: obj.onTicks ?? obj.omega ?? 0,
       hp: obj.hp ?? 0,

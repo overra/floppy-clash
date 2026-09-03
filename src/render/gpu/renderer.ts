@@ -34,6 +34,7 @@ struct Group {
   count: u32,
   blend: u32,
   k: f32,
+  fx: u32,
 }
 @group(0) @binding(0) var<uniform> camera: Camera;
 @group(0) @binding(1) var<storage, read> groups: array<Group>;
@@ -85,7 +86,15 @@ fn fs(input: VSOut) -> @location(0) vec4f {
   let sy = input.pos.y;
   let wx = ((sx / camera.view.x) - 0.5) * camera.view.x / ppm + camera.x;
   let wy = (0.5 - (sy / camera.view.y)) * camera.view.y / ppm + camera.y;
-  let p = vec2f(wx, wy);
+  var p = vec2f(wx, wy);
+  if (g.fx == 1u) {
+    p = p + vec2f(sin(p.x * 9.0 + p.y * 3.0), cos(p.y * 7.0)) * 0.05;
+  }
+  if (g.fx == 2u) {
+    let o = p - vec2f(g.minx + g.maxx, g.miny + g.maxy) * 0.5;
+    let r2 = max(dot(o, o), 0.05);
+    p = p + o * (0.12 / r2);
+  }
   var d = 1e5;
   for (var i = 0u; i < g.count; i++) {
     let pr = prims[g.start + i];
@@ -98,8 +107,13 @@ fn fs(input: VSOut) -> @location(0) vec4f {
   }
   let aa = max(fwidth(d), 0.002);
   let cov = 1.0 - smoothstep(-aa, aa, d);
-  if (cov < 0.01) { discard; }
-  return vec4f(g.color.rgb, cov);
+  let outline = 1.0 - smoothstep(0.0, aa * 2.4, abs(d));
+  let glow = exp(-max(d, 0.0) * 10.0);
+  let shade = 0.82 + 0.18 * saturate(-d * 4.0);
+  let rgb = g.color.rgb * shade + vec3f(glow * 0.2);
+  let alpha = max(cov, outline * 0.55);
+  if (alpha < 0.01) { discard; }
+  return vec4f(rgb, alpha);
 }
 `;
 

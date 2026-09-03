@@ -49,6 +49,8 @@ export function rules(world: World): void {
           round.phase = RoundPhase.MatchOver;
           emit(world, { type: 'round-phase', phase: 'match-over' });
         }
+      } else {
+        emit(world, { type: 'round-phase', phase: 'draw' });
       }
       if (round.phase === RoundPhase.LastKill) emit(world, { type: 'round-phase', phase: 'last-kill' });
     }

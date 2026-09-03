@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { DEFAULT_USER_SETTINGS, loadSettings, saveSettings } from '../src/ui/settingsStore';
+import { loadStats, recordKos, recordMatch } from '../src/ui/statsStore';
 import { objectSchemaFields, applyField } from '../src/editor/properties';
 import { createEditorState, addObject, addSpawn, setDropEdge } from '../src/editor/editor';
 
@@ -36,6 +37,16 @@ describe('settings persistence', () => {
     expect(loaded.enabledWeapons).toEqual(['pistol', 'rpg']);
     expect(loaded.sfx).toBe(0.2);
     expect(loaded.renderer).toBe('canvas');
+  });
+
+  it('records local match stats', () => {
+    memoryStorage();
+    recordKos(2);
+    recordMatch(true);
+    const s = loadStats();
+    expect(s.kos).toBe(2);
+    expect(s.matches).toBe(1);
+    expect(s.wins).toBe(1);
   });
 });
 

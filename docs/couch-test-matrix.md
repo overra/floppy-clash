@@ -13,10 +13,10 @@ v1 needs two or more pads. Physical 4-pad evenings cannot be faked in CI.
 
 | Check | Evidence |
 | --- | --- |
-| Boot → Solo vs Bots → join → start → canvas draws | `e2e/logic.spec.ts` |
+| Boot → Solo vs Bots → join → start → canvas draws → round ends | `e2e/logic.spec.ts` (`__floppy.forceLastStand` + `[data-round-over]`) |
 | Injected standard gamepad join + countdown HUD | `e2e/logic.spec.ts` (`getGamepads` stub) |
 | Settings + editor (place / JSON) | `e2e/logic.spec.ts` |
-| GPU init or Canvas fallback notice + pixel sample | `e2e/gpu.spec.ts` (SwiftShader flags in `playwright.config.ts`) |
+| GPU init or Canvas fallback notice + pixel sample + Xvfb screenshot | `e2e/gpu.spec.ts` (`test-results/gpu-xvfb.png`; CI uploads the artifact) |
 | Standard Xbox / DualSense / Switch Pro / Firefox-style fixtures → `PlayerInput` | `test/gamepad.test.ts` |
 | 10-round fists + mid-round zero-input “disconnect” | `test/match.test.ts` |
 | Simulated 100 ms / 2 % loss, 10 rounds, < 30 KB/s | `test/net.test.ts` |

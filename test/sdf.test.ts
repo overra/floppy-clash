@@ -67,4 +67,42 @@ describe('figure pose', () => {
     expect(prims.length).toBeLessThanOrEqual(16);
     expect(prims.some((p) => p.kind === PRIM_DISK)).toBe(true);
   });
+
+  it('wall-slide pose offsets the hip opposite facing', () => {
+    const base = poseToPrimitives({
+      x: 0,
+      y: 0,
+      facing: 1,
+      ducking: false,
+      grounded: false,
+      wallSliding: false,
+      vx: 0,
+      vy: -2,
+      aimX: 1,
+      aimY: 0,
+      punching: false,
+      blocking: false,
+      dead: false,
+      phase: 0,
+    });
+    const slide = poseToPrimitives({
+      x: 0,
+      y: 0,
+      facing: 1,
+      ducking: false,
+      grounded: false,
+      wallSliding: true,
+      vx: 0,
+      vy: -2,
+      aimX: 1,
+      aimY: 0,
+      punching: false,
+      blocking: false,
+      dead: false,
+      phase: 0,
+    });
+    const hipBase = base[1];
+    const hipSlide = slide[1];
+    expect(hipSlide?.bx).toBeLessThan(hipBase?.bx ?? 0);
+  });
 });
