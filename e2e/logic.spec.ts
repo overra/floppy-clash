@@ -477,7 +477,10 @@ test('same-id pad reconnect resumes play after disconnect overlay', async ({ pag
   await expect(page.getByRole('heading', { name: 'Controller disconnected' })).toHaveCount(0);
   await expect(page.getByRole('heading', { name: 'Paused' })).toHaveCount(0);
   await expect(page.locator('canvas#game')).toBeVisible();
-  await expect.poll(async () => page.evaluate(() => window.__floppy?.phase)).toBe(2);
+  // Resume is enough — a 1v1 bot match may already be on last-kill/scoreboard.
+  await expect
+    .poll(async () => page.evaluate(() => window.__floppy?.phase ?? 0))
+    .toBeGreaterThanOrEqual(2);
 });
 
 test('HP preset 25 is the spawned match Health', async ({ page }) => {
