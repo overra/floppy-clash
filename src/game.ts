@@ -488,6 +488,7 @@ export function createGame(root: HTMLElement): Game {
       menus.screen = 'play';
       paused = true;
       show();
+      publishDebug('', sim.getTick(), 0, 0, 0, sim.ecs.get(RoundState)?.phase ?? 0);
       return true;
     } catch {
       replayLoaded = false;
@@ -551,12 +552,20 @@ export function createGame(root: HTMLElement): Game {
       const t = p?.get(Transform) ?? { x: 8, y: 6 };
       inputs[0] = keys.sample({ x: t.x, y: t.y }, cam, canvas.clientWidth, canvas.clientHeight);
     }
-    if (keys.down.has('Escape') && menus.screen === 'play') {
+    return inputs;
+  }
+
+  function applyPauseHotkey(): void {
+    if (!keys.takePause()) return;
+    if (menus.screen === 'play') {
       paused = true;
       menus.screen = 'pause';
       show();
+    } else if (menus.screen === 'pause') {
+      paused = false;
+      menus.screen = 'play';
+      show();
     }
-    return inputs;
   }
 
   function rumble(kind: 'hit' | 'boom') {
@@ -575,6 +584,7 @@ export function createGame(root: HTMLElement): Game {
   function tick(now: number) {
     const dt = Math.min(0.05, (now - last) / 1000);
     last = now;
+    applyPauseHotkey();
     if (renderer) renderer.resize(canvas.clientWidth || 1280, canvas.clientHeight || 720);
     const viewSim = menus.netRole === 'client' && clientView ? clientView.sim : sim;
     if (viewSim && menus.screen === 'play' && !paused) {
@@ -725,7 +735,9 @@ export function createGame(root: HTMLElement): Game {
         hud: { slowmo: false, countdown: 0 },
       });
     }
-    if (menus.screen !== 'play') publishDebug('', sim?.getTick() ?? 0, 0, 0, 0, 0);
+    if (menus.screen !== 'play' || paused) {
+      publishDebug('', sim?.getTick() ?? 0, 0, 0, 0, sim?.ecs.get(RoundState)?.phase ?? 0);
+    }
     raf = requestAnimationFrame(tick);
   }
 

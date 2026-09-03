@@ -12,6 +12,7 @@ export type KeyLatch = {
 export function createKeyboardFallback(): {
   sample: (playerPos: { x: number; y: number }, cam: CameraState, viewW: number, viewH: number) => PlayerInput;
   consume: () => void;
+  takePause: () => boolean;
   down: Set<string>;
   mouse: { x: number; y: number };
 } {
@@ -64,6 +65,11 @@ export function createKeyboardFallback(): {
       latch.attack = false;
       latch.block = false;
       latch.throw = false;
+    },
+    takePause() {
+      const p = latch.pause;
+      latch.pause = false;
+      return p;
     },
   };
 }
