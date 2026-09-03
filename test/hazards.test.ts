@@ -142,6 +142,8 @@ describe('M4 hazards', () => {
   it('does not tunnel a player through an on laser in one tick (PLAN M4 sweep)', () => {
     expect(playerCrossesBeam(8, 3, 8, 11, 2, 7, 16, 7)).toBeTruthy();
     expect(playerCrossesBeam(8, 3, 8, 4, 2, 7, 16, 7)).toBeNull();
+    // Far-end graze: closest-to-emitter alone misses this path.
+    expect(playerCrossesBeam(16, 6.8, 2, 3, 2, 7, 16, 7)).toBeTruthy();
 
     const level = {
       ...getLevel('test-laser'),
@@ -163,6 +165,19 @@ describe('M4 hazards', () => {
     p.set(Transform, { x: 8, y: 11, angle: 0 });
     sim.step([hold({}), hold({}), hold({}), hold({})]);
     expect(p.has(Dead) || (p.get(Health)?.hp ?? 1) <= 0).toBe(true);
+
+    const graze = makeSim({ level, seed: 28, settings: { playerCount: 1 } });
+    const g = playerOf(graze);
+    pin(graze, g, 16, 3);
+    g.set(PrevTransform, { x: 16, y: 3, angle: 0 });
+    graze.step([hold({}), hold({}), hold({}), hold({})]);
+    expect(g.has(Dead) || (g.get(Health)?.hp ?? 1) <= 0).toBe(false);
+    g.set(PrevTransform, { x: 16, y: 6.8, angle: 0 });
+    graze.ctx.bodies.get(g)?.setPosition({ x: 2, y: 3 });
+    graze.ctx.bodies.get(g)?.setLinearVelocity({ x: 0, y: 0 });
+    g.set(Transform, { x: 2, y: 3, angle: 0 });
+    graze.step([hold({}), hold({}), hold({}), hold({})]);
+    expect(g.has(Dead) || (g.get(Health)?.hp ?? 1) <= 0).toBe(true);
   });
 
   it('does not tunnel a player through a translating saw (PLAN M4 sweep)', () => {

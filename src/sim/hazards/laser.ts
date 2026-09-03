@@ -30,10 +30,29 @@ export function segmentsIntersect(
   return { x: ax + t * (bx - ax), y: ay + t * (by - ay) };
 }
 
+function closestPointOnSegment(
+  px: number,
+  py: number,
+  ax: number,
+  ay: number,
+  bx: number,
+  by: number,
+): { x: number; y: number } {
+  const dx = bx - ax;
+  const dy = by - ay;
+  const len2 = dx * dx + dy * dy;
+  let t = 0;
+  if (len2 > 1e-8) {
+    t = Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / len2));
+  }
+  return { x: ax + dx * t, y: ay + dy * t };
+}
+
 /**
  * PLAN M4: a player who crosses the beam between samples still dies.
- * Appendix D keeps the on-tick ray; this is the player-path sweep so 60 Hz
- * cannot skip the kill line the way a fast body tunnels a saw.
+ * Appendix D keeps the on-tick ray; this is true segment–segment distance
+ * so 60 Hz cannot skip the kill line the way a fast body tunnels a saw.
+ * Closest-point-to-emitter alone misses a far-end graze.
  */
 export function playerCrossesBeam(
   px0: number,
@@ -48,25 +67,24 @@ export function playerCrossesBeam(
 ): { x: number; y: number } | null {
   const hit = segmentsIntersect(px0, py0, px1, py1, lx0, ly0, lx1, ly1);
   if (hit) return hit;
-  const dx = px1 - px0;
-  const dy = py1 - py0;
-  const len2 = dx * dx + dy * dy;
-  let t = 0;
-  if (len2 > 1e-8) {
-    t = Math.max(0, Math.min(1, ((lx0 - px0) * dx + (ly0 - py0) * dy) / len2));
-  }
-  const qx = px0 + dx * t;
-  const qy = py0 + dy * t;
-  const beamDx = lx1 - lx0;
-  const beamDy = ly1 - ly0;
-  const b2 = beamDx * beamDx + beamDy * beamDy;
-  let s = 0;
-  if (b2 > 1e-8) {
-    s = Math.max(0, Math.min(1, ((qx - lx0) * beamDx + (qy - ly0) * beamDy) / b2));
-  }
-  const bx = lx0 + beamDx * s;
-  const by = ly0 + beamDy * s;
-  if (Math.hypot(qx - bx, qy - by) < radius) return { x: bx, y: by };
+  let bestD = Infinity;
+  let best = { x: lx0, y: ly0 };
+  const consider = (qx: number, qy: number, bx: number, by: number) => {
+    const d = Math.hypot(qx - bx, qy - by);
+    if (d < bestD) {
+      bestD = d;
+      best = { x: bx, y: by };
+    }
+  };
+  const a = closestPointOnSegment(px0, py0, lx0, ly0, lx1, ly1);
+  consider(px0, py0, a.x, a.y);
+  const b = closestPointOnSegment(px1, py1, lx0, ly0, lx1, ly1);
+  consider(px1, py1, b.x, b.y);
+  const c = closestPointOnSegment(lx0, ly0, px0, py0, px1, py1);
+  consider(c.x, c.y, lx0, ly0);
+  const d = closestPointOnSegment(lx1, ly1, px0, py0, px1, py1);
+  consider(d.x, d.y, lx1, ly1);
+  if (bestD < radius) return best;
   return null;
 }
 

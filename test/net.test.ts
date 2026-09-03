@@ -148,7 +148,14 @@ describe('M8 netcode', () => {
     const host = makeSim({
       level: woodsClearing,
       seed: 99,
-      settings: { playerCount: 4, firstTo: 0, maxHp: 1 },
+      settings: {
+        playerCount: 4,
+        firstTo: 0,
+        maxHp: 1,
+        enabledWeapons: [],
+        enabledLevels: ['woods-01'],
+        rotation: 'ordered',
+      },
     });
     host.ctx.tuning.countdownTicks = 3;
     host.ctx.tuning.slowmoTicks = 2;
