@@ -55,6 +55,8 @@ import { blankInputs, EMPTY_INPUT, type PlayerInput } from './sim/input';
 import { inspectWorld, formatInspect } from './sim/inspect';
 import { primitiveSdf } from './render/sdf/primitives';
 import {
+  Aim,
+  Combat,
   Controller,
   Dead,
   Health,
@@ -65,6 +67,7 @@ import {
   Transform,
   Weapon,
 } from './sim/traits';
+import { createPlayerCapsule } from './sim/physics/bodies';
 import { createClientView, type ClientView } from './net/clientView';
 import { createSimWorld, type SimHandle } from './sim/world';
 import { spawnWeapon } from './sim/systems/weapons';
@@ -833,15 +836,42 @@ export function createGame(root: HTMLElement): Game {
       ms.firstTo = 0;
       sim.ecs.set(MatchState, ms);
     }
-    const phase = sim.ecs.get(RoundState)?.phase;
-    if (phase !== RoundPhase.Fighting) return sampled;
-    const next = sampled.map((s) => ({ ...s }));
     const spawn = sim.ctx.level.spawns[0] ?? { x: 10, y: 4 };
     const x0 = spawn.x;
     const y = spawn.y + 1;
+    let punchIndex = 0;
+    sim.ecs.query(Player).updateEach(([p], entity) => {
+      if (p.slot !== 0) return;
+      punchIndex = p.inputIndex;
+      if (entity.has(Dead)) entity.remove(Dead);
+      if (!entity.get(Combat)) {
+        entity.add(
+          Combat({
+            punchCooldown: 0,
+            punchActive: 0,
+            blockMeter: 1,
+            blockStartTick: -999,
+            blocking: false,
+            refillDelay: 0,
+          }),
+        );
+      } else {
+        const c = entity.get(Combat)!;
+        entity.set(Combat, { ...c, punchCooldown: 0, blocking: false });
+      }
+      const hp = entity.get(Health);
+      if (hp) entity.set(Health, { hp: hp.maxHp, maxHp: hp.maxHp });
+      if (!sim!.ctx.bodies.get(entity)) createPlayerCapsule(sim!.ecs, entity, x0, y);
+      const aim = entity.get(Aim);
+      if (aim) entity.set(Aim, { x: 1, y: 0, holdTicks: 30 });
+      else entity.add(Aim({ x: 1, y: 0, holdTicks: 30 }));
+    });
+    const phase = sim.ecs.get(RoundState)?.phase;
+    if (phase !== RoundPhase.Fighting) return sampled;
+    const next = sampled.map((s) => ({ ...s }));
     sim.ecs.query(Player, Transform).updateEach(([p], entity) => {
       if (entity.has(Dead)) return;
-      const x = p.slot === 0 ? x0 : x0 + 0.55;
+      const x = p.slot === 0 ? x0 : x0 + 0.4;
       sim!.ctx.bodies.get(entity)?.setPosition({ x, y });
       sim!.ctx.bodies.get(entity)?.setLinearVelocity({ x: 0, y: 0 });
       entity.set(Transform, { x, y, angle: 0 });
@@ -850,14 +880,16 @@ export function createGame(root: HTMLElement): Game {
         if (h && h.hp > 1) entity.set(Health, { hp: 1, maxHp: h.maxHp });
       }
     });
-    next[0] = {
-      ...(next[0] ?? EMPTY_INPUT),
+    const punch = {
+      ...EMPTY_INPUT,
       attack: sim.ctx.tick % 8 === 0,
       aimX: 1,
       aimY: 0,
       moveX: 0.2,
     };
-    for (let s = 1; s < 4; s++) next[s] = { ...EMPTY_INPUT };
+    for (let s = 0; s < 4; s++) next[s] = { ...EMPTY_INPUT };
+    next[punchIndex] = punch;
+    next[0] = punch;
     return next;
   }
 
