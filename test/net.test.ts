@@ -67,6 +67,7 @@ describe('M8 netcode', () => {
     expect(msgs[1]).toMatchObject({ t: 'level' });
     const late = lateJoinSnapshotMessage(host.snapshot());
     expect(late.t).toBe('snapshot');
+    if (late.t !== 'snapshot') throw new Error('expected snapshot');
     expect(late.snap.entities.length).toBeGreaterThan(0);
   });
 });
