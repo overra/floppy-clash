@@ -1,6 +1,41 @@
+import type { World } from 'koota';
+import { raycastClosest, type RayHit } from '../../sim/physics/queries';
 import type { Decal } from './particles';
 
 export type WorldBounds = { x: number; y: number; w: number; h: number };
+
+const SURFACE_KINDS = new Set(['solid', 'prop', 'hazard']);
+/** How far a splash travels to find something to stain: below first (pooling), then walls, then ceilings. */
+const SNAP_DOWN = 1.1;
+const SNAP_SIDE = 0.7;
+
+function notSurface(h: RayHit): boolean {
+  return !SURFACE_KINDS.has(h.kind);
+}
+
+/**
+ * Blood only stains what it lands on. Move a decal onto the nearest surface (embedding it so most of the
+ * mark reads on the body, not the sky), or reject it when the splash is well clear of everything.
+ */
+export function snapDecalToSurface(world: World, d: Decal): boolean {
+  const probes: [number, number, number][] = [
+    [0, -SNAP_DOWN, 0.55],
+    [SNAP_SIDE, 0, 0.5],
+    [-SNAP_SIDE, 0, 0.5],
+    [0, SNAP_SIDE, 0.5],
+  ];
+  for (const [dx, dy, embed] of probes) {
+    const hit = raycastClosest(world, d.x, d.y, d.x + dx, d.y + dy, notSurface);
+    if (!hit) continue;
+    // Standing inside the body already: keep it where it is.
+    if (hit.fraction < 0.05) return true;
+    const len = Math.hypot(dx, dy) || 1;
+    d.x = hit.x + (dx / len) * d.r * embed;
+    d.y = hit.y + (dy / len) * d.r * embed;
+    return true;
+  }
+  return false;
+}
 
 /**
  * Persistent world-space decal texture (PLAN 4.11).
@@ -133,12 +168,14 @@ function stampDisk(layer: PersistentDecalLayer, d: Decal): void {
   layer.dirty = true;
   const ctx = layer.canvas && 'getContext' in layer.canvas ? layer.canvas.getContext('2d') : null;
   if (ctx) {
-    ctx.fillStyle = d.color;
-    ctx.globalAlpha = 0.7;
+    // Mirror the pixel buffer's linear falloff so the canvas fallback shows the same soft splat the GPU samples.
+    const grad = ctx.createRadialGradient(cx, cy, 0, cx, cy, rad);
+    grad.addColorStop(0, `rgba(${r},${g},${b},0.78)`);
+    grad.addColorStop(1, `rgba(${r},${g},${b},0)`);
+    ctx.fillStyle = grad;
     ctx.beginPath();
     ctx.arc(cx, cy, rad, 0, Math.PI * 2);
     ctx.fill();
-    ctx.globalAlpha = 1;
   }
 }
 

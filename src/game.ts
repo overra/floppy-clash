@@ -3,27 +3,45 @@ import { attachBots } from './sim/ai/bots';
 import { createFixedStepLoop, interpolationAlpha } from './core/loop';
 import { createMixer } from './audio/mixer';
 import { createKeyboardFallback } from './input/keyboard';
-import { consumeLatch, emptyLatch, pollGamepads, readPad, type Latch } from './input/gamepad';
 import {
+  consumeLatch,
+  createPadEdgeTracker,
+  emptyLatch,
+  isPadKey,
+  padIndexOf,
+  padKey,
+  padLabel,
+  pollGamepads,
+  readPad,
+  type Latch,
+  type PadEdges,
+  type PadEdgeTracker,
+} from './input/gamepad';
+import {
+  assignColors,
   canStartMatch,
+  clearSeats,
   collectPadMap,
   createMenuState,
   cycleSeatColor,
+  maxBots,
   renderMenus,
   takeOrReadySeat,
   takeSeat,
 } from './ui/menus';
-import { loadMaps, saveMap } from './input/remap';
+import { activate, focusedIn, moveFocus, nudge, setFocus, defaultFocus, type NavDir } from './ui/padNav';
+import { DEFAULT_MAP, loadMaps, saveMap } from './input/remap';
 import { gymLevel } from './levels/catalog';
 import { matchLevelPool } from './levels/catalog';
-import { addShake, createCamera } from './render/camera';
+import { addShake, createCamera, worldToScreen } from './render/camera';
 import { buildFrame } from './render/buildFrame';
 import { createCanvasRenderer, type Renderer } from './render/canvas/renderer';
-import { tryCreateGpuRenderer } from './render/gpu/renderer';
-import { createDecalLayer, type PersistentDecalLayer } from './render/fx/decals';
+import { gpuFailureReason, tryCreateGpuRenderer } from './render/gpu/renderer';
+import { createDecalLayer, snapDecalToSurface, type PersistentDecalLayer } from './render/fx/decals';
 import { emitFromEvents, stepParticles, type Decal, type Particle } from './render/fx/particles';
 import { blankInputs, type PlayerInput } from './sim/input';
-import { Dead, Health, MatchState, Player, RoundPhase, RoundState, Transform } from './sim/traits';
+import { Bot, Combat, Dead, Health, Held, HeldBy, Loose, MatchState, Player, Projectile, RoundPhase, RoundState, Transform, Weapon } from './sim/traits';
+import { WEAPON_BY_ID, weaponByIndex } from './sim/weapons/defs';
 import { createSimWorld, type SimHandle } from './sim/world';
 import { spawnWeapon } from './sim/systems/weapons';
 import { tuning } from './sim/tuning';
@@ -49,18 +67,64 @@ type FloppyDebug = {
   physicsMs: number;
   gpuMs: number;
   phase: number;
+  /** Screen-space player positions (CSS px) for automation and debugging. */
+  players: {
+    slot: number;
+    color: number;
+    x: number;
+    y: number;
+    sx: number;
+    sy: number;
+    hp: number;
+    dead: boolean;
+    blocking: boolean;
+    weapon: string | null;
+    bot: Record<string, number> | null;
+  }[];
+  /** Loose weapons lying around, for checking what bots are trying to fetch. */
+  loose: { x: number; y: number; id: string; cooldown: number }[];
   forceLastStand: () => void;
+  freeze: (on: boolean) => void;
+  stepTicks: (n: number) => void;
+};
+
+type FloppyLauncher = {
+  /** Start a deterministic solo match from anywhere (menu included); returns the level id used. */
+  startMatch: (opts?: { level?: string; seed?: number; bots?: number; humans?: number; firstTo?: number }) => string;
+  /** Drop a loose weapon into the running sim (defaults to just above player 1). */
+  spawnWeapon: (id: string, x?: number, y?: number) => boolean;
+  /** Put a weapon straight into a player's hands. */
+  giveWeapon: (slot: number, id: string) => boolean;
+  /** Every weapon id in the roster, for galleries and sweeps. */
+  weaponIds: () => string[];
+  /** Hold an input override for a slot for the next N sim ticks (merged over live input). */
+  scriptInput: (slot: number, input: Partial<PlayerInput>, ticks: number) => void;
+  /** Drop a fighter at a world position, at rest. */
+  teleport: (slot: number, x: number, y: number) => boolean;
+  /** Live projectile list for inspection: kind, phase, fuse, position. */
+  projectiles: () => { kind: number; phase: number; fuse: number; x: number; y: number; defId: number }[];
 };
 
 declare global {
   interface Window {
     __floppy?: FloppyDebug;
+    __floppyLaunch?: FloppyLauncher;
   }
 }
 
 export function createGame(root: HTMLElement): Game {
-  const canvas = root.querySelector('#game') as HTMLCanvasElement;
+  let canvas = root.querySelector('#game') as HTMLCanvasElement;
   const menusEl = root.querySelector('#menus') as HTMLElement;
+  // A canvas element can only ever own one context type ('2d' or 'webgpu'), so
+  // each renderer is created against its own element and the winner is swapped
+  // into the DOM under the same id/class.
+  function adoptCanvas(next: HTMLCanvasElement) {
+    if (next === canvas) return;
+    next.id = canvas.id;
+    next.className = canvas.className;
+    canvas.replaceWith(next);
+    canvas = next;
+  }
   const hudEl = root.querySelector('#hud') as HTMLElement;
   const settings: UserSettings = loadSettings();
   const menus = createMenuState();
@@ -78,8 +142,16 @@ export function createGame(root: HTMLElement): Game {
     { x: 1, y: 0 },
     { x: -1, y: 0 },
   ];
-  const joinAHeld = [false, false, false, false];
-  const joinStartHeld = [false, false, false, false];
+  const padEdges: PadEdgeTracker[] = [];
+  /**
+   * Which device drives each fighter slot in the running match ('keyboard' or 'pad:<index>'),
+   * fixed when the match starts from the seats people took. Empty outside a match (and for
+   * matches launched from the editor / debug hooks), in which case slot k falls back to pad k,
+   * or the keyboard for slot 0 when no pad sits there.
+   */
+  let slotDevices: string[] = [];
+  /** The last device that pressed a menu control: "Solo vs Bots" seats whoever chose it. */
+  let lastMenuDevice = 'keyboard';
   let renderer: Renderer | null = null;
   let rendererKind: 'gpu' | 'canvas' = 'canvas';
   let sim: SimHandle | null = null;
@@ -87,6 +159,7 @@ export function createGame(root: HTMLElement): Game {
   let particles: Particle[] = [];
   const decals: Decal[] = [];
   let decalLayer: PersistentDecalLayer = createDecalLayer(gymLevel.bounds);
+  let renderedLevel: LevelDef = gymLevel;
   let raf = 0;
   let last = performance.now();
   let paused = false;
@@ -97,25 +170,102 @@ export function createGame(root: HTMLElement): Game {
   let debugHud = false;
   let debugDraw = false;
   let freezeCam = false;
+  let humanCount = 1;
+  const slotName = (slot: number) => (slot >= humanCount ? `Bot ${slot + 1}` : `P${slot + 1}`);
+  // Debug: hold the sim still (rendering continues) and single-step it from the console.
+  let frozen = false;
+  let frozenSteps = 0;
   let recorder = createRecorder(0, 'gym');
   let maps = loadMaps();
   let hitStop = 0;
   let stats = loadStats();
 
+  // Attract mode: a bots-only brawl plays behind the menus so the title screen is never a dead panel.
+  let demo: SimHandle | null = null;
+  let demoCam = createCamera(gymLevel.bounds);
+  let demoParticles: Particle[] = [];
+  const demoDecals: Decal[] = [];
+  let demoDecalLayer: PersistentDecalLayer = createDecalLayer(gymLevel.bounds);
+  let demoLevel: LevelDef = gymLevel;
+  const demoLoop = createFixedStepLoop(tuning.tickRate);
+  const DEMO_SCREENS = new Set(['menu', 'join', 'settings', 'lobby']);
+
+  function startDemo() {
+    const pool = matchLevelPool('all');
+    const level = pool[Math.floor(Math.random() * pool.length)] ?? gymLevel;
+    demo?.destroy();
+    demo = createSimWorld({
+      level,
+      seed: (Math.random() * 1e9) | 0,
+      settings: { playerCount: 0, bots: 4, maxHp: 100, firstTo: 0, showWins: false },
+    });
+    attachBots(demo.ecs, [0, 1, 2, 3]);
+    demoCam = createCamera(level.bounds);
+    demoParticles = [];
+    demoDecals.length = 0;
+    demoDecalLayer = createDecalLayer(level.bounds);
+    demoLevel = level;
+  }
+
+  function stopDemo() {
+    demo?.destroy();
+    demo = null;
+  }
+
+  function stepDemo(dt: number) {
+    if (!demo) startDemo();
+    const world = demo!;
+    const scale = world.ecs.get(RoundState)?.phase === RoundPhase.LastKill ? tuning.lastKillSlowmo : 1;
+    const steps = demoLoop.consume(dt, scale);
+    for (let i = 0; i < steps; i++) {
+      const events = world.step(blankInputs(4));
+      if (world.ctx.level !== demoLevel) {
+        demoLevel = world.ctx.level;
+        demoParticles = [];
+        demoDecals.length = 0;
+        demoDecalLayer = createDecalLayer(demoLevel.bounds);
+      }
+      emitFromEvents(events, demoParticles, demoDecals);
+      demoDecalLayer.stampNew(demoDecals, (d) => (!settings.reduceBlood || d.kind === 'scorch') && snapDecalToSurface(world.ecs, d));
+    }
+    demoParticles = stepParticles(demoParticles, dt);
+    const frame = buildFrame(world, demoCam, interpolationAlpha(demoLoop), canvas.clientWidth || 1280, canvas.clientHeight || 720, settings.reduceBlood ? [] : demoParticles, {
+      colorblind: settings.colorblind,
+      decalLayer: demoDecalLayer,
+      dt: dt * scale,
+    });
+    renderer?.render(frame);
+  }
+
   function show() {
+    // Re-rendering replaces every node; if a pad / arrow-key cursor was on a control, put it back
+    // on the same control (by id, else by label) so the cursor does not vanish on each state change.
+    const prev = menusEl.querySelector<HTMLElement>('.pad-focus');
+    const prevKey = prev ? (prev.id ? `#${prev.id}` : prev.textContent?.trim() ?? '') : '';
+    const prevScreen = menusEl.querySelector('.menu-wrap')?.className ?? '';
     renderMenus(
       menusEl,
       menus,
       {
         local: () => {
+          clearSeats(menus.seats);
           menus.screen = 'join';
           menus.bots = 0;
           show();
         },
         bots: () => {
+          // Seat whoever pressed the button (pad or keyboard), readied, with a full table of bots:
+          // one more press of Start and the match is on.
+          clearSeats(menus.seats);
+          const seat = takeOrReadySeat(menus.seats, lastMenuDevice, deviceLabel(lastMenuDevice));
+          if (seat) seat.ready = true;
           menus.screen = 'join';
           menus.bots = 3;
-          menus.seats[0] = { taken: true, ready: true, color: 0, padId: 'keyboard', name: 'You' };
+          show();
+        },
+        cycleBots: () => {
+          const cap = maxBots(menus.seats);
+          menus.bots = cap > 0 ? (menus.bots + 1) % (cap + 1) : 0;
           show();
         },
         online: () => {
@@ -148,16 +298,8 @@ export function createGame(root: HTMLElement): Game {
           menus.notice = `Saved remap for ${padId}`;
           show();
         },
-        resume: () => {
-          paused = false;
-          menus.screen = 'play';
-          show();
-        },
-        quit: () => {
-          sim = null;
-          menus.screen = 'menu';
-          show();
-        },
+        resume: () => setPaused(false),
+        quit: () => quitToMenu(),
         host: () => {
           if (!menus.roomCode) menus.roomCode = Math.random().toString(36).slice(2, 8).toUpperCase();
           settings.maxHp = menus.maxHp;
@@ -188,9 +330,16 @@ export function createGame(root: HTMLElement): Game {
       maps,
       stats,
     );
+    if (prevKey && menusEl.querySelector('.menu-wrap')?.className === prevScreen) {
+      const again = prevKey.startsWith('#')
+        ? menusEl.querySelector<HTMLElement>(prevKey)
+        : [...menusEl.querySelectorAll<HTMLElement>('button')].find((b) => b.textContent?.trim() === prevKey);
+      if (again) setFocus(menusEl, again);
+    }
   }
 
   function openEditor() {
+    stopDemo();
     editor = createEditorState();
     const hash = location.hash.startsWith('#l=') ? location.hash.slice(3) : '';
     if (hash) {
@@ -208,16 +357,33 @@ export function createGame(root: HTMLElement): Game {
     });
   }
 
+  let matchStarting = false;
   async function beginMatch() {
-    const taken = menus.seats.filter((s) => s.taken).length;
-    const humans = Math.max(1, taken);
-    extraLevels = settings.includeUserLevels ? await loadLibrary().catch(() => []) : [];
-    const pool = matchLevelPool(settings.enabledLevels, extraLevels);
-    const level =
-      settings.rotation === 'ordered'
-        ? (pool[0] ?? gymLevel)
-        : (pool[Math.floor(Math.random() * pool.length)] ?? gymLevel);
-    startSim(level, { playerCount: humans, bots: menus.bots, maxHp: settings.maxHp, firstTo: settings.firstTo });
+    // Start and Enter both land here; the level library load is async, so guard against a
+    // double press spawning two sims.
+    if (matchStarting) return;
+    matchStarting = true;
+    try {
+      const taken = menus.seats.filter((s) => s.taken);
+      const humans = Math.max(1, taken.length);
+      const bots = Math.min(menus.bots, maxBots(menus.seats));
+      extraLevels = settings.includeUserLevels ? await loadLibrary().catch(() => []) : [];
+      const pool = matchLevelPool(settings.enabledLevels, extraLevels);
+      const level =
+        settings.rotation === 'ordered'
+          ? (pool[0] ?? gymLevel)
+          : (pool[Math.floor(Math.random() * pool.length)] ?? gymLevel);
+      startSim(level, {
+        playerCount: humans,
+        bots,
+        maxHp: settings.maxHp,
+        firstTo: settings.firstTo,
+        devices: taken.length ? taken.map((s) => s.padId) : ['keyboard'],
+        colors: assignColors(menus.seats, humans + bots),
+      });
+    } finally {
+      matchStarting = false;
+    }
   }
 
   function startIfReady() {
@@ -229,11 +395,47 @@ export function createGame(root: HTMLElement): Game {
     void beginMatch();
   }
 
-  function startSim(level: LevelDef, opts: { playerCount: number; bots: number; maxHp?: number; firstTo?: number }) {
+  function deviceLabel(device: string): string {
+    if (device === 'keyboard') return 'Keyboard';
+    const pad = pollGamepads()[padIndexOf(device)];
+    return pad ? padLabel(pad) : 'Pad';
+  }
+
+  function matchIsOver(): boolean {
+    return !!sim && menus.screen === 'play' && sim.ecs.get(RoundState)?.phase === RoundPhase.MatchOver;
+  }
+
+  /** Same seats, same rules, fresh arena and seed: the "play again" the match-over card promises. */
+  function rematch() {
+    if (!sim) return;
+    const bots = sim.players().filter((p) => p.has(Bot)).length;
+    const ms = sim.ecs.get(MatchState);
+    const colors = sim.players().map((p) => p.get(Player)?.color ?? 0);
+    const pool = matchLevelPool(settings.enabledLevels, extraLevels);
+    const level = settings.rotation === 'ordered' ? (pool[0] ?? gymLevel) : (pool[Math.floor(Math.random() * pool.length)] ?? gymLevel);
+    startSim(level, { playerCount: humanCount, bots, maxHp: ms?.maxHp, firstTo: ms?.firstTo, devices: slotDevices, colors });
+  }
+
+  type StartOpts = {
+    playerCount: number;
+    bots: number;
+    maxHp?: number;
+    firstTo?: number;
+    seed?: number;
+    /** Input device per human slot; omitted for editor / debug launches (slot k <- pad k, or the keyboard). */
+    devices?: string[];
+    colors?: number[];
+  };
+
+  function startSim(level: LevelDef, opts: StartOpts) {
     mixer.resume();
     mixer.startMusic();
-    const seed = (Math.random() * 1e9) | 0;
+    const seed = opts.seed ?? (Math.random() * 1e9) | 0;
+    humanCount = opts.playerCount;
+    slotDevices = opts.devices ? opts.devices.slice(0, opts.playerCount) : [];
     recorder = createRecorder(seed, level.id);
+    stopDemo();
+    sim?.destroy();
     sim = createSimWorld({
       level,
       seed,
@@ -247,8 +449,8 @@ export function createGame(root: HTMLElement): Game {
         enabledLevels: settings.enabledLevels,
         rotation: settings.rotation,
         showWins: settings.showWins,
+        colors: opts.colors,
       },
-      boxes: 8,
     });
     if (opts.bots > 0) {
       const botSlots: number[] = [];
@@ -261,74 +463,222 @@ export function createGame(root: HTMLElement): Game {
     particles = [];
     decals.length = 0;
     decalLayer = createDecalLayer(level.bounds);
+    renderedLevel = level;
+    resetBanner();
     menus.screen = 'play';
     show();
     net.send(lateJoinSnapshotMessage(sim.snapshot()));
   }
 
+  // Debug/automation: per-slot input overrides that hold for a number of sim ticks, so browser
+  // tests can drive a fighter deterministically regardless of frame pacing.
+  const scripted: { input: Partial<PlayerInput>; ticks: number }[] = [];
+  function applyScriptedInputs(live: PlayerInput[]): PlayerInput[] {
+    if (!scripted.some((s) => s && s.ticks > 0)) return live;
+    return live.map((input, slot) => {
+      const s = scripted[slot];
+      if (!s || s.ticks <= 0) return input;
+      s.ticks -= 1;
+      return { ...input, ...s.input };
+    });
+  }
+
+  window.__floppyLaunch = {
+    scriptInput: (slot, input, ticks) => {
+      scripted[slot] = { input, ticks: Math.max(0, ticks | 0) };
+    },
+    startMatch: (opts = {}) => {
+      const pool = matchLevelPool(settings.enabledLevels, extraLevels);
+      const level = pool.find((l) => l.id === opts.level) ?? (opts.level === 'gym' ? gymLevel : null) ?? pool[0] ?? gymLevel;
+      startSim(level, { playerCount: opts.humans ?? 1, bots: opts.bots ?? 3, seed: opts.seed ?? 1, firstTo: opts.firstTo });
+      return level.id;
+    },
+    spawnWeapon: (id, x, y) => {
+      if (!sim || !WEAPON_BY_ID.has(id)) return false;
+      const p1 = sim.players()[0]?.get(Transform);
+      spawnWeapon(sim.ecs, id, x ?? (p1?.x ?? 0) + 1, y ?? (p1?.y ?? 0) + 1);
+      return true;
+    },
+    giveWeapon: (slot, id) => {
+      if (!sim || !WEAPON_BY_ID.has(id)) return false;
+      const owner = sim.players().find((e) => e.get(Player)?.slot === slot);
+      const at = owner?.get(Transform);
+      if (!owner || !at) return false;
+      for (const w of sim.ecs.query(Weapon, Held)) {
+        if (w.targetFor(HeldBy) === owner) sim.ctx.pendingDestroy.push(w);
+      }
+      const gun = spawnWeapon(sim.ecs, id, at.x, at.y, false);
+      gun.add(Held(), HeldBy(owner));
+      sim.ctx.bodies.get(gun)?.setActive(false);
+      return true;
+    },
+    weaponIds: () => [...WEAPON_BY_ID.keys()],
+    teleport: (slot, x, y) => {
+      if (!sim) return false;
+      const who = sim.players().find((e) => e.get(Player)?.slot === slot);
+      const body = who ? sim.ctx.bodies.get(who) : undefined;
+      if (!who || !body) return false;
+      body.setPosition({ x, y });
+      body.setLinearVelocity({ x: 0, y: 0 });
+      who.set(Transform, { x, y, angle: 0 });
+      return true;
+    },
+    projectiles: () => {
+      const out: { kind: number; phase: number; fuse: number; x: number; y: number; defId: number }[] = [];
+      if (!sim) return out;
+      sim.ecs.query(Projectile).updateEach(([p]) => {
+        out.push({ kind: p.kind, phase: p.phase, fuse: p.fuse, x: p.x, y: p.y, defId: p.defId });
+      });
+      return out;
+    },
+  };
+
   function padMapFor(id: string) {
     return maps[id];
   }
 
-  function sampleInputs(): PlayerInput[] {
-    const inputs = blankInputs(4);
-    const pads = pollGamepads();
-    pads.forEach((pad, i) => {
-      if (!pad) return;
-      const latch = latches[i] ?? emptyLatch();
-      const aim = lastAim[i] ?? { x: 1, y: 0 };
-      if (menus.screen === 'join') {
-        if (pad.buttons[14]?.pressed) {
-          const seat = menus.seats.find((s) => s.padId === pad.id);
-          if (seat) {
-            cycleSeatColor(seat, -1);
-            show();
-          }
-        }
-        if (pad.buttons[15]?.pressed) {
-          const seat = menus.seats.find((s) => s.padId === pad.id);
-          if (seat) {
-            cycleSeatColor(seat, 1);
-            show();
-          }
-        }
-        const aDown = !!(pad.buttons[0]?.pressed || pad.buttons[4]?.pressed);
-        if (aDown && !joinAHeld[i]) {
-          takeOrReadySeat(menus.seats, pad.id);
-          show();
-        }
-        joinAHeld[i] = aDown;
-        const startDown = !!pad.buttons[9]?.pressed;
-        if (startDown && !joinStartHeld[i]) startIfReady();
-        joinStartHeld[i] = startDown;
-        if (pad.mapping && pad.mapping !== 'standard' && !maps[pad.id]) {
-          menus.notice = `Non-standard pad “${pad.id}” — open Settings to remap.`;
-        }
-      }
-      inputs[i] = readPad(pad, latch, aim, padMapFor(pad.id));
-      lastAim[i] = { x: inputs[i]!.aimX, y: inputs[i]!.aimY };
-      if (latch.pause) {
-        latch.pause = false;
-        if (menus.screen === 'join') {
-          startIfReady();
-        } else {
-          paused = !paused;
-          menus.screen = paused ? 'pause' : 'play';
-          show();
-        }
-      }
-    });
-    const joinedPad = pads.some(Boolean);
-    if (!joinedPad || menus.seats.some((s) => s.padId === 'keyboard')) {
-      const p = sim?.players()[0];
-      const t = p?.get(Transform) ?? { x: 8, y: 6 };
-      inputs[0] = keys.sample({ x: t.x, y: t.y }, cam, canvas.clientWidth, canvas.clientHeight);
-    }
-    if (keys.down.has('Escape') && menus.screen === 'play') {
-      paused = true;
-      menus.screen = 'pause';
+  /** Which device steers a fighter slot right now (see {@link slotDevices}). */
+  function deviceForSlot(slot: number, pads: (Gamepad | null)[]): string {
+    // Seats decided: a pad that never joined steers nobody.
+    if (slotDevices.length) return slotDevices[slot] ?? '';
+    const pad = pads[slot];
+    if (pad) return padKey(pad);
+    return slot === 0 ? 'keyboard' : '';
+  }
+
+  function setPaused(on: boolean) {
+    if (!sim || paused === on) return;
+    paused = on;
+    menus.screen = on ? 'pause' : 'play';
+    show();
+  }
+
+  function quitToMenu() {
+    sim?.destroy();
+    sim = null;
+    paused = false;
+    slotDevices = [];
+    resetBanner();
+    menus.screen = 'menu';
+    show();
+  }
+
+  /** Screens whose controls are plain DOM the cursor can walk; the others have bespoke pad handling. */
+  const NAV_SCREENS = new Set(['menu', 'settings', 'lobby', 'pause', 'disconnect', 'scoreboard']);
+
+  function backOut() {
+    if (menus.screen === 'pause') setPaused(false);
+    else if (menus.screen === 'join' || menus.screen === 'settings' || menus.screen === 'lobby') {
+      menus.screen = 'menu';
       show();
     }
+  }
+
+  /** Walk the focused menu with a direction / accept / back triple (shared by pads and arrow keys). */
+  function navigateMenu(dir: NavDir | null, accept: boolean, back: boolean) {
+    if (dir) {
+      const cur = focusedIn(menusEl);
+      if (!(cur && nudge(cur, dir))) moveFocus(menusEl, dir);
+    }
+    if (accept) {
+      const cur = focusedIn(menusEl) ?? defaultFocus(menusEl);
+      if (cur) {
+        setFocus(menusEl, cur);
+        activate(cur);
+      }
+    }
+    if (back) backOut();
+  }
+
+  function dirOf(e: PadEdges): NavDir | null {
+    return e.up ? 'up' : e.down ? 'down' : e.left ? 'left' : e.right ? 'right' : null;
+  }
+
+  /** One pad's menu presses this frame, applied to whatever screen is up. */
+  function handlePadMenu(pad: Gamepad, e: PadEdges) {
+    if (!(e.a || e.b || e.start || e.select || e.up || e.down || e.left || e.right)) return;
+    applyPadMenu(pad, e);
+    // Landing on a fresh screen: show the cursor straight away so the next press has a target.
+    if (NAV_SCREENS.has(menus.screen) && !focusedIn(menusEl)) setFocus(menusEl, defaultFocus(menusEl));
+  }
+
+  function applyPadMenu(pad: Gamepad, e: PadEdges) {
+    const device = padKey(pad);
+    if (e.a || e.b || e.start || e.select) lastMenuDevice = device;
+    const screen = menus.screen;
+    if (screen === 'play') {
+      if (!sim) return;
+      if (matchIsOver()) {
+        if (e.start) rematch();
+        else if (e.select) quitToMenu();
+      } else if (e.start) {
+        setPaused(true);
+      }
+      return;
+    }
+    if (screen === 'editor') return;
+    if (screen === 'join') {
+      if (pad.mapping && pad.mapping !== 'standard' && !maps[pad.id]) {
+        menus.notice = `Non-standard pad “${pad.id}” — open Settings to remap.`;
+      }
+      if (e.a) takeOrReadySeat(menus.seats, device, padLabel(pad));
+      if (e.b) {
+        backOut();
+        return;
+      }
+      if (e.start) {
+        startIfReady();
+        return;
+      }
+      const seat = menus.seats.find((s) => s.taken && s.padId === device);
+      if ((e.left || e.right) && seat) cycleSeatColor(seat, e.right ? 1 : -1, menus.seats);
+      if (e.up || e.down) menus.bots = Math.max(0, Math.min(maxBots(menus.seats), menus.bots + (e.up ? 1 : -1)));
+      show();
+      return;
+    }
+    if (screen === 'pause' && (e.start || e.b)) {
+      setPaused(false);
+      return;
+    }
+    navigateMenu(dirOf(e), e.a || e.start, e.b);
+  }
+
+  function sampleInputs(): PlayerInput[] {
+    const now = performance.now();
+    const inputs = blankInputs(4);
+    const pads = pollGamepads();
+    const padInputs: (PlayerInput | undefined)[] = [];
+    pads.forEach((pad, i) => {
+      if (!pad) return;
+      const latch = (latches[i] ??= emptyLatch());
+      const aim = lastAim[i] ?? { x: 1, y: 0 };
+      const map = padMapFor(pad.id);
+      const input = readPad(pad, latch, aim, map);
+      // Start is edge-detected below (menus, pause, rematch); the latch would otherwise re-fire.
+      latch.pause = false;
+      padInputs[i] = input;
+      lastAim[i] = { x: input.aimX, y: input.aimY };
+      const tracker = (padEdges[i] ??= createPadEdgeTracker());
+      handlePadMenu(pad, tracker.update(pad, now, (map ?? DEFAULT_MAP).pause));
+    });
+
+    // Each fighter slot reads the device that took its seat; the keyboard aims with the mouse
+    // relative to its own fighter.
+    for (let slot = 0; slot < inputs.length; slot++) {
+      const device = deviceForSlot(slot, pads);
+      if (!device) continue;
+      if (device === 'keyboard') {
+        const p = sim?.players().find((e) => e.get(Player)?.slot === slot);
+        const t = p?.get(Transform) ?? { x: 8, y: 6 };
+        inputs[slot] = keys.sample({ x: t.x, y: t.y }, cam, canvas.clientWidth, canvas.clientHeight);
+      } else {
+        const input = padInputs[padIndexOf(device)];
+        if (input) inputs[slot] = input;
+      }
+    }
+
+    const pauseTap = keys.takePause();
+    if (pauseTap && sim && (menus.screen === 'play' || menus.screen === 'pause' || menus.screen === 'disconnect')) setPaused(menus.screen === 'play');
     return inputs;
   }
 
@@ -345,34 +695,77 @@ export function createGame(root: HTMLElement): Game {
     }
   }
 
+  let lastFrameError = '';
   function tick(now: number) {
+    try {
+      frame(now);
+    } catch (err) {
+      // One bad frame must not take the whole game down: keep the loop alive and shout once per fault.
+      const msg = err instanceof Error ? err.message : String(err);
+      if (msg !== lastFrameError) {
+        lastFrameError = msg;
+        console.error('frame error', err);
+      }
+    }
+    raf = requestAnimationFrame(tick);
+  }
+
+  function frame(now: number) {
     const dt = Math.min(0.05, (now - last) / 1000);
     last = now;
     if (renderer) renderer.resize(canvas.clientWidth || 1280, canvas.clientHeight || 720);
-    if (sim && menus.screen === 'play' && !paused) {
+    // Pads and keys are read every frame: they drive the join screen and pause toggling, not just the fight.
+    const live = sampleInputs();
+    // The match stays on screen (still) behind the pause and disconnect cards.
+    const showMatch = !!sim && (menus.screen === 'play' || menus.screen === 'pause' || menus.screen === 'disconnect');
+    hudEl.classList.toggle('hidden', !showMatch);
+    if (sim && showMatch) {
+      const running = menus.screen === 'play' && !paused;
       const scale = sim.ecs.get(RoundState)?.phase === RoundPhase.LastKill ? tuning.lastKillSlowmo : 1;
-      const steps = loop.consume(dt, scale);
-      const sampled = sampleInputs();
+      let steps = running ? loop.consume(dt, scale) : 0;
+      if (frozen) {
+        steps = frozenSteps;
+        frozenSteps = 0;
+      }
+      if (!running) {
+        // Paused: drop the presses so a jump latched behind the menu does not fire on resume.
+        latches.forEach(consumeLatch);
+        keys.consume();
+      }
       for (let i = 0; i < steps; i++) {
         if (hitStop > 0) {
           hitStop -= 1;
           continue;
         }
+        const sampled = applyScriptedInputs(live);
         recorder.push(sampled);
         const events = sim.step(sampled);
+        if (sim.ctx.level !== renderedLevel) {
+          // The sim rotated to the next arena: last round's blood and embers must not carry over.
+          renderedLevel = sim.ctx.level;
+          particles = [];
+          decals.length = 0;
+          decalLayer = createDecalLayer(renderedLevel.bounds);
+        }
         mixer.handle(events);
         emitFromEvents(events, particles, decals);
-        decalLayer.stampNew(decals, (d) => !settings.reduceBlood || d.kind === 'scorch');
+        const world = sim.ecs;
+        decalLayer.stampNew(decals, (d) => (!settings.reduceBlood || d.kind === 'scorch') && snapDecalToSurface(world, d));
         if (events.some((e) => e.type === 'kill')) {
           hitStop = 3;
           recordKos(events.filter((e) => e.type === 'kill').length);
+        } else if (events.some((e) => e.type === 'hit' && e.damage >= 15) || events.some((e) => e.type === 'clash')) {
+          // A frame of freeze on a solid hit sells the impact (punches, headshots, clashes), like the kill stop.
+          hitStop = 1;
         }
         if (events.some((e) => e.type === 'round-phase' && e.phase === 'match-over')) {
           const ms = sim.ecs.get(MatchState);
           stats = recordMatch((ms?.wins0 ?? 0) >= (ms?.firstTo || 1));
         }
-        if (events.some((e) => e.type === 'explosion' || e.type === 'kill') && !settings.reduceShake) {
-          addShake(cam, events.some((e) => e.type === 'explosion') ? 10 : 5);
+        if (!settings.reduceShake) {
+          if (events.some((e) => e.type === 'explosion' || e.type === 'kill')) addShake(cam, events.some((e) => e.type === 'explosion') ? 16 : 9);
+          else if (events.some((e) => e.type === 'hit' && e.damage >= 15)) addShake(cam, 4);
+          else if (events.some((e) => e.type === 'clash')) addShake(cam, 3);
         }
         if (events.some((e) => e.type === 'explosion')) rumble('boom');
         else if (events.some((e) => e.type === 'hit')) rumble('hit');
@@ -393,12 +786,15 @@ export function createGame(root: HTMLElement): Game {
           colorblind: settings.colorblind,
           decalLayer,
           flash: hitStop,
+          // Limbs swing in the sim's time: slowed with the last-kill replay, held while paused.
+          dt: running ? dt * scale : 0,
         },
       );
       frame.hud.hash = sim.hash();
       frame.hud.gpuMs = renderer?.lastGpuMs ?? 0;
       renderer?.render(frame);
       drawHud(frame);
+      const ecs = sim.ecs;
       window.__floppy = {
         rendererKind,
         lastHash: frame.hud.hash ?? '',
@@ -407,6 +803,33 @@ export function createGame(root: HTMLElement): Game {
         physicsMs: frame.hud.physicsMs ?? 0,
         gpuMs: frame.hud.gpuMs ?? 0,
         phase: frame.hud.phase ?? 0,
+        players: sim.players().map((e) => {
+          const t = e.get(Transform) ?? { x: 0, y: 0, angle: 0 };
+          const s = worldToScreen(cam, t.x, t.y, canvas.clientWidth || 1280, canvas.clientHeight || 720);
+          let weapon: string | null = null;
+          for (const w of ecs.query(Weapon, Held)) {
+            if (w.targetFor(HeldBy) === e) weapon = weaponByIndex(w.get(Weapon)!.defId).id;
+          }
+          const bot = e.get(Bot);
+          return {
+            slot: e.get(Player)?.slot ?? 0,
+            color: e.get(Player)?.color ?? 0,
+            x: t.x,
+            y: t.y,
+            sx: s.x,
+            sy: s.y,
+            hp: e.get(Health)?.hp ?? 0,
+            dead: e.has(Dead),
+            blocking: e.get(Combat)?.blocking ?? false,
+            weapon,
+            bot: bot ? { mode: bot.mode, target: bot.target, surf: bot.surf, detour: bot.detour, timer: bot.timer } : null,
+          };
+        }),
+        loose: ecs.query(Weapon, Loose, Transform).map((w) => {
+          const wt = w.get(Transform)!;
+          const wep = w.get(Weapon)!;
+          return { x: wt.x, y: wt.y, id: weaponByIndex(wep.defId).id, cooldown: wep.pickupCooldown };
+        }),
         forceLastStand: () => {
           if (!sim) return;
           sim.players().forEach((p) => {
@@ -414,7 +837,16 @@ export function createGame(root: HTMLElement): Game {
             if (slot !== 0) p.set(Health, { hp: 0, maxHp: p.get(Health)?.maxHp ?? 100 });
           });
         },
+        freeze: (on: boolean) => {
+          frozen = on;
+          frozenSteps = 0;
+        },
+        stepTicks: (n: number) => {
+          frozenSteps += Math.max(0, n | 0);
+        },
       };
+    } else if (renderer && !sim && DEMO_SCREENS.has(menus.screen)) {
+      stepDemo(dt);
     } else if (renderer && menus.screen !== 'editor') {
       renderer.render({
         groups: [],
@@ -423,51 +855,209 @@ export function createGame(root: HTMLElement): Game {
         hud: { slowmo: false, countdown: 0 },
       });
     }
-    raf = requestAnimationFrame(tick);
+  }
+
+  // The HUD is a handful of persistent DOM nodes; we only touch them when the
+  // underlying value changes so CSS transitions/animations actually play.
+  const hud = (() => {
+    const mk = (cls: string, parent: HTMLElement = hudEl) => {
+      const el = document.createElement('div');
+      el.className = cls;
+      parent.append(el);
+      return el;
+    };
+    const bars = mk('hud-bars');
+    const players = mk('hud-players');
+    const count = mk('hud-count');
+    const banner = mk('hud-banner hidden');
+    const level = mk('hud-level');
+    const tip = mk('hud-tip');
+    const dbg = document.createElement('pre');
+    dbg.className = 'hidden';
+    dbg.style.cssText =
+      'position:absolute;right:12px;top:10px;margin:0;padding:8px;background:rgba(0,0,0,0.55);font:12px/1.4 monospace';
+    hudEl.append(dbg);
+    return {
+      bars,
+      players,
+      count,
+      banner,
+      level,
+      tip,
+      dbg,
+      lastCount: -1,
+      lastPlayersKey: '',
+      lastBannerKey: '',
+      lastWins: [0, 0, 0, 0],
+      goUntil: 0,
+      levelUntil: 0,
+      lastLevel: '',
+      lastTip: '',
+    };
+  })();
+
+  /** A finished match's round-over card must not linger in the DOM or flash into the next one. */
+  function resetBanner() {
+    hud.banner.classList.add('hidden');
+    hud.banner.innerHTML = '';
+    delete hud.banner.dataset.roundOver;
+    hud.lastBannerKey = '';
   }
 
   function drawHud(frame: ReturnType<typeof buildFrame>) {
-    hudEl.innerHTML = '';
-    if (frame.hud.countdown > 0) {
-      const d = document.createElement('div');
-      d.dataset.countdown = String(frame.hud.countdown);
-      d.style.cssText =
-        'position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:96px;font-weight:800';
-      d.textContent = String(frame.hud.countdown);
-      hudEl.append(d);
+    const h = frame.hud;
+    const now = performance.now();
+    const tipText = rendererKind === 'gpu' ? 'SDF renderer' : 'Canvas fallback';
+    if (hud.lastTip !== tipText) {
+      hud.tip.textContent = tipText;
+      hud.lastTip = tipText;
     }
-    if (frame.hud.showWins && frame.hud.wins) {
-      const bar = document.createElement('div');
-      bar.style.cssText = 'position:absolute;top:10px;left:12px;font-weight:700;text-shadow:0 1px 4px #000';
-      const names = ['P1', 'P2', 'P3', 'P4'];
-      bar.textContent =
-        names.map((n, i) => `${n} ${frame.hud.wins![i] ?? 0}`).join('   ') +
-        (frame.hud.firstTo ? `   first to ${frame.hud.firstTo}` : '');
-      hudEl.append(bar);
+
+    hud.bars.classList.toggle('on', h.slowmo);
+
+    // Countdown numbers + GO!
+    if (h.countdown !== hud.lastCount) {
+      hud.count.innerHTML = '';
+      if (h.countdown > 0) {
+        const s = document.createElement('span');
+        s.textContent = String(h.countdown);
+        hud.count.append(s);
+        hud.count.dataset.countdown = String(h.countdown);
+      } else {
+        delete hud.count.dataset.countdown;
+        if (hud.lastCount > 0) {
+          const s = document.createElement('span');
+          s.className = 'go';
+          s.textContent = 'FIGHT';
+          hud.count.append(s);
+          hud.goUntil = now + 700;
+        }
+      }
+      hud.lastCount = h.countdown;
+    } else if (hud.goUntil && now > hud.goUntil) {
+      hud.count.innerHTML = '';
+      hud.goUntil = 0;
     }
-    if (
-      frame.hud.phase === RoundPhase.LastKill ||
-      frame.hud.phase === RoundPhase.Scoreboard ||
-      frame.hud.phase === RoundPhase.MatchOver
-    ) {
-      const board = document.createElement('div');
-      board.dataset.roundOver = '1';
-      board.style.cssText =
-        'position:absolute;top:20%;left:50%;transform:translateX(-50%);background:rgba(10,12,16,0.75);padding:16px 24px;border-radius:12px;text-align:center';
-      const title =
-        frame.hud.phase === RoundPhase.MatchOver
-          ? 'Match over'
-          : frame.hud.phase === RoundPhase.LastKill
-            ? 'Last standing'
-            : 'Round over';
-      board.innerHTML = `<h2 style="margin:0 0 8px">${title}</h2>
-        <p>${(frame.hud.wins ?? []).map((w, i) => `P${i + 1}: ${w}`).join(' · ')}</p>`;
-      hudEl.append(board);
+
+    // Level name: fades in during the countdown, out once the fight starts.
+    if (h.levelName && h.levelName !== hud.lastLevel) {
+      hud.level.textContent = h.levelName;
+      hud.lastLevel = h.levelName;
     }
-    const tip = document.createElement('div');
-    tip.className = 'notice';
-    tip.textContent = rendererKind === 'gpu' ? 'SDF renderer' : 'Canvas fallback';
-    hudEl.append(tip);
+    hud.level.classList.toggle('show', h.countdown > 0 || h.phase === RoundPhase.Scoreboard);
+
+    // Player cards.
+    const plist = h.players ?? [];
+    const wins = h.wins ?? [0, 0, 0, 0];
+    const firstTo = h.firstTo ?? 0;
+    const key = plist
+      .map((p) => `${p.slot}:${p.color}:${p.alive ? 1 : 0}:${p.crown ? 1 : 0}:${Math.round((p.hp / Math.max(1, p.maxHp)) * 24)}:${wins[p.slot] ?? 0}`)
+      .join('|') + `#${firstTo}${h.showWins ? 'w' : ''}`;
+    if (key !== hud.lastPlayersKey) {
+      hud.lastPlayersKey = key;
+      hud.players.innerHTML = '';
+      for (const p of plist) {
+        const card = document.createElement('div');
+        card.className = 'hud-p';
+        card.style.setProperty('--c', p.color);
+        card.dataset.alive = p.alive ? '1' : '0';
+        card.dataset.slot = String(p.slot);
+        const face = document.createElement('div');
+        face.className = 'hud-face';
+        if (p.crown) {
+          const crown = document.createElement('i');
+          crown.className = 'hud-crown';
+          face.append(crown);
+        }
+        card.append(face);
+        if (h.showWins) {
+          const tally = document.createElement('div');
+          tally.className = 'hud-tally';
+          const n = Math.max(firstTo, wins[p.slot] ?? 0, 1);
+          for (let i = 0; i < Math.min(n, 10); i++) {
+            const dot = document.createElement('i');
+            if (i < (wins[p.slot] ?? 0)) {
+              dot.className = 'on' + (i === (wins[p.slot] ?? 0) - 1 && (hud.lastWins[p.slot] ?? 0) < (wins[p.slot] ?? 0) ? ' pop' : '');
+            }
+            tally.append(dot);
+          }
+          card.append(tally);
+        }
+        const hp = document.createElement('div');
+        hp.className = 'hud-hp';
+        const fill = document.createElement('i');
+        fill.style.width = `${Math.max(0, Math.min(1, p.hp / Math.max(1, p.maxHp))) * 100}%`;
+        hp.append(fill);
+        card.append(hp);
+        const name = document.createElement('div');
+        name.className = 'hud-name';
+        name.textContent = slotName(p.slot).toUpperCase();
+        card.append(name);
+        hud.players.append(card);
+      }
+      hud.lastWins = wins.slice();
+    }
+
+    // Round / match banner.
+    const over = h.phase === RoundPhase.LastKill || h.phase === RoundPhase.Scoreboard || h.phase === RoundPhase.MatchOver;
+    const bannerKey = over ? `${h.phase}:${h.roundWinner ?? -1}:${h.matchWinner ?? -1}:${wins.join(',')}` : '';
+    if (bannerKey !== hud.lastBannerKey) {
+      hud.lastBannerKey = bannerKey;
+      hud.banner.classList.toggle('hidden', !over);
+      if (over) {
+        hud.banner.dataset.roundOver = '1';
+        hud.banner.innerHTML = '';
+        const winnerSlot = h.phase === RoundPhase.MatchOver ? (h.matchWinner ?? -1) : (h.roundWinner ?? -1);
+        const winner = plist.find((p) => p.slot === winnerSlot);
+        hud.banner.style.setProperty('--c', winner?.color ?? '#f4f1ea');
+        const title = document.createElement('h2');
+        const small = document.createElement('small');
+        small.textContent =
+          h.phase === RoundPhase.MatchOver ? 'Match over' : h.phase === RoundPhase.LastKill ? 'Last one standing' : 'Round over';
+        title.append(small);
+        title.append(
+          document.createTextNode(
+            winner
+              ? h.phase === RoundPhase.MatchOver
+                ? `${slotName(winnerSlot)} wins the match`
+                : `${slotName(winnerSlot)} takes it`
+              : h.phase === RoundPhase.MatchOver
+                ? 'Match over'
+                : 'Everybody dies',
+          ),
+        );
+        hud.banner.append(title);
+        if (h.showWins) {
+          const score = document.createElement('div');
+          score.className = 'hud-score';
+          for (const p of plist) {
+            const cell = document.createElement('div');
+            cell.style.setProperty('--c', p.color);
+            const face = document.createElement('div');
+            face.className = 'hud-face';
+            cell.append(face);
+            cell.append(document.createTextNode(String(wins[p.slot] ?? 0)));
+            score.append(cell);
+          }
+          hud.banner.append(score);
+        }
+        const sub = document.createElement('p');
+        sub.textContent =
+          h.phase === RoundPhase.MatchOver
+            ? isPadKey(slotDevices[0] ?? '')
+              ? 'Start — rematch · Select — menu'
+              : 'Start / Enter — rematch · Esc — menu'
+            : firstTo
+              ? `First to ${firstTo}`
+              : 'Next level incoming';
+        hud.banner.append(sub);
+      } else {
+        delete hud.banner.dataset.roundOver;
+      }
+    }
+
+    // Debug readout (F3).
+    hud.dbg.classList.toggle('hidden', !debugHud);
     if (debugHud) {
       const players = sim
         ? sim.players().map((e, i) => {
@@ -477,20 +1067,16 @@ export function createGame(root: HTMLElement): Game {
             return `P${slot + 1} hp ${hpNow.toFixed(0)}${dead}`;
           })
         : [];
-      const dbg = document.createElement('pre');
-      dbg.style.cssText =
-        'position:absolute;right:12px;top:10px;margin:0;padding:8px;background:rgba(0,0,0,0.55);font:12px/1.4 monospace';
-      dbg.textContent = [
-        `tick ${frame.hud.tick ?? 0}`,
-        `hash ${frame.hud.hash ?? '--------'}`,
-        `phys ${((frame.hud.physicsMs ?? 0)).toFixed(2)} ms`,
-        `gpu  ${((frame.hud.gpuMs ?? 0)).toFixed(2)} ms`,
-        `ents ${frame.hud.entities ?? 0}`,
+      hud.dbg.textContent = [
+        `tick ${h.tick ?? 0}`,
+        `hash ${h.hash ?? '--------'}`,
+        `phys ${(h.physicsMs ?? 0).toFixed(2)} ms`,
+        `gpu  ${(h.gpuMs ?? 0).toFixed(2)} ms`,
+        `ents ${h.entities ?? 0}`,
         `rend ${rendererKind}`,
-        `phase ${frame.hud.phase ?? 0}`,
+        `phase ${h.phase ?? 0}`,
         ...players,
       ].join('\n');
-      hudEl.append(dbg);
     }
   }
 
@@ -516,7 +1102,7 @@ export function createGame(root: HTMLElement): Game {
       }
       if (e.code === 'F6') {
         freezeCam = false;
-        tuning.lastKillSlowmo = tuning.lastKillSlowmo < 1 ? 1 : 0.25;
+        tuning.lastKillSlowmo = tuning.lastKillSlowmo < 1 ? 1 : 0.3;
       }
       if (e.code === 'F7') freezeCam = !freezeCam;
       if (e.code === 'F8') void switchRenderer();
@@ -524,18 +1110,46 @@ export function createGame(root: HTMLElement): Game {
     });
   }
 
+  let gpuAttemptPending = false;
+  function adoptGpu(gpuCanvas: HTMLCanvasElement, gpu: Renderer) {
+    adoptCanvas(gpuCanvas);
+    renderer = gpu;
+    rendererKind = 'gpu';
+    menus.notice = 'SDF renderer';
+    if (menus.screen !== 'play') show();
+  }
+
+  async function tryAdoptGpu(): Promise<boolean> {
+    // One attempt at a time: a hung adapter request must not be joined by a pile of clones.
+    if (gpuAttemptPending) return false;
+    gpuAttemptPending = true;
+    const gpuCanvas = document.createElement('canvas');
+    const gpu = await tryCreateGpuRenderer(gpuCanvas, { lighting: settings.lighting }, 12_000, (late) => {
+      gpuAttemptPending = false;
+      if (rendererKind === 'canvas' && settings.renderer !== 'canvas') adoptGpu(gpuCanvas, late);
+    });
+    if (gpu) {
+      gpuAttemptPending = false;
+      adoptGpu(gpuCanvas, gpu);
+      return true;
+    }
+    const why = gpuFailureReason();
+    menus.notice = why ? `Canvas fallback — WebGPU ${why}` : 'Canvas fallback';
+    if (menus.screen !== 'play') show();
+    // A timed-out attempt is still in flight and will adopt itself if it ever lands; a hard failure is final.
+    if (why !== 'timed out') gpuAttemptPending = false;
+    return false;
+  }
+
   async function switchRenderer() {
     if (rendererKind === 'gpu') {
-      renderer = createCanvasRenderer(canvas);
+      const c = document.createElement('canvas');
+      renderer = createCanvasRenderer(c);
+      adoptCanvas(c);
       rendererKind = 'canvas';
       menus.notice = 'Canvas fallback';
     } else if (settings.renderer !== 'canvas') {
-      const gpu = await tryCreateGpuRenderer(canvas, { lighting: settings.lighting });
-      if (gpu) {
-        renderer = gpu;
-        rendererKind = 'gpu';
-        menus.notice = 'SDF renderer';
-      }
+      await tryAdoptGpu();
     }
     if (menus.screen !== 'play') show();
   }
@@ -549,37 +1163,61 @@ export function createGame(root: HTMLElement): Game {
         if (pad.mapping && pad.mapping !== 'standard' && !maps[pad.id]) {
           menus.notice = `Non-standard pad “${pad.id}” — open Settings to remap.`;
         }
-        const existing = menus.seats.find((s) => s.padId === pad.id);
-        if (existing && menus.screen === 'disconnect') {
-          paused = false;
-          menus.screen = 'play';
-          show();
+        const key = padKey(pad);
+        if (menus.screen === 'disconnect') {
+          // The browser usually hands a returning pad its old index; if not, the fighter whose pad
+          // vanished takes the newcomer.
+          const connected = new Set(pollGamepads().filter(Boolean).map((p) => padKey(p!)));
+          const orphan = slotDevices.findIndex((d) => isPadKey(d) && !connected.has(d));
+          if (!slotDevices.includes(key) && orphan >= 0) {
+            const old = slotDevices[orphan]!;
+            slotDevices[orphan] = key;
+            const seat = menus.seats.find((s) => s.padId === old);
+            if (seat) seat.padId = key;
+          }
+          if (slotDevices.includes(key) || slotDevices.every((d) => !isPadKey(d) || connected.has(d))) setPaused(false);
           return;
         }
         if (menus.screen === 'join') {
-          takeSeat(menus.seats, pad.id);
+          takeSeat(menus.seats, key, padLabel(pad));
           show();
         }
       });
-      window.addEventListener('gamepaddisconnected', () => {
-        if (menus.screen === 'play') {
+      window.addEventListener('gamepaddisconnected', (ev) => {
+        const pad = (ev as GamepadEvent).gamepad;
+        if (pad) padEdges[pad.index]?.reset();
+        // Only a pad that is actually steering a fighter interrupts the match.
+        const inMatch = !pad || slotDevices.includes(padKey(pad)) || (!slotDevices.length && pad.index < humanCount);
+        if (sim && inMatch && (menus.screen === 'play' || menus.screen === 'pause')) {
           paused = true;
           menus.screen = 'disconnect';
           show();
         }
       });
+      const isTextField = (el: Element | null) =>
+        el instanceof HTMLTextAreaElement || (el instanceof HTMLInputElement && !['checkbox', 'range', 'number', 'button'].includes(el.type));
       window.addEventListener('keydown', (e) => {
+        if (e.code === 'Enter' && matchIsOver()) {
+          rematch();
+          return;
+        }
         if (menus.screen === 'join') {
+          lastMenuDevice = 'keyboard';
           if (e.code === 'ArrowLeft' || e.code === 'ArrowRight') {
-            const seat = [...menus.seats].reverse().find((s) => s.taken) ?? menus.seats[0];
+            const seat = menus.seats.find((s) => s.taken && s.padId === 'keyboard') ?? [...menus.seats].reverse().find((s) => s.taken);
             if (seat?.taken) {
-              cycleSeatColor(seat, e.code === 'ArrowRight' ? 1 : -1);
+              cycleSeatColor(seat, e.code === 'ArrowRight' ? 1 : -1, menus.seats);
               show();
             }
             return;
           }
+          if (e.code === 'ArrowUp' || e.code === 'ArrowDown') {
+            menus.bots = Math.max(0, Math.min(maxBots(menus.seats), menus.bots + (e.code === 'ArrowUp' ? 1 : -1)));
+            show();
+            return;
+          }
           if (e.code === 'Space' || e.code === 'KeyA') {
-            takeOrReadySeat(menus.seats, 'keyboard');
+            takeOrReadySeat(menus.seats, 'keyboard', 'Keyboard');
             show();
             return;
           }
@@ -587,22 +1225,46 @@ export function createGame(root: HTMLElement): Game {
             startIfReady();
             return;
           }
+          if (e.code === 'Escape') {
+            backOut();
+            return;
+          }
+          return;
         }
+        if (NAV_SCREENS.has(menus.screen)) {
+          lastMenuDevice = 'keyboard';
+          const active = document.activeElement;
+          // Arrow keys walk the menu unless a field that uses them natively (text, select) has focus.
+          const dir: NavDir | null =
+            e.code === 'ArrowUp' ? 'up' : e.code === 'ArrowDown' ? 'down' : e.code === 'ArrowLeft' ? 'left' : e.code === 'ArrowRight' ? 'right' : null;
+          if (dir && !isTextField(active) && !(active instanceof HTMLSelectElement)) {
+            e.preventDefault();
+            navigateMenu(dir, false, false);
+            return;
+          }
+          // Enter with nothing focused takes the screen's primary action (a focused button already clicks itself).
+          if (e.code === 'Enter' && !focusedIn(menusEl)) navigateMenu(null, true, false);
+          if (e.code === 'Escape' && menus.screen !== 'menu') backOut();
+        }
+      });
+      // Mouse users steer the cursor themselves: drop the pad ring the moment they take over.
+      menusEl.addEventListener('pointerdown', () => {
+        lastMenuDevice = 'keyboard';
+        for (const el of menusEl.querySelectorAll('.pad-focus')) el.classList.remove('pad-focus');
       });
       renderer = createCanvasRenderer(canvas);
       menus.notice = 'Canvas fallback';
       if (menus.screen !== 'play') show();
       bindDebug();
-      if ('serviceWorker' in navigator) void navigator.serviceWorker.register('/sw.js');
+      if ('serviceWorker' in navigator) {
+        if (import.meta.env.PROD) void navigator.serviceWorker.register('/sw.js');
+        else void navigator.serviceWorker.getRegistrations().then((rs) => rs.forEach((r) => void r.unregister()));
+      }
       raf = requestAnimationFrame(tick);
       if (settings.renderer !== 'canvas') {
-        void tryCreateGpuRenderer(canvas, { lighting: settings.lighting })
-          .then((gpu) => {
-            if (!gpu) return;
-            renderer = gpu;
-            rendererKind = 'gpu';
-            menus.notice = 'SDF renderer';
-            if (menus.screen !== 'play') show();
+        void tryAdoptGpu()
+          .then((ok) => {
+            if (ok && menus.screen !== 'play') show();
           })
           .catch(() => undefined);
       }
@@ -611,6 +1273,7 @@ export function createGame(root: HTMLElement): Game {
     },
     stop() {
       cancelAnimationFrame(raf);
+      stopDemo();
     },
   };
 }

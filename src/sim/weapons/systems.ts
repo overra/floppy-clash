@@ -6,7 +6,12 @@ import { createBoxBody, registerBody, assignNetId } from '../physics/bodies';
 import { Aim, Combat, Controller, Dead, Held, HeldBy, Loose, OwnedBy, Player, Projectile, ProjectileKind, Transform, Weapon } from '../traits';
 import type { WeaponDef } from './schema';
 import { weaponByIndex, weaponIndex } from './defs';
-import { takeDamage } from '../player/health';
+import { SWING_TICKS } from './projectiles';
+import { raycastClosest } from '../physics/queries';
+import { combatAllowed } from '../rules/rounds';
+
+/** Blink dagger: hop this far along the aim, stopping short of the first wall in the way. */
+const BLINK_DISTANCE = 4;
 
 const holders = createQuery(Player, Aim, Combat, Transform);
 const looseWeapons = createQuery(Weapon, Loose, Transform);
@@ -58,7 +63,7 @@ function spawnBullet(
       damage: def.projectile.damage,
       speed,
       bounces: def.projectile.bounce,
-      fuse: def.projectile.kind === 'rocket' && def.projectile.fuse === 0 ? 180 : def.projectile.fuse,
+      fuse: def.projectile.kind === 'melee' ? SWING_TICKS : def.projectile.kind === 'rocket' && def.projectile.fuse === 0 ? 180 : def.projectile.fuse,
       x,
       y,
       vx,
@@ -77,14 +82,17 @@ function spawnBullet(
     def.projectile.kind === 'creature' ||
     def.projectile.kind === 'burst-into';
   if (needsBody) {
+    // `projectile.radius` is the blast / field reach, not the shell: the body is a fist-sized
+    // object that rides through gaps and bounces like a grenade should.
+    const half = def.projectile.kind === 'field' ? 0.2 : def.projectile.burstInto === 'spike' ? 0.22 : 0.14;
     const body = createBoxBody(
       ctx.physics,
       proj,
       'projectile',
       x,
       y,
-      Math.max(0.12, def.projectile.radius * 0.35),
-      Math.max(0.12, def.projectile.radius * 0.35),
+      half,
+      half,
       'dynamic',
       { density: 0.4, friction: 0.2, restitution: def.projectile.bounce > 0 ? 0.55 : 0.05, bullet: true, fixedRotation: false },
     );
@@ -129,6 +137,7 @@ function heldWeapon(world: World, player: Entity): Entity | undefined {
 
 export function weapons(world: World): void {
   const ctx = getContext(world);
+  const live = combatAllowed(world);
 
   world.query(looseWeapons).updateEach(([weapon]) => {
     if (weapon.pickupCooldown > 0) weapon.pickupCooldown -= 1;
@@ -194,7 +203,7 @@ export function weapons(world: World): void {
       return;
     }
 
-    if (combat.blocking) return;
+    if (combat.blocking || combat.stun > 0 || !live) return;
     const fireEdge = rising(prev?.attack ?? false, input.attack);
     const fireHeld = input.attack;
     const canFire =
@@ -217,6 +226,20 @@ export function weapons(world: World): void {
     }
 
     ctx.fireCd.set(entity, def.fireIntervalTicks);
+    if (def.id === 'blink-dagger') {
+      // Teleport first so the swing that follows lands where the fighter reappears: stop short of walls,
+      // and short of the first enemy on the line so the blade arrives in range.
+      const wall = raycastClosest(world, transform.x, transform.y, transform.x + aim.x * BLINK_DISTANCE, transform.y + aim.y * BLINK_DISTANCE, (h) => h.entity === entity || (h.kind !== 'solid' && h.kind !== 'prop' && h.kind !== 'player'));
+      const dist = wall ? Math.max(0, wall.fraction * BLINK_DISTANCE - (wall.kind === 'player' ? 0.7 : 0.4)) : BLINK_DISTANCE;
+      const px = transform.x + aim.x * dist;
+      const py = transform.y + aim.y * dist;
+      body.setPosition(new Vec2(px, py));
+      body.setLinearVelocity(new Vec2(aim.x * 3, Math.max(0, aim.y * 3)));
+      entity.set(Transform, { x: px, y: py, angle: transform.angle });
+      transform.x = px;
+      transform.y = py;
+      emit(world, { type: 'explosion', x: px, y: py, radius: 0.6, damage: 0 });
+    }
     const shots = def.projectile.kind === 'pellets' ? def.projectile.count : def.fireMode === 'burst' ? (def.burstCount ?? 3) : 1;
     const muzzleX = transform.x + aim.x * (0.45 + def.shape.length * 0.5);
     const muzzleY = transform.y + aim.y * (0.45 + def.shape.length * 0.5);
@@ -231,10 +254,6 @@ export function weapons(world: World): void {
       new Vec2(vel.x - aim.x * def.recoil.back + aim.x * def.recoil.forward, vel.y + def.recoil.up - aim.y * def.recoil.back),
     );
     emit(world, { type: 'shot', source: entity, weaponId: def.id, x: muzzleX, y: muzzleY, aimX: aim.x, aimY: aim.y });
-    if (def.id === 'blink-dagger') {
-      body.setPosition(new Vec2(transform.x + aim.x * 4, transform.y + aim.y * 4));
-    }
-    void takeDamage;
     void Controller;
   });
 }

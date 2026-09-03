@@ -1,7 +1,8 @@
+import type { Entity } from 'koota';
 import { describe, expect, it } from 'vitest';
 import { getLevel } from '../src/levels/catalog';
 import { APPENDIX_D_TYPE_IDS, HAZARDS_BY_TYPE, HAZARD_MODULES } from '../src/sim/hazards';
-import { Dead, Health, Transform } from '../src/sim/traits';
+import { Dead, Destructible, Hazard, HazardKind, Health, Transform } from '../src/sim/traits';
 import { hold, makeSim, playerOf } from './helpers';
 
 describe('M4 hazards', () => {
@@ -72,6 +73,36 @@ describe('M4 hazards', () => {
         for (let i = 0; i < 60; i++) sim.step();
       }).not.toThrow();
     }
+  });
+
+  it('a broken barrel detonates, hurting a bystander and setting off the barrel beside it', () => {
+    const base = getLevel('test-barrel.explosive');
+    const level = {
+      ...base,
+      id: 'test-barrel-pair',
+      objects: [...base.objects, { type: 'barrel.explosive' as const, x: 14.4, y: 3, w: 0.8, h: 1.1, hp: 18 }],
+    };
+    const sim = makeSim({ level, seed: 32, settings: { playerCount: 1 } });
+    const p = playerOf(sim);
+    p.set(Transform, { x: 11.8, y: 2.9, angle: 0 });
+    sim.ctx.bodies.get(p)?.setPosition({ x: 11.8, y: 2.9 });
+    const barrels = [...sim.ecs.query(Hazard, Destructible)].filter((e) => e.get(Hazard)?.kind === HazardKind.Barrel);
+    expect(barrels).toHaveLength(2);
+    const [first, second] = barrels.sort((a, b) => (a.get(Transform)?.x ?? 0) - (b.get(Transform)?.x ?? 0)) as [Entity, Entity];
+    const hpBefore = p.get(Health)?.hp ?? 100;
+    first.set(Destructible, { hp: 0, maxHp: 18 });
+
+    const events = sim.step([hold({}), hold({}), hold({}), hold({})]);
+    expect(events.some((e) => e.type === 'explosion')).toBe(true);
+    expect(p.get(Health)?.hp ?? 100).toBeLessThan(hpBefore);
+    expect(sim.ecs.has(first)).toBe(false);
+    expect((second.get(Destructible)?.hp ?? 18) < 18 || !sim.ecs.has(second)).toBe(true);
+
+    // The chain: the neighbour goes off in turn, and nothing detonates twice.
+    let blasts = 0;
+    for (let i = 0; i < 10; i++) for (const ev of sim.step([hold({}), hold({}), hold({}), hold({})])) if (ev.type === 'explosion') blasts += 1;
+    expect(sim.ecs.has(second)).toBe(false);
+    expect(blasts).toBeLessThanOrEqual(1);
   });
 
   it('registers one module file per Appendix D type id', () => {

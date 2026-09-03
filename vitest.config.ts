@@ -11,5 +11,7 @@ export default defineConfig({
     include: ['test/**/*.test.ts'],
     environment: 'node',
     globals: false,
+    // Whole-roster sweeps and 4-bot arena soaks step thousands of physics ticks; give them headroom on a busy box.
+    testTimeout: 30_000,
   },
 });

@@ -48,7 +48,8 @@
       #menus > * {
         pointer-events: auto;
       }
-      .notice {
+      .notice,
+      .hud-tip {
         position: absolute;
         left: 12px;
         bottom: 12px;
@@ -60,6 +61,689 @@
       }
       .hidden {
         display: none !important;
+      }
+
+      /* ---- menus (drawn over the attract-mode brawl) ---- */
+      .menu-wrap {
+        position: absolute;
+        inset: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        pointer-events: auto;
+        /* Dark enough in the middle that copy stays legible over the bright snow/beach arenas in the attract demo. */
+        background: radial-gradient(120% 90% at 50% 45%, rgba(8, 10, 14, 0.42) 0%, rgba(8, 10, 14, 0.68) 55%, rgba(8, 10, 14, 0.9) 100%);
+        animation: menu-fade 0.35s ease-out;
+      }
+      .menu-card {
+        width: min(760px, 94vw);
+        max-height: 92vh;
+        overflow: auto;
+        background: rgba(20, 23, 31, 0.86);
+        border-radius: 22px;
+        padding: 30px 34px 28px;
+        box-shadow: 0 30px 80px rgba(0, 0, 0, 0.55), inset 0 0 0 1px rgba(255, 255, 255, 0.07);
+        backdrop-filter: blur(14px);
+        animation: menu-rise 0.4s cubic-bezier(0.2, 1.3, 0.4, 1);
+      }
+      .menu-card.compact {
+        width: min(420px, 92vw);
+        text-align: center;
+      }
+      .menu-card.title {
+        width: min(980px, 96vw);
+        background: transparent;
+        box-shadow: none;
+        backdrop-filter: none;
+        text-align: center;
+        overflow: visible;
+      }
+      .menu-card h2 {
+        margin: 0 0 6px;
+        font-size: 32px;
+        font-weight: 900;
+        letter-spacing: -0.01em;
+      }
+      .menu-card h3 {
+        margin: 22px 0 8px;
+        font-size: 12px;
+        font-weight: 800;
+        letter-spacing: 0.16em;
+        text-transform: uppercase;
+        color: var(--muted);
+      }
+      .menu-card p {
+        margin: 0 0 8px;
+        color: #c9d0dc;
+        line-height: 1.45;
+      }
+      .menu-card .dim,
+      .menu-card p.dim {
+        color: var(--muted);
+        font-size: 13px;
+      }
+      .wordmark {
+        margin: 0;
+        font-size: clamp(64px, 10vw, 128px);
+        font-weight: 900;
+        line-height: 0.9;
+        letter-spacing: -0.035em;
+        color: #fff;
+        -webkit-text-stroke: 3px #0e1016;
+        paint-order: stroke fill;
+        text-shadow: 0 10px 0 rgba(0, 0, 0, 0.55), 0 0 70px rgba(242, 193, 78, 0.28);
+        transform: rotate(-2deg);
+      }
+      .wordmark em {
+        font-style: normal;
+        color: var(--accent);
+      }
+      .wordmark-bar {
+        display: flex;
+        justify-content: center;
+        gap: 8px;
+        margin: 22px auto 14px;
+      }
+      .wordmark-bar i {
+        width: 46px;
+        height: 9px;
+        border-radius: 5px;
+        background: var(--c);
+        box-shadow: 0 3px 0 rgba(0, 0, 0, 0.45), 0 0 14px color-mix(in srgb, var(--c) 60%, transparent);
+      }
+      .tagline {
+        font-size: 17px;
+        text-shadow: 0 1px 3px #000;
+        margin-bottom: 26px !important;
+      }
+      .menu-actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 12px;
+        justify-content: center;
+        margin-top: 18px;
+      }
+      .menu-card:not(.title):not(.compact) .menu-actions {
+        justify-content: flex-start;
+      }
+      .menu-btn {
+        padding: 14px 26px;
+        border: 0;
+        border-radius: 14px;
+        font: inherit;
+        font-size: 16px;
+        font-weight: 800;
+        cursor: pointer;
+        color: var(--ink);
+        background: rgba(255, 255, 255, 0.08);
+        box-shadow: inset 0 0 0 1.5px rgba(255, 255, 255, 0.16), 0 4px 0 rgba(0, 0, 0, 0.35);
+        transition: transform 0.12s ease, background 0.12s ease, box-shadow 0.12s ease;
+      }
+      .menu-btn:hover {
+        transform: translateY(-2px);
+        background: rgba(255, 255, 255, 0.15);
+      }
+      .menu-btn:active {
+        transform: translateY(2px);
+        box-shadow: inset 0 0 0 1.5px rgba(255, 255, 255, 0.16), 0 1px 0 rgba(0, 0, 0, 0.35);
+      }
+      .menu-btn.primary {
+        background: var(--accent);
+        color: #17130a;
+        box-shadow: 0 5px 0 #a5822a, 0 14px 28px rgba(242, 193, 78, 0.22);
+      }
+      .menu-btn.primary:hover {
+        background: #ffd35f;
+      }
+      .menu-btn.primary:active {
+        box-shadow: 0 1px 0 #a5822a;
+      }
+      .menu-stats {
+        margin: 28px 0 0 !important;
+        font-size: 13px;
+        letter-spacing: 0.05em;
+        color: var(--muted) !important;
+        text-shadow: 0 1px 2px #000;
+      }
+      .menu-keys {
+        margin: 10px 0 0 !important;
+        font-size: 12px;
+        color: var(--muted) !important;
+        text-shadow: 0 1px 2px #000;
+      }
+      /* Gamepad / arrow-key cursor: the same ring keyboard users get, but driven by us. */
+      .menu-card .pad-focus,
+      .menu-card :focus-visible {
+        outline: 3px solid var(--accent);
+        outline-offset: 3px;
+      }
+      .menu-card label:has(> input.pad-focus) {
+        outline: 3px solid var(--accent);
+        outline-offset: 2px;
+      }
+      .menu-card label:has(> input.pad-focus) > input {
+        outline: 0;
+      }
+      .menu-card kbd {
+        display: inline-block;
+        min-width: 14px;
+        padding: 1px 5px;
+        margin: 0 1px;
+        border-radius: 5px;
+        font: 700 11px/1.5 inherit;
+        color: var(--ink);
+        background: rgba(255, 255, 255, 0.1);
+        box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.18), 0 2px 0 rgba(0, 0, 0, 0.4);
+      }
+
+      .seats {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 12px;
+        margin: 20px 0 6px;
+      }
+      .seat {
+        --c: #5a6170;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 9px;
+        min-height: 150px;
+        padding: 24px 10px 16px;
+        border-radius: 18px;
+        text-align: center;
+        background: rgba(255, 255, 255, 0.035);
+        box-shadow: inset 0 0 0 1.5px rgba(255, 255, 255, 0.08);
+        transition: transform 0.2s ease, background 0.2s ease, box-shadow 0.2s ease;
+      }
+      .seat[data-taken="1"],
+      .seat[data-bot="1"] {
+        background: color-mix(in srgb, var(--c) 16%, rgba(255, 255, 255, 0.03));
+        box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--c) 60%, transparent);
+      }
+      .seat[data-bot="1"] {
+        opacity: 0.75;
+      }
+      .seat[data-ready="1"] {
+        transform: translateY(-5px);
+        box-shadow: inset 0 0 0 2.5px var(--c), 0 14px 34px color-mix(in srgb, var(--c) 35%, transparent);
+      }
+      .seat .hud-face {
+        width: 44px;
+        height: 44px;
+        box-shadow: 0 0 0 3px rgba(0, 0, 0, 0.35);
+      }
+      .seat:not([data-taken="1"]):not([data-bot="1"]) .hud-face {
+        background: #2c313d;
+      }
+      .seat .hud-face::before,
+      .seat .hud-face::after {
+        top: 16px;
+        width: 7px;
+        height: 10px;
+      }
+      .seat .hud-face::before {
+        left: 12px;
+      }
+      .seat .hud-face::after {
+        right: 12px;
+      }
+      .seat[data-bot="1"] .hud-face::before,
+      .seat[data-bot="1"] .hud-face::after {
+        height: 4px;
+        top: 19px;
+        border-radius: 2px;
+      }
+      .seat-name {
+        font-weight: 800;
+        font-size: 15px;
+      }
+      .seat-status {
+        font-size: 12px;
+        color: var(--muted);
+        min-height: 1.4em;
+      }
+      .seat[data-ready="1"] .seat-status,
+      .seat[data-bot="1"] .seat-status {
+        color: var(--c);
+        font-weight: 800;
+        letter-spacing: 0.14em;
+      }
+      .seat-pad {
+        font-size: 10px;
+        color: var(--muted);
+        opacity: 0.7;
+        max-width: 100%;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .form-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 8px;
+      }
+      .form-grid .row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        padding: 9px 12px;
+        border-radius: 10px;
+        background: rgba(255, 255, 255, 0.045);
+        font-size: 14px;
+      }
+      .form-grid .row.wide {
+        grid-column: 1 / -1;
+      }
+      .form-grid .row span small {
+        color: var(--muted);
+        font-size: 11px;
+      }
+      .menu-card input[type="number"],
+      .menu-card input[type="text"],
+      .menu-card input:not([type]),
+      .menu-card select {
+        font: inherit;
+        font-size: 14px;
+        color: var(--ink);
+        background: rgba(0, 0, 0, 0.35);
+        border: 1px solid rgba(255, 255, 255, 0.12);
+        border-radius: 8px;
+        padding: 6px 8px;
+        min-width: 0;
+      }
+      .menu-card input[type="number"] {
+        width: 74px;
+      }
+      .menu-card input[type="range"] {
+        accent-color: var(--accent);
+        width: 150px;
+      }
+      .menu-card input[type="checkbox"] {
+        width: 18px;
+        height: 18px;
+        accent-color: var(--accent);
+      }
+      .chips {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+        max-height: 150px;
+        overflow: auto;
+        padding: 8px;
+        border-radius: 12px;
+        background: rgba(0, 0, 0, 0.3);
+      }
+      .chip {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 5px 10px 5px 6px;
+        border-radius: 999px;
+        font-size: 12.5px;
+        background: rgba(255, 255, 255, 0.06);
+        cursor: pointer;
+      }
+      .chip:has(input:checked) {
+        background: rgba(242, 193, 78, 0.16);
+        box-shadow: inset 0 0 0 1px rgba(242, 193, 78, 0.45);
+      }
+      .chip .dim {
+        font-size: 11px;
+      }
+      .chip input[type="checkbox"] {
+        width: 14px;
+        height: 14px;
+      }
+      .chat-log {
+        max-height: 160px;
+        min-height: 60px;
+        overflow: auto;
+        margin-top: 8px;
+        padding: 10px 12px;
+        border-radius: 12px;
+        background: rgba(0, 0, 0, 0.3);
+        white-space: pre-wrap;
+        font-size: 13px;
+      }
+      .chat-row {
+        display: flex;
+        gap: 8px;
+        margin-top: 8px;
+      }
+      .chat-row input {
+        flex: 1;
+      }
+      .chat-row .menu-btn {
+        padding: 8px 16px;
+        font-size: 14px;
+      }
+      @keyframes menu-fade {
+        from {
+          opacity: 0;
+        }
+        to {
+          opacity: 1;
+        }
+      }
+      @keyframes menu-rise {
+        from {
+          transform: translateY(18px) scale(0.98);
+          opacity: 0;
+        }
+        to {
+          transform: none;
+          opacity: 1;
+        }
+      }
+
+      /* ---- in-game HUD ---- */
+      #hud {
+        font-family: "Avenir Next", "Segoe UI", sans-serif;
+        user-select: none;
+      }
+      .hud-players {
+        position: absolute;
+        top: 14px;
+        left: 50%;
+        transform: translateX(-50%);
+        display: flex;
+        gap: 18px;
+        align-items: flex-start;
+      }
+      .hud-p {
+        --c: #fff;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 5px;
+        min-width: 64px;
+        padding: 6px 10px 7px;
+        border-radius: 12px;
+        background: rgba(8, 10, 14, 0.55);
+        box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--c) 55%, transparent);
+        transition: opacity 0.25s ease, transform 0.25s ease;
+      }
+      .hud-p[data-alive="0"] {
+        opacity: 0.45;
+        transform: scale(0.94);
+      }
+      .hud-p[data-alive="0"] .hud-face {
+        background: #3a3f4c;
+      }
+      .hud-face {
+        position: relative;
+        width: 22px;
+        height: 22px;
+        border-radius: 50%;
+        background: var(--c);
+        box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.35);
+      }
+      .hud-face::before,
+      .hud-face::after {
+        content: "";
+        position: absolute;
+        top: 8px;
+        width: 4px;
+        height: 5px;
+        border-radius: 45%;
+        background: #12141a;
+      }
+      .hud-face::before {
+        left: 6px;
+      }
+      .hud-face::after {
+        right: 6px;
+      }
+      .hud-p[data-alive="0"] .hud-face::before,
+      .hud-p[data-alive="0"] .hud-face::after {
+        height: 2px;
+        top: 10px;
+      }
+      .hud-crown {
+        position: absolute;
+        top: -11px;
+        left: 50%;
+        transform: translateX(-50%);
+        width: 0;
+        height: 0;
+        border-left: 9px solid transparent;
+        border-right: 9px solid transparent;
+        border-bottom: 9px solid #ffd447;
+        filter: drop-shadow(0 1px 1px rgba(0, 0, 0, 0.6));
+      }
+      .hud-crown::after {
+        content: "";
+        position: absolute;
+        left: -9px;
+        top: 9px;
+        width: 18px;
+        height: 4px;
+        background: #ffd447;
+      }
+      .hud-tally {
+        display: flex;
+        gap: 4px;
+        height: 8px;
+      }
+      .hud-tally i {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: rgba(255, 255, 255, 0.16);
+        box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.18);
+      }
+      .hud-tally i.on {
+        background: var(--c);
+        box-shadow: 0 0 6px color-mix(in srgb, var(--c) 70%, transparent);
+      }
+      .hud-tally i.pop {
+        animation: hud-pop 0.45s cubic-bezier(0.2, 1.6, 0.4, 1);
+      }
+      .hud-hp {
+        width: 46px;
+        height: 3px;
+        border-radius: 2px;
+        background: rgba(255, 255, 255, 0.12);
+        overflow: hidden;
+      }
+      .hud-hp > i {
+        display: block;
+        height: 100%;
+        background: var(--c);
+        transition: width 0.12s linear;
+      }
+      .hud-name {
+        font-size: 11px;
+        font-weight: 700;
+        letter-spacing: 0.06em;
+        color: var(--muted);
+      }
+
+      .hud-count {
+        position: absolute;
+        inset: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        pointer-events: none;
+      }
+      .hud-count > span {
+        font-size: 160px;
+        font-weight: 900;
+        line-height: 1;
+        color: #fff;
+        -webkit-text-stroke: 4px #0e1016;
+        paint-order: stroke fill;
+        text-shadow: 0 6px 0 rgba(0, 0, 0, 0.45), 0 0 40px rgba(255, 255, 255, 0.25);
+        animation: hud-count 1s cubic-bezier(0.1, 1.4, 0.3, 1) forwards;
+      }
+      .hud-count > span.go {
+        font-size: 120px;
+        color: var(--accent);
+        animation: hud-go 0.7s ease-out forwards;
+      }
+
+      .hud-banner {
+        /* Sits low so the last-kill zoom (which centres the winner) is never covered by the card. */
+        position: absolute;
+        bottom: 12%;
+        left: 50%;
+        transform: translateX(-50%);
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 10px;
+        padding: 18px 34px 16px;
+        min-width: 320px;
+        border-radius: 16px;
+        background: rgba(8, 10, 14, 0.78);
+        box-shadow: 0 12px 40px rgba(0, 0, 0, 0.45), inset 0 0 0 1.5px color-mix(in srgb, var(--c, #fff) 45%, transparent);
+        backdrop-filter: blur(6px);
+        animation: hud-slide 0.4s cubic-bezier(0.2, 1.4, 0.4, 1);
+        text-align: center;
+      }
+      .hud-banner h2 {
+        margin: 0;
+        font-size: 34px;
+        font-weight: 900;
+        letter-spacing: 0.02em;
+        color: var(--c, #fff);
+        text-shadow: 0 2px 0 rgba(0, 0, 0, 0.5);
+      }
+      .hud-banner h2 small {
+        display: block;
+        font-size: 13px;
+        font-weight: 700;
+        letter-spacing: 0.18em;
+        text-transform: uppercase;
+        color: var(--muted);
+        margin-bottom: 4px;
+      }
+      .hud-banner .hud-score {
+        display: flex;
+        gap: 22px;
+      }
+      .hud-banner .hud-score > div {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 6px;
+        font-weight: 800;
+        font-size: 20px;
+        color: var(--c);
+      }
+      .hud-banner .hud-score .hud-face {
+        width: 18px;
+        height: 18px;
+      }
+      .hud-banner .hud-score .hud-face::before,
+      .hud-banner .hud-score .hud-face::after {
+        top: 6px;
+        width: 3px;
+        height: 4px;
+      }
+      .hud-banner .hud-score .hud-face::before {
+        left: 5px;
+      }
+      .hud-banner .hud-score .hud-face::after {
+        right: 5px;
+      }
+      .hud-banner p {
+        margin: 0;
+        color: var(--muted);
+        font-size: 13px;
+      }
+
+      .hud-level {
+        position: absolute;
+        right: 16px;
+        bottom: 14px;
+        font-size: 13px;
+        font-weight: 700;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+        color: var(--muted);
+        text-shadow: 0 1px 3px #000;
+        opacity: 0;
+        transition: opacity 0.6s ease;
+      }
+      .hud-level.show {
+        opacity: 1;
+      }
+
+      .hud-bars::before,
+      .hud-bars::after {
+        content: "";
+        position: absolute;
+        left: 0;
+        right: 0;
+        height: 0;
+        background: #05060a;
+        transition: height 0.35s cubic-bezier(0.2, 0.8, 0.2, 1);
+      }
+      .hud-bars::before {
+        top: 0;
+      }
+      .hud-bars::after {
+        bottom: 0;
+      }
+      .hud-bars.on::before,
+      .hud-bars.on::after {
+        height: 7vh;
+      }
+
+      @keyframes hud-count {
+        0% {
+          transform: scale(1.8);
+          opacity: 0;
+        }
+        25% {
+          transform: scale(1);
+          opacity: 1;
+        }
+        75% {
+          transform: scale(0.96);
+          opacity: 1;
+        }
+        100% {
+          transform: scale(0.9);
+          opacity: 0;
+        }
+      }
+      @keyframes hud-go {
+        0% {
+          transform: scale(0.6);
+          opacity: 0;
+        }
+        30% {
+          transform: scale(1.15);
+          opacity: 1;
+        }
+        100% {
+          transform: scale(1.6);
+          opacity: 0;
+        }
+      }
+      @keyframes hud-pop {
+        0% {
+          transform: scale(0.4);
+        }
+        100% {
+          transform: scale(1);
+        }
+      }
+      @keyframes hud-slide {
+        0% {
+          transform: translate(-50%, 30px);
+          opacity: 0;
+        }
+        100% {
+          transform: translate(-50%, 0);
+          opacity: 1;
+        }
       }
     </style>
   </head>

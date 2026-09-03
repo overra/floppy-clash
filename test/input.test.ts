@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { radialDeadzone } from '../src/input/gamepad';
 import { rising } from '../src/sim/input';
-import { Aim, Controller } from '../src/sim/traits';
-import { canStartMatch, createMenuState, takeOrReadySeat, takeSeat } from '../src/ui/menus';
+import { Aim, Controller, Player } from '../src/sim/traits';
+import { assignColors, canStartMatch, clearSeats, createMenuState, cycleSeatColor, maxBots, takeOrReadySeat, takeSeat } from '../src/ui/menus';
 import { hold, makeSim, playerOf } from './helpers';
 
 describe('input', () => {
@@ -47,5 +47,28 @@ describe('join seats (PLAN 4.12)', () => {
     takeOrReadySeat(menus.seats, 'keyboard');
     expect(menus.seats[1]?.taken).toBe(true);
     expect(menus.seats[1]?.ready).toBe(false);
+  });
+
+  it('seats never share a color: picks skip taken palette entries and bots get the leftovers', () => {
+    const menus = createMenuState();
+    takeOrReadySeat(menus.seats, 'pad:0', 'Xbox');
+    takeOrReadySeat(menus.seats, 'keyboard');
+    expect(menus.seats[0]?.color).toBe(0);
+    expect(menus.seats[1]?.color).toBe(1);
+    // Cycling P1 right skips blue (P2's) and lands on red.
+    cycleSeatColor(menus.seats[0]!, 1, menus.seats);
+    expect(menus.seats[0]?.color).toBe(2);
+    // Two humans + two bots: humans keep their picks, bots take the two unused colors.
+    expect(assignColors(menus.seats, 4)).toEqual([2, 1, 0, 3]);
+    expect(maxBots(menus.seats)).toBe(2);
+    clearSeats(menus.seats);
+    expect(menus.seats.every((s) => !s.taken && !s.ready && s.padId === '')).toBe(true);
+    expect(maxBots(menus.seats)).toBe(4);
+  });
+
+  it('the sim paints fighters with the colors the join screen chose', () => {
+    const sim = makeSim({ seed: 4, settings: { playerCount: 2, bots: 1, colors: [2, 0, 1] } });
+    const colors = sim.players().map((p) => p.get(Player)?.color);
+    expect(colors).toEqual([2, 0, 1]);
   });
 });

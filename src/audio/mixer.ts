@@ -38,6 +38,9 @@ export function createMixer(): Mixer {
           playSfx(ctx, sfxGain, (sound as SfxId | undefined) ?? 'shot.small');
         }
         if (ev.type === 'hit') playSfx(ctx, sfxGain, 'hit');
+        if (ev.type === 'punch') playSfx(ctx, sfxGain, 'punch');
+        if (ev.type === 'block') playSfx(ctx, sfxGain, ev.reflected ? 'block.perfect' : 'block');
+        if (ev.type === 'clash') playSfx(ctx, sfxGain, 'clash');
         if (ev.type === 'explosion') playSfx(ctx, sfxGain, 'explosion');
         if (ev.type === 'pickup') playSfx(ctx, sfxGain, 'pickup');
         if (ev.type === 'kill') playSfx(ctx, sfxGain, 'death');

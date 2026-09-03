@@ -31,8 +31,9 @@ export type ReplayPlayer = (replay: Replay) => SimHandle;
 /** Replay a recorded seed + input tape and return the resulting world hash. */
 export function playReplay(replay: Replay, create: ReplayPlayer): { hash: string; ticks: number } {
   const sim = create(replay);
+  const start = sim.getTick();
   for (const tickInputs of replay.inputs) {
     sim.step(tickInputs);
   }
-  return { hash: sim.hash(), ticks: sim.getTick() };
+  return { hash: sim.hash(), ticks: sim.getTick() - start };
 }

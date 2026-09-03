@@ -44,13 +44,27 @@ export function createMenuState(): MenuState {
 }
 
 const COLORS = ['Yellow', 'Blue', 'Red', 'Green'];
+export const MAX_SEATS = 4;
 
-export function cycleSeatColor(seat: Seat, dir: number): void {
-  seat.color = (seat.color + dir + 4) % 4;
+/** Step to the next palette entry nobody else at the table has claimed. */
+export function cycleSeatColor(seat: Seat, dir: number, seats: Seat[] = []): void {
+  const used = new Set(seats.filter((s) => s !== seat && s.taken).map((s) => s.color));
+  let next = seat.color;
+  for (let i = 0; i < 4; i++) {
+    next = (next + dir + 4) % 4;
+    if (!used.has(next)) break;
+  }
+  seat.color = next;
+}
+
+function freeColor(seats: Seat[]): number {
+  const used = new Set(seats.filter((s) => s.taken).map((s) => s.color));
+  for (let c = 0; c < 4; c++) if (!used.has(c)) return c;
+  return 0;
 }
 
 /** First press takes the next free seat; the same pad/keyboard pressing again readies (PLAN 4.12). */
-export function takeOrReadySeat(seats: Seat[], padId: string): Seat | undefined {
+export function takeOrReadySeat(seats: Seat[], padId: string, name = ''): Seat | undefined {
   const existing = seats.find((s) => s.taken && s.padId === padId);
   if (existing) {
     existing.ready = true;
@@ -58,32 +72,69 @@ export function takeOrReadySeat(seats: Seat[], padId: string): Seat | undefined 
   }
   const empty = seats.find((s) => !s.taken);
   if (!empty) return undefined;
+  empty.color = freeColor(seats);
   empty.taken = true;
   empty.padId = padId;
   empty.ready = false;
-  empty.color = seats.indexOf(empty);
-  empty.name = padId === 'keyboard' ? 'You' : '';
+  empty.name = name || (padId === 'keyboard' ? 'Keyboard' : '');
   return empty;
 }
 
 /** Connection / first sighting of a pad: occupy a seat, do not ready yet. */
-export function takeSeat(seats: Seat[], padId: string): Seat | undefined {
+export function takeSeat(seats: Seat[], padId: string, name = ''): Seat | undefined {
   const existing = seats.find((s) => s.padId === padId);
   if (existing) {
     existing.taken = true;
+    if (name) existing.name = name;
     return existing;
   }
   const empty = seats.find((s) => !s.taken);
   if (!empty) return undefined;
+  empty.color = freeColor(seats);
   empty.taken = true;
   empty.padId = padId;
   empty.ready = false;
-  empty.color = seats.indexOf(empty);
+  empty.name = name;
   return empty;
+}
+
+export function clearSeats(seats: Seat[]): void {
+  seats.forEach((s, i) => {
+    s.taken = false;
+    s.ready = false;
+    s.color = i;
+    s.padId = '';
+    s.name = '';
+  });
 }
 
 export function canStartMatch(seats: Seat[]): boolean {
   return seats.some((s) => s.taken && s.ready);
+}
+
+/** How many bots fit beside the humans at the table. */
+export function maxBots(seats: Seat[]): number {
+  return MAX_SEATS - seats.filter((s) => s.taken).length;
+}
+
+/**
+ * Palette index for every slot of a match: humans (taken seats, in order) keep what they picked,
+ * bots take whatever is left, so no two fighters share a color.
+ */
+export function assignColors(seats: Seat[], total: number): number[] {
+  const out: number[] = [];
+  const used = new Set<number>();
+  for (const s of seats.filter((s) => s.taken)) {
+    let c = s.color;
+    while (used.has(c)) c = (c + 1) % 4;
+    used.add(c);
+    out.push(c);
+  }
+  for (let c = 0; c < 4 && out.length < total; c++) {
+    if (!used.has(c)) out.push(c);
+  }
+  while (out.length < total) out.push(out.length % 4);
+  return out.slice(0, total);
 }
 
 export function collectSettings(card: HTMLElement, menus: MenuState, settings: UserSettings): UserSettings {
@@ -155,56 +206,96 @@ export function renderMenus(
   root.innerHTML = '';
   if (state.screen === 'play') return;
   const wrap = document.createElement('div');
-  wrap.style.cssText =
-    'position:absolute;inset:0;display:flex;align-items:center;justify-content:center;background:rgba(10,12,16,0.72);pointer-events:auto;';
+  wrap.className = `menu-wrap menu-${state.screen}`;
   const card = document.createElement('div');
-  card.style.cssText =
-    'width:min(760px,94vw);max-height:92vh;overflow:auto;background:#1b1e27;border-radius:16px;padding:28px;box-shadow:0 20px 60px rgba(0,0,0,0.4);';
+  card.className = 'menu-card';
   if (state.screen === 'menu') {
-    card.innerHTML = `<h1 style="margin:0 0 8px;font-size:42px">Floppy Clash</h1>
-      <p style="color:#9aa3b2">Couch physics brawler. Press a button on a pad — or use the keyboard fallback.</p>
-      <p id="localstats" style="color:#9aa3b2;font-size:13px"></p>
-      <div style="display:flex;flex-wrap:wrap;gap:10px;margin-top:18px"></div>`;
-    const row = card.querySelector('div')!;
-    for (const [label, id] of [
-      ['Local Play', 'local'],
-      ['Solo vs Bots', 'bots'],
-      ['Online', 'online'],
-      ['Level Editor', 'editor'],
-      ['Settings', 'settings'],
+    card.classList.add('title');
+    card.innerHTML = `<h1 class="wordmark">Floppy <em>Clash</em></h1>
+      <div class="wordmark-bar" aria-hidden="true"><i style="--c:var(--p0)"></i><i style="--c:var(--p1)"></i><i style="--c:var(--p2)"></i><i style="--c:var(--p3)"></i></div>
+      <p class="tagline">Couch physics brawler. Press <kbd>A</kbd> on a pad to play — or use the keyboard.</p>
+      <div class="menu-actions"></div>
+      <p id="localstats" class="menu-stats"></p>
+      <p class="menu-keys"><kbd>A</kbd><kbd>D</kbd> move · <kbd>W</kbd>/<kbd>Space</kbd> jump · <kbd>S</kbd> duck · mouse aim · <kbd>LMB</kbd>/<kbd>C</kbd> attack · <kbd>RMB</kbd>/<kbd>V</kbd> block · <kbd>F</kbd> throw</p>
+      <p class="menu-keys"><kbd>Pad</kbd> left stick move · right stick aim · <kbd>A</kbd> jump · <kbd>RT</kbd>/<kbd>X</kbd> attack · <kbd>LT</kbd>/<kbd>B</kbd> block · <kbd>Y</kbd> throw · <kbd>Start</kbd> pause</p>`;
+    const row = card.querySelector('.menu-actions')!;
+    for (const [label, id, primary] of [
+      ['Solo vs Bots', 'bots', true],
+      ['Local Play', 'local', true],
+      ['Online', 'online', false],
+      ['Level Editor', 'editor', false],
+      ['Settings', 'settings', false],
     ] as const) {
-      row.append(btn(label, () => actions[id]?.()));
+      row.append(btn(label, () => actions[id]?.(), primary ? 'primary' : ''));
     }
     const statEl = card.querySelector('#localstats');
     if (statEl && stats) {
       statEl.textContent = `Local stats — matches ${stats.matches} · wins ${stats.wins} · KOs ${stats.kos}`;
     }
   } else if (state.screen === 'join') {
-    card.innerHTML = `<h2>Join</h2><p>Press A / Space to join a seat. A / Space again readies. Left/Right change color. Start / Enter on a readied pad begins.</p>`;
+    const bots = Math.min(state.bots, maxBots(state.seats));
+    card.innerHTML = `<h2>Join</h2><p><kbd>A</kbd> / <kbd>Space</kbd> grabs a seat, again to ready up. <kbd>◀</kbd> <kbd>▶</kbd> picks a color, <kbd>▲</kbd> <kbd>▼</kbd> sets bots. <kbd>Start</kbd> / <kbd>Enter</kbd> begins${bots > 0 ? ` — ${bots} bot${bots === 1 ? '' : 's'} fill the empty seats` : ''}.</p>`;
+    const seats = document.createElement('div');
+    seats.className = 'seats';
+    // Humans sit in the seats they took, in order; bots fill the seats after them, so the card
+    // shows exactly who will stand where when the countdown starts.
+    const colors = assignColors(state.seats, MAX_SEATS);
+    let botsLeft = bots;
     state.seats.forEach((s, i) => {
-      const line = document.createElement('div');
-      line.style.cssText = `margin:8px 0;padding:10px;border-radius:8px;background:${s.taken ? '#2a3144' : '#151820'}`;
-      line.dataset.seat = String(i);
-      if (s.ready) line.dataset.ready = '1';
-      line.textContent = s.taken
-        ? `P${i + 1} ${COLORS[s.color]} ${s.ready ? 'READY' : 'joined — press A / Space to ready'} (${s.padId})`
-        : `P${i + 1} empty`;
-      card.append(line);
+      const bot = !s.taken && botsLeft > 0;
+      if (bot) botsLeft -= 1;
+      const seat = document.createElement('div');
+      seat.className = 'seat';
+      seat.style.setProperty('--c', s.taken ? `var(--p${s.color})` : bot ? `var(--p${colors[i] ?? i})` : '#5a6170');
+      seat.dataset.seat = String(i);
+      seat.dataset.taken = s.taken ? '1' : '0';
+      if (bot) seat.dataset.bot = '1';
+      if (s.ready) seat.dataset.ready = '1';
+      const face = document.createElement('div');
+      face.className = 'hud-face';
+      const name = document.createElement('div');
+      name.className = 'seat-name';
+      name.textContent = s.taken ? `P${i + 1} · ${COLORS[s.color]}` : bot ? `Bot ${i + 1}` : `P${i + 1}`;
+      const status = document.createElement('div');
+      status.className = 'seat-status';
+      status.textContent = s.taken ? (s.ready ? 'READY' : 'joined — press A / Space to ready') : bot ? 'CPU' : 'empty';
+      const pad = document.createElement('div');
+      pad.className = 'seat-pad';
+      pad.textContent = s.taken ? s.name || s.padId : '';
+      seat.append(face, name, status, pad);
+      seats.append(seat);
     });
-    card.append(btn('Start', () => actions.start?.()));
-    card.append(btn('Back', () => actions.back?.()));
+    card.append(seats);
+    const row = document.createElement('div');
+    row.className = 'menu-actions';
+    row.append(btn('Start', () => actions.start?.(), 'primary'));
+    const botsBtn = btn(`Bots: ${bots}`, () => actions.cycleBots?.());
+    botsBtn.id = 'cycle-bots';
+    row.append(botsBtn);
+    row.append(btn('Back', () => actions.back?.()));
+    card.append(row);
   } else if (state.screen === 'settings') {
     renderSettings(card, state, settings, maps, actions);
   } else if (state.screen === 'pause') {
-    card.innerHTML = `<h2>Paused</h2>`;
-    card.append(btn('Resume', () => actions.resume?.()));
-    card.append(btn('Quit', () => actions.quit?.()));
+    card.classList.add('compact');
+    card.innerHTML = `<h2>Paused</h2><p>Take a breather. The brawl waits.</p>`;
+    const row = document.createElement('div');
+    row.className = 'menu-actions';
+    row.append(btn('Resume', () => actions.resume?.(), 'primary'));
+    row.append(btn('Quit', () => actions.quit?.()));
+    card.append(row);
   } else if (state.screen === 'scoreboard') {
     card.innerHTML = `<h2 data-round-over="1">Round over</h2><p>Next level incoming…</p>`;
   } else if (state.screen === 'lobby') {
     renderLobby(card, state, settings, actions);
   } else if (state.screen === 'disconnect') {
-    card.innerHTML = `<h2>Controller disconnected</h2><p>Reconnect the same pad to resume.</p>`;
+    card.classList.add('compact');
+    card.innerHTML = `<h2>Controller disconnected</h2><p>Reconnect the pad to pick up where you left off.</p>`;
+    const row = document.createElement('div');
+    row.className = 'menu-actions';
+    row.append(btn('Resume anyway', () => actions.resume?.(), 'primary'));
+    row.append(btn('Quit', () => actions.quit?.()));
+    card.append(row);
   }
   if (state.notice) {
     const n = document.createElement('p');
@@ -226,69 +317,88 @@ function renderSettings(
   const weaponBoxes = WEAPON_DEFS.filter((d) => d.dropWeight > 0)
     .map((d) => {
       const on = settings.enabledWeapons === 'all' || settings.enabledWeapons.includes(d.id);
-      return `<label style="display:inline-block;margin:2px 8px 2px 0"><input id="w-${d.id}" type="checkbox" ${on ? 'checked' : ''}/> ${weaponDisplayName(d)}</label>`;
+      return `<label class="chip"><input id="w-${d.id}" type="checkbox" ${on ? 'checked' : ''}/> ${weaponDisplayName(d)}</label>`;
     })
     .join('');
   const levelBoxes = builtInMatchLevels()
     .slice(0, 80)
     .map((l) => {
       const on = settings.enabledLevels === 'all' || settings.enabledLevels.includes(l.id);
-      return `<label style="display:block;font-size:12px"><input id="l-${l.id}" type="checkbox" ${on ? 'checked' : ''}/> ${l.name} <span style="color:#9aa3b2">(${l.theme})</span></label>`;
+      return `<label class="chip"><input id="l-${l.id}" type="checkbox" ${on ? 'checked' : ''}/> ${l.name} <span class="dim">${l.theme}</span></label>`;
     })
     .join('');
   const lastMap = Object.entries(maps)[0]?.[1] ?? DEFAULT_MAP;
   const lastId = Object.keys(maps)[0] ?? '';
+  const check = (id: string, label: string, on: boolean) => `<label class="row"><span>${label}</span><input id="${id}" type="checkbox" ${on ? 'checked' : ''}></label>`;
   card.innerHTML = `<h2>Settings</h2>
-      <label>HP <input id="hp" type="number" value="${state.maxHp}"></label><br/>
-      <label>First to <input id="ft" type="number" value="${state.firstTo}"></label><br/>
-      <label>Bots <input id="bots" type="number" value="${state.bots}"></label><br/>
-      <label>Show wins <input id="wins" type="checkbox" ${settings.showWins ? 'checked' : ''}></label><br/>
-      <label>Haptics <input id="hap" type="checkbox" ${settings.haptics ? 'checked' : ''}></label><br/>
-      <label>Colorblind palette <input id="cb" type="checkbox" ${settings.colorblind ? 'checked' : ''}></label><br/>
-      <label>Reduce shake <input id="rs" type="checkbox" ${settings.reduceShake ? 'checked' : ''}></label><br/>
-      <label>Reduce blood <input id="rb" type="checkbox" ${settings.reduceBlood ? 'checked' : ''}></label><br/>
-      <label>2D lighting (radiance cascades) <input id="lit" type="checkbox" ${settings.lighting ? 'checked' : ''}></label><br/>
-      <label>Include user levels in rotation <input id="usr" type="checkbox" ${settings.includeUserLevels ? 'checked' : ''}></label><br/>
-      <label>SFX <input id="sfx" type="range" min="0" max="1" step="0.05" value="${settings.sfx}"></label><br/>
-      <label>Music <input id="mus" type="range" min="0" max="1" step="0.05" value="${settings.music}"></label><br/>
-      <label>Level order
-        <select id="rot">
-          <option value="random" ${settings.rotation === 'random' ? 'selected' : ''}>Random</option>
-          <option value="ordered" ${settings.rotation === 'ordered' ? 'selected' : ''}>Ordered</option>
-        </select>
-      </label><br/>
-      <label>Renderer
-        <select id="ren">
-          <option value="auto" ${settings.renderer === 'auto' ? 'selected' : ''}>Auto</option>
-          <option value="gpu" ${settings.renderer === 'gpu' ? 'selected' : ''}>SDF / WebGPU</option>
-          <option value="canvas" ${settings.renderer === 'canvas' ? 'selected' : ''}>Canvas</option>
-        </select>
-      </label>
+      <h3>Match</h3>
+      <div class="form-grid">
+        <label class="row"><span>HP</span><input id="hp" type="number" min="1" value="${state.maxHp}"></label>
+        <label class="row"><span>First to <small>(0 = endless)</small></span><input id="ft" type="number" min="0" value="${state.firstTo}"></label>
+        <label class="row"><span>Bots</span><input id="bots" type="number" min="0" max="3" value="${state.bots}"></label>
+        ${check('wins', 'Show wins', settings.showWins)}
+        <label class="row"><span>Level order</span>
+          <select id="rot">
+            <option value="random" ${settings.rotation === 'random' ? 'selected' : ''}>Random</option>
+            <option value="ordered" ${settings.rotation === 'ordered' ? 'selected' : ''}>Ordered</option>
+          </select>
+        </label>
+        ${check('usr', 'Include user levels in rotation', settings.includeUserLevels)}
+      </div>
+      <h3>Feel &amp; accessibility</h3>
+      <div class="form-grid">
+        ${check('hap', 'Haptics', settings.haptics)}
+        ${check('cb', 'Colorblind palette', settings.colorblind)}
+        ${check('rs', 'Reduce shake', settings.reduceShake)}
+        ${check('rb', 'Reduce blood', settings.reduceBlood)}
+        <label class="row"><span>SFX</span><input id="sfx" type="range" min="0" max="1" step="0.05" value="${settings.sfx}"></label>
+        <label class="row"><span>Music</span><input id="mus" type="range" min="0" max="1" step="0.05" value="${settings.music}"></label>
+      </div>
+      <h3>Video</h3>
+      <div class="form-grid">
+        <label class="row"><span>Renderer</span>
+          <select id="ren">
+            <option value="auto" ${settings.renderer === 'auto' ? 'selected' : ''}>Auto</option>
+            <option value="gpu" ${settings.renderer === 'gpu' ? 'selected' : ''}>SDF / WebGPU</option>
+            <option value="canvas" ${settings.renderer === 'canvas' ? 'selected' : ''}>Canvas</option>
+          </select>
+        </label>
+        ${check('lit', '2D lighting (radiance cascades)', settings.lighting)}
+      </div>
       <h3>Weapon toggles</h3>
-      <div style="max-height:140px;overflow:auto;background:#151820;padding:8px;border-radius:8px">${weaponBoxes}</div>
+      <div class="chips">${weaponBoxes}</div>
       <h3>Level toggles</h3>
-      <div style="max-height:140px;overflow:auto;background:#151820;padding:8px;border-radius:8px">${levelBoxes}</div>
+      <div class="chips">${levelBoxes}</div>
       <h3>Per-pad remap</h3>
-      <p style="color:#9aa3b2;font-size:13px">Offered automatically for non-<code>standard</code> mappings. Button indices follow the W3C Gamepad API.</p>
-      <label>Pad id <input id="padid" value="${lastId}" placeholder="Xbox / DualSense id string"></label><br/>
-      <label>Jump <input id="map-jump" type="number" value="${lastMap.jump}"></label>
-      <label>Attack <input id="map-attack" type="number" value="${lastMap.attack}"></label>
-      <label>Block <input id="map-block" type="number" value="${lastMap.block}"></label>
-      <label>Throw <input id="map-throw" type="number" value="${lastMap.throw}"></label>
-      <label>Pause <input id="map-pause" type="number" value="${lastMap.pause}"></label>`;
-  card.append(
-    btn('Save', () => {
-      const next = collectSettings(card, state, settings);
-      Object.assign(settings, next);
-      actions.save?.();
-    }),
+      <p class="dim">Offered automatically for non-<code>standard</code> mappings. Button indices follow the W3C Gamepad API.</p>
+      <div class="form-grid">
+        <label class="row wide"><span>Pad id</span><input id="padid" value="${lastId}" placeholder="Xbox / DualSense id string"></label>
+        <label class="row"><span>Jump</span><input id="map-jump" type="number" value="${lastMap.jump}"></label>
+        <label class="row"><span>Attack</span><input id="map-attack" type="number" value="${lastMap.attack}"></label>
+        <label class="row"><span>Block</span><input id="map-block" type="number" value="${lastMap.block}"></label>
+        <label class="row"><span>Throw</span><input id="map-throw" type="number" value="${lastMap.throw}"></label>
+        <label class="row"><span>Pause</span><input id="map-pause" type="number" value="${lastMap.pause}"></label>
+      </div>`;
+  const row = document.createElement('div');
+  row.className = 'menu-actions';
+  row.append(
+    btn(
+      'Save',
+      () => {
+        const next = collectSettings(card, state, settings);
+        Object.assign(settings, next);
+        actions.save?.();
+      },
+      'primary',
+    ),
   );
-  card.append(
+  row.append(
     btn('Save remap', () => {
       actions.saveRemap?.();
     }),
   );
-  card.append(btn('Back', () => actions.back?.()));
+  row.append(btn('Back', () => actions.back?.()));
+  card.append(row);
 }
 
 function syncLobbyFields(card: HTMLElement, state: MenuState, settings: UserSettings): void {
@@ -303,23 +413,21 @@ function syncLobbyFields(card: HTMLElement, state: MenuState, settings: UserSett
 function renderLobby(card: HTMLElement, state: MenuState, settings: UserSettings, actions: MenuActions): void {
   card.innerHTML = `<h2>Online lobby</h2>
     <p>Host-authoritative WebRTC. Signaling is local (<code>npm run server</code>); live WAN STUN/TURN is a hardware path.</p>
-    <label>Room code <input id="room" value="${state.roomCode}" placeholder="ABC123" maxlength="8"></label>
-    <label>HP <input id="hp" type="number" value="${state.maxHp}"></label>
-    <label>First to <input id="ft" type="number" value="${state.firstTo}"></label>
-    <p style="color:#9aa3b2;font-size:13px">Host-only: HP / first-to apply when you Host. Chat is reliable-channel text.</p>`;
+    <div class="form-grid">
+      <label class="row"><span>Room code</span><input id="room" value="${state.roomCode}" placeholder="ABC123" maxlength="8"></label>
+      <label class="row"><span>HP</span><input id="hp" type="number" value="${state.maxHp}"></label>
+      <label class="row"><span>First to</span><input id="ft" type="number" value="${state.firstTo}"></label>
+    </div>
+    <p class="dim">Host-only: HP / first-to apply when you Host. Chat is reliable-channel text.</p>`;
   const chat = document.createElement('div');
-  chat.style.maxHeight = '160px';
-  chat.style.overflow = 'auto';
-  chat.style.background = '#151820';
-  chat.style.padding = '8px';
-  chat.style.whiteSpace = 'pre-wrap';
+  chat.className = 'chat-log';
   chat.textContent = state.chat.join('\n') || '(no messages)';
   const row = document.createElement('div');
+  row.className = 'chat-row';
   const input = document.createElement('input');
   input.id = 'chat';
   input.placeholder = 'Type a message';
   input.value = state.draftChat;
-  input.style.width = '70%';
   row.append(input);
   row.append(
     btn('Send', () => {
@@ -331,28 +439,34 @@ function renderLobby(card: HTMLElement, state: MenuState, settings: UserSettings
     }),
   );
   card.append(chat, row);
-  card.append(
-    btn('Host', () => {
-      syncLobbyFields(card, state, settings);
-      if (!state.roomCode) state.roomCode = Math.random().toString(36).slice(2, 8).toUpperCase();
-      actions.host?.();
-    }),
+  const actionsRow = document.createElement('div');
+  actionsRow.className = 'menu-actions';
+  actionsRow.append(
+    btn(
+      'Host',
+      () => {
+        syncLobbyFields(card, state, settings);
+        if (!state.roomCode) state.roomCode = Math.random().toString(36).slice(2, 8).toUpperCase();
+        actions.host?.();
+      },
+      'primary',
+    ),
   );
-  card.append(
+  actionsRow.append(
     btn('Join', () => {
       syncLobbyFields(card, state, settings);
       state.roomCode = state.roomCode || 'JOINME';
       actions.joinRoom?.();
     }),
   );
-  card.append(btn('Back', () => actions.back?.()));
+  actionsRow.append(btn('Back', () => actions.back?.()));
+  card.append(actionsRow);
 }
 
-function btn(label: string, onClick: () => void): HTMLButtonElement {
+function btn(label: string, onClick: () => void, variant = ''): HTMLButtonElement {
   const b = document.createElement('button');
   b.textContent = label;
-  b.style.cssText =
-    'margin:6px 6px 0 0;padding:10px 16px;border:0;border-radius:10px;background:#f2c14e;color:#111;font-weight:700;cursor:pointer';
+  b.className = `menu-btn${variant ? ` ${variant}` : ''}`;
   b.addEventListener('click', onClick);
   return b;
 }

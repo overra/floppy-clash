@@ -2,6 +2,7 @@ interface GPUAdapter {
   requestDevice(desc?: unknown): Promise<GPUDevice>;
 }
 interface GPUDevice {
+  addEventListener?(type: 'uncapturederror', cb: (ev: unknown) => void): void;
   createShaderModule(desc: { code: string }): GPUShaderModule;
   createRenderPipeline(desc: unknown): GPURenderPipeline;
   createBuffer(desc: { size: number; usage: number }): GPUBuffer;
@@ -17,7 +18,7 @@ interface GPUDevice {
   };
 }
 interface GPUShaderModule {
-  dummy?: true;
+  getCompilationInfo?(): Promise<{ messages: { type: string; lineNum: number; linePos: number; message: string }[] }>;
 }
 interface GPURenderPipeline {
   getBindGroupLayout(i: number): unknown;
@@ -42,7 +43,7 @@ interface GPUCommandEncoder {
 interface GPURenderPass {
   setPipeline(p: GPURenderPipeline): void;
   setBindGroup(i: number, g: GPUBindGroup): void;
-  draw(v: number, i?: number): void;
+  draw(v: number, i?: number, firstVertex?: number, firstInstance?: number): void;
   end(): void;
 }
 interface GPUCanvasContext {

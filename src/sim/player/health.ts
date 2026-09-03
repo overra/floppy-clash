@@ -1,5 +1,6 @@
 import type { Entity, World } from 'koota';
 import { emit, getContext } from '../context';
+import { combatAllowed } from '../rules/rounds';
 import { Dead, Health } from '../traits';
 import type { HitZone } from '../events';
 
@@ -29,6 +30,8 @@ export function takeDamage(
   instant = false,
 ): number {
   if (target.has(Dead)) return 0;
+  // Out-of-bounds (instant) kills always apply; everything else waits for the round to be live.
+  if (!instant && !combatAllowed(world)) return 0;
   const health = target.get(Health);
   if (!health) return 0;
   const applied = instant ? health.hp : amount * damageMultiplier(zone, world);

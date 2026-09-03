@@ -6,6 +6,7 @@ import type { SimEvents } from './events';
 import { blankInputs, normalizeInput, type PlayerInput } from './input';
 import { loadLevel, spawnPlayer } from './level/loader';
 import type { LevelDef } from './level/schema';
+import { spawnPositions } from './level/spawns';
 import { assignNetId, createBoxBody, registerBody } from './physics/bodies';
 import type { FixtureUserData } from './physics/categories';
 import { cloneTuning } from './tuning';
@@ -41,6 +42,8 @@ export type SimHandle = {
   hash: () => string;
   snapshot: () => ReturnType<typeof serializeWorld>;
   players: () => Entity[];
+  /** Release the ECS world slot (Koota caps live worlds); the handle is unusable afterwards. */
+  destroy: () => void;
 };
 
 export function createSimWorld(opts: CreateSimOptions): SimHandle {
@@ -80,10 +83,10 @@ export function createSimWorld(opts: CreateSimOptions): SimHandle {
 
   if (opts.spawnPlayers !== false) {
     const count = Math.max(1, Math.min(4, settings.playerCount + settings.bots));
-    const order = ctx.rng.shuffle(opts.level.spawns.slice());
+    const spots = spawnPositions(opts.level.spawns, count, ctx.rng);
     for (let i = 0; i < count; i++) {
-      const spawn = order[i % order.length]!;
-      spawnPlayer(ecs, i, spawn.x, spawn.y + 1, i, i);
+      const spawn = spots[i]!;
+      spawnPlayer(ecs, i, spawn.x, spawn.y, settings.colors?.[i] ?? i, i);
     }
   }
 
@@ -124,6 +127,9 @@ export function createSimWorld(opts: CreateSimOptions): SimHandle {
     hash: () => hashWorld(ecs),
     snapshot: () => serializeWorld(ecs),
     players: () => ctx.players.slice(),
+    destroy: () => {
+      ecs.destroy();
+    },
   };
 }
 

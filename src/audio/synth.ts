@@ -24,6 +24,9 @@ export type SfxId =
   | 'field.bubble'
   | 'field.hole'
   | 'hit'
+  | 'block'
+  | 'block.perfect'
+  | 'clash'
   | 'explosion'
   | 'pickup'
   | 'jump'
@@ -66,7 +69,25 @@ export function playNoise(ctx: AudioContext, dur: number, gain: number, dest: Au
 export function playSfx(ctx: AudioContext, dest: AudioNode, id: SfxId): void {
   switch (id) {
     case 'punch':
-      playTone(ctx, 'square', 90, 0.08, 0.12, dest);
+      // a short whoosh: filtered-sounding noise with a low thump under it
+      playNoise(ctx, 0.07, 0.05, dest);
+      playTone(ctx, 'sine', 140, 0.06, 0.06, dest);
+      break;
+    case 'block':
+      // a dull "tunk" off the guard
+      playTone(ctx, 'triangle', 520, 0.05, 0.1, dest);
+      playNoise(ctx, 0.03, 0.05, dest);
+      break;
+    case 'block.perfect':
+      // a bright ping for the perfect window
+      playTone(ctx, 'sine', 1240, 0.14, 0.09, dest);
+      playTone(ctx, 'triangle', 830, 0.1, 0.06, dest);
+      break;
+    case 'clash':
+      // two fists meeting: a clang with a metallic tail
+      playTone(ctx, 'square', 310, 0.09, 0.1, dest);
+      playTone(ctx, 'sawtooth', 620, 0.16, 0.06, dest);
+      playNoise(ctx, 0.08, 0.08, dest);
       break;
     case 'shot.small':
     case 'shot.rifle':

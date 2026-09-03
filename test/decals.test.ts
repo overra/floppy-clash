@@ -3,9 +3,10 @@ import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { createCamera } from '../src/render/camera';
 import { buildFrame } from '../src/render/buildFrame';
-import { createDecalLayer, hashPixels } from '../src/render/fx/decals';
+import { createDecalLayer, hashPixels, snapDecalToSurface } from '../src/render/fx/decals';
 import { emitFromEvents, type Decal } from '../src/render/fx/particles';
-import { makeSim } from './helpers';
+import { Transform } from '../src/sim/traits';
+import { hold, makeSim, playerOf, runTrack } from './helpers';
 
 const BLOOD = '#5a1010';
 const SCORCH = '#2a1a10';
@@ -63,6 +64,21 @@ describe('PLAN 4.11 persistent decals', () => {
     expect(a.groups.filter((g) => decalColors.has(g.color)).length).toBe(0);
     expect(b.groups.length).toBe(a.groups.length);
     expect(layer.stampCalls).toBe(decals.length);
+  });
+
+  it('blood stains what it lands on: splashes snap onto nearby surfaces and mid-air ones are dropped', () => {
+    const sim = makeSim({ level: runTrack, settings: { playerCount: 1 } });
+    const p = playerOf(sim);
+    for (let i = 0; i < 60; i++) sim.step([hold({}), hold({}), hold({}), hold({})]);
+    const feet = p.get(Transform)!.y - sim.ctx.tuning.height / 2;
+    // Chest-height splash over the floor: pulled down onto (and slightly into) the track surface.
+    const onFloor: Decal = { x: 20, y: feet + 0.6, r: 0.3, color: BLOOD, kind: 'blood' };
+    expect(snapDecalToSurface(sim.ecs, onFloor)).toBe(true);
+    expect(onFloor.y).toBeLessThan(feet + 0.05);
+    expect(onFloor.y).toBeGreaterThan(feet - 0.3);
+    // Way up in the sky: nothing to stain.
+    const sky: Decal = { x: 20, y: feet + 6, r: 0.3, color: BLOOD, kind: 'blood' };
+    expect(snapDecalToSurface(sim.ecs, sky)).toBe(false);
   });
 
   it('GPU renderer uploads the persistent texture only when dirty', () => {

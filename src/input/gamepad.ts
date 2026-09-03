@@ -84,6 +84,115 @@ export function pollGamepads(): (Gamepad | null)[] {
   return [...navigator.getGamepads()];
 }
 
+/**
+ * Session-unique handle for a controller. Two identical pads report the same `id` string, so
+ * seats are keyed by the browser's slot index instead (stable while the pad stays connected).
+ */
+export function padKey(pad: Pick<Gamepad, 'index'>): string {
+  return `pad:${pad.index}`;
+}
+
+export function isPadKey(device: string): boolean {
+  return device.startsWith('pad:');
+}
+
+export function padIndexOf(device: string): number {
+  return isPadKey(device) ? Number(device.slice(4)) : -1;
+}
+
+/** "DualSense Wireless Controller" out of "DualSense Wireless Controller (STANDARD GAMEPAD Vendor: 054c Product: 0ce6)". */
+export function padLabel(pad: Pick<Gamepad, 'id'>): string {
+  const short = pad.id.replace(/\s*\(.*$/, '').trim();
+  return short || pad.id;
+}
+
+/** Rising edges of the buttons menus care about, plus the d-pad / left stick as a repeating digital direction. */
+export type PadEdges = {
+  a: boolean;
+  b: boolean;
+  start: boolean;
+  select: boolean;
+  up: boolean;
+  down: boolean;
+  left: boolean;
+  right: boolean;
+};
+
+export type PadEdgeTracker = {
+  /** Read the pad once per frame; `now` in ms drives the hold-to-repeat timing. */
+  update: (pad: Gamepad, now: number, pauseButton?: number) => PadEdges;
+  /** Forget held state (on disconnect), so the next press registers as fresh. */
+  reset: () => void;
+};
+
+const STICK_ON = 0.6;
+const STICK_OFF = 0.35;
+const REPEAT_DELAY_MS = 380;
+const REPEAT_RATE_MS = 110;
+
+export function createPadEdgeTracker(): PadEdgeTracker {
+  const held = { a: false, b: false, start: false, select: false };
+  const dir = { x: 0, y: 0 };
+  let repeatAt = 0;
+  return {
+    update(pad, now, pauseButton = 9) {
+      const btn = (i: number) => !!pad.buttons[i]?.pressed;
+      const rise = (key: keyof typeof held, down: boolean) => {
+        const edge = down && !held[key];
+        held[key] = down;
+        return edge;
+      };
+      const a = rise('a', btn(0));
+      const b = rise('b', btn(1));
+      const start = rise('start', btn(pauseButton) || (pauseButton !== 9 && btn(9)));
+      const select = rise('select', btn(8));
+
+      // Digital direction: d-pad wins, otherwise the stick past a threshold with hysteresis so a
+      // wobble near the edge does not spam moves.
+      const lx = pad.axes[0] ?? 0;
+      const ly = pad.axes[1] ?? 0;
+      let x = (btn(15) ? 1 : 0) - (btn(14) ? 1 : 0);
+      let y = (btn(13) ? 1 : 0) - (btn(12) ? 1 : 0);
+      if (x === 0 && y === 0) {
+        const mag = Math.hypot(lx, ly);
+        const active = mag > STICK_ON || (mag > STICK_OFF && (dir.x !== 0 || dir.y !== 0));
+        if (active) {
+          if (Math.abs(lx) >= Math.abs(ly)) x = Math.sign(lx);
+          else y = Math.sign(ly);
+        }
+      }
+      const changed = x !== dir.x || y !== dir.y;
+      let fire = false;
+      if (x === 0 && y === 0) {
+        fire = false;
+      } else if (changed) {
+        fire = true;
+        repeatAt = now + REPEAT_DELAY_MS;
+      } else if (now >= repeatAt) {
+        fire = true;
+        repeatAt = now + REPEAT_RATE_MS;
+      }
+      dir.x = x;
+      dir.y = y;
+      return {
+        a,
+        b,
+        start,
+        select,
+        up: fire && y < 0,
+        down: fire && y > 0,
+        left: fire && x < 0,
+        right: fire && x > 0,
+      };
+    },
+    reset() {
+      held.a = held.b = held.start = held.select = false;
+      dir.x = dir.y = 0;
+      repeatAt = 0;
+    },
+  };
+}
+
 export function emptyLatch(): Latch {
   return { jump: false, attack: false, block: false, throw: false, pause: false };
 }

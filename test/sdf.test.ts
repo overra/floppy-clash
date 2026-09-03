@@ -9,6 +9,8 @@ import {
   sdDisk,
 } from '../src/render/sdf/primitives';
 import { evalCoverageGpu, evalPrimitiveSdfGpu, evalSmoothUnionGpu } from '../src/render/gpu/shaders';
+import { DEFAULT_GLOW, Layer, group } from '../src/render/frame';
+import { packGroups } from '../src/render/gpu/pack';
 
 describe('sdf primitives', () => {
   it('disk is negative inside', () => {
@@ -32,6 +34,31 @@ describe('sdf primitives', () => {
 
   it('primitiveSdf dispatches kinds', () => {
     expect(primitiveSdf({ kind: PRIM_DISK, ax: 0, ay: 0, bx: 0, by: 0, r: 1 }, { x: 0, y: 0 })).toBeLessThan(0);
+  });
+});
+
+describe('glow groups', () => {
+  const dot = { kind: PRIM_DISK, ax: 5, ay: 5, bx: 5, by: 5, r: 0.1 };
+
+  it('grow their quad to hold the whole halo, however small the requested pad is', () => {
+    const g = group([dot], '#fff', Layer.Particles, { style: 'flat', fx: 'glow', pad: 0.15, glow: 0.6 });
+    expect(g.glow).toBe(0.6);
+    expect(g.minX).toBeLessThanOrEqual(5 - 0.1 - 0.6);
+    expect(g.maxY).toBeGreaterThanOrEqual(5 + 0.1 + 0.6);
+    const plain = group([dot], '#fff', Layer.Particles, { style: 'flat', pad: 0.15 });
+    expect(plain.glow).toBeUndefined();
+    expect(plain.minX).toBeCloseTo(5 - 0.25);
+    const dflt = group([dot], '#fff', Layer.Particles, { fx: 'glow' });
+    expect(dflt.glow).toBe(DEFAULT_GLOW);
+    expect(dflt.minX).toBeLessThanOrEqual(5 - 0.1 - DEFAULT_GLOW);
+  });
+
+  it('pack the halo reach for the shader', () => {
+    const g = group([dot], '#fff', Layer.Particles, { fx: 'lava', glow: 0.9 });
+    const { groupBytes } = packGroups([g]);
+    expect(new DataView(groupBytes).getFloat32(56, true)).toBeCloseTo(0.9);
+    const { groupBytes: plain } = packGroups([group([dot], '#fff', Layer.Particles)]);
+    expect(new DataView(plain).getFloat32(56, true)).toBe(0);
   });
 });
 

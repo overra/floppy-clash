@@ -13,11 +13,12 @@ export const bounce: HazardModule = {
     if (!pt || !ctrl.grounded) return;
     const dx = Math.abs(pt.x - ht.x);
     const dy = Math.abs(pt.y - ht.y);
-    if (dx < (hz.param0 || 1.2) && dy < 1) {
+    // param0 = half-width, param1 = launch speed
+    if (dx < (hz.param0 || 1.2) + 0.2 && dy < 1.3) {
       const body = getContext(world).bodies.get(player);
       if (body) {
         const v = body.getLinearVelocity();
-        body.setLinearVelocity(new Vec2(v.x, hz.param1 || 16));
+        body.setLinearVelocity(new Vec2(v.x, hz.param1 || 18));
       }
     }
   },

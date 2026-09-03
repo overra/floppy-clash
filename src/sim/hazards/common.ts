@@ -3,33 +3,76 @@ import { getContext } from '../context';
 import { assignNetId, createBoxBody, createCircleBody, registerBody } from '../physics/bodies';
 import { takeDamage } from '../player/health';
 import { Vec2 } from 'planck';
-import { Destructible, Hazard, Kinematic, PrevTransform, Solid, StandingOn, Static, Transform } from '../traits';
+import { Anchor, Destructible, Hazard, Kinematic, PrevTransform, Solid, StandingOn, Static, Transform } from '../traits';
 import { weaponIndex } from '../weapons/defs';
 import type { LevelObject } from '../level/schema';
 import type { ControllerView, TransformView } from './types';
 
 export const lavaTouch = new Map<number, number>();
 
-export function paramsFromObject(obj: LevelObject): {
-  param0: number;
-  param1: number;
-  param2: number;
-  param3: number;
-} {
-  if (obj.type === 'trigger.drop') {
-    return {
-      param0: obj.atTick ?? 180,
-      param1: weaponIndex(obj.weapon ?? 'pistol'),
-      param2: 0,
-      param3: 0,
-    };
+type HazardParams = { param0: number; param1: number; param2: number; param3: number };
+
+/** Half-extent of a two-point `path`, or a default sweep when only `speed` is authored. */
+function pathAmplitude(obj: LevelObject, fallback: number): { ax: number; ay: number } {
+  const a = obj.path?.[0];
+  const b = obj.path?.[1];
+  if (a && b) return { ax: Math.abs(b.x - a.x) / 2, ay: Math.abs(b.y - a.y) / 2 };
+  return { ax: fallback, ay: 0 };
+}
+
+/**
+ * Authored fields → the four numeric hazard params. Each type owns its own slots; the meaning
+ * is documented on the module that consumes them.
+ */
+export function paramsFromObject(obj: LevelObject): HazardParams {
+  const w = obj.w ?? 2;
+  const h = obj.h ?? 1;
+  switch (obj.type) {
+    case 'trigger.drop':
+      return { param0: obj.atTick ?? 180, param1: weaponIndex(obj.weapon ?? 'pistol'), param2: 0, param3: 0 };
+    case 'spikes':
+      return { param0: w, param1: 0, param2: 0, param3: 0 };
+    case 'lava':
+      // rise rate (m/s), half-width reach
+      return { param0: obj.rate ?? 0, param1: w / 2, param2: 0, param3: 0 };
+    case 'laser':
+      // unarmed ticks, armed ticks, phase offset, beam reach
+      return { param0: obj.offTicks ?? 90, param1: obj.onTicks ?? 40, param2: obj.delay ?? 0, param3: obj.w ?? 14 };
+    case 'platform.moving': {
+      // sweep half-extents, linear speed, running phase
+      const amp = pathAmplitude(obj, 3.5);
+      return { param0: amp.ax, param1: amp.ay, param2: obj.speed ?? 3, param3: 0 };
+    }
+    case 'saw': {
+      // spin (rad/s), sweep half-extent, linear speed, running phase
+      const amp = pathAmplitude(obj, 0);
+      return { param0: obj.omega ?? 7, param1: amp.ax, param2: obj.speed ?? 2.5, param3: 0 };
+    }
+    case 'crusher':
+      // cycle period (ticks), drop distance (m), phase offset
+      return { param0: obj.period ?? 150, param1: obj.speed ?? 3, param2: obj.delay ?? 0, param3: 0 };
+    case 'platform.rotating':
+      return { param0: obj.omega ?? 1, param1: 0, param2: 0, param3: 0 };
+    case 'platform.disappearing':
+      // period, phase offset
+      return { param0: obj.period ?? 180, param1: obj.delay ?? 0, param2: 0, param3: 0 };
+    case 'platform.collapsing':
+      // stand half-width, stood counter, ticks before it lets go
+      return { param0: w / 2 + 0.3, param1: 0, param2: obj.delay ?? 30, param3: 0 };
+    case 'conveyor':
+      // half-width, belt speed (sign = direction)
+      return { param0: w / 2, param1: obj.speed ?? 4, param2: 0, param3: 0 };
+    case 'bounce':
+      // half-width, launch speed
+      return { param0: w / 2, param1: obj.speed ?? 18, param2: 0, param3: 0 };
+    default:
+      return {
+        param0: obj.speed ?? obj.period ?? w,
+        param1: obj.rate ?? obj.offTicks ?? h,
+        param2: obj.delay ?? obj.warningTicks ?? 0,
+        param3: obj.onTicks ?? obj.omega ?? 0,
+      };
   }
-  return {
-    param0: obj.speed ?? obj.period ?? obj.w ?? 0,
-    param1: obj.path?.length ?? obj.rate ?? obj.offTicks ?? obj.h ?? 0,
-    param2: obj.mode === 'pingpong' ? 1 : (obj.delay ?? obj.warningTicks ?? 0),
-    param3: obj.onTicks ?? obj.omega ?? 0,
-  };
 }
 
 export function spawnHazardEntity(world: World, obj: LevelObject, kind: number): Entity {
@@ -128,6 +171,21 @@ export function createKinematicCircle(world: World, obj: LevelObject, kind: numb
   return entity;
 }
 
+/** Drive a kinematic body toward `target` over one tick (exact arrival, so riders get the real velocity). */
+export function steerTo(world: World, entity: Entity, tx: number, ty: number): void {
+  const ctx = getContext(world);
+  const body = ctx.bodies.get(entity);
+  if (!body) return;
+  const dt = 1 / ctx.tuning.tickRate;
+  const p = body.getPosition();
+  body.setLinearVelocity(new Vec2((tx - p.x) / dt, (ty - p.y) / dt));
+}
+
+export function anchorOf(entity: Entity, fallback: { x: number; y: number }): { x: number; y: number } {
+  if (!entity.has(Anchor)) entity.add(Anchor({ x: fallback.x, y: fallback.y }));
+  return entity.get(Anchor) ?? fallback;
+}
+
 export function kill(world: World, player: Entity, x: number, y: number): void {
   takeDamage(world, player, 9999, 'body', -1, x, y, true);
 }
@@ -144,24 +202,20 @@ export function nearKill(
   if (dx < reach && dy < reach) kill(world, player, pt.x, pt.y);
 }
 
+/**
+ * Tag a rider. The controller does the actual carrying (it reads the ground body's velocity from
+ * the foot raycast), so this only records the relation for gameplay/rendering.
+ */
 export function carryRider(
-  world: World,
+  _world: World,
   player: Entity,
   hazard: Entity,
   pt: TransformView,
   ht: TransformView,
   ctrl: ControllerView,
-  dt: number,
+  _dt: number,
 ): void {
   const dx = Math.abs(pt.x - ht.x);
   if (!ctrl.grounded || dx >= 2.4 || pt.y <= ht.y || pt.y >= ht.y + 1.4) return;
   player.add(StandingOn(hazard));
-  const ctx = getContext(world);
-  const pb = ctx.bodies.get(hazard);
-  const body = ctx.bodies.get(player);
-  if (pb && body) {
-    const pv = pb.getLinearVelocity();
-    const v = body.getLinearVelocity();
-    body.setLinearVelocity(new Vec2(v.x + pv.x * dt * 10, v.y + pv.y));
-  }
 }

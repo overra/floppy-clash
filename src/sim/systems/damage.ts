@@ -12,6 +12,8 @@ export function damageDeath(world: World): void {
   const margin = ctx.level.killMargin ?? 6;
 
   world.query(living).updateEach(([player, health, transform], entity) => {
+    // Deaths dealt by takeDamage() already emitted their kill; burn ticks and the void below do not.
+    const aliveBefore = health.hp > 0;
     const status = entity.get(Status);
     if (status) {
       if (status.burning > 0) {
@@ -30,6 +32,10 @@ export function damageDeath(world: World): void {
       transform.y < bounds.y - margin ||
       transform.y > bounds.y + bounds.h + margin;
     if (oob) health.hp = 0;
+
+    if (health.hp <= 0 && aliveBefore) {
+      emit(world, { type: 'kill', source: -1, target: entity, x: transform.x, y: transform.y });
+    }
 
     if (health.hp <= 0) {
       entity.add(Dead());

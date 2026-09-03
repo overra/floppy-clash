@@ -22,9 +22,13 @@ export function rules(world: World): void {
     if (round.ticks <= 1 && match.round > 0) {
       nextMatchLevel(world);
       respawnPlayers(world);
+      // Pick up the level index the rotation just stored; the copy above predates it.
+      const fresh = world.get(MatchState);
+      if (fresh) match.levelIndex = fresh.levelIndex;
     }
     round.phase = RoundPhase.Countdown;
     round.ticks = 0;
+    round.winner = -1;
     emit(world, { type: 'round-phase', phase: 'countdown' });
   } else if (round.phase === RoundPhase.Countdown) {
     if (round.ticks >= ctx.tuning.countdownTicks) {
@@ -38,6 +42,7 @@ export function rules(world: World): void {
       round.ticks = 0;
       if (living.length === 1) {
         const slot = living[0]!;
+        round.winner = slot;
         const key = `wins${slot}` as 'wins0' | 'wins1' | 'wins2' | 'wins3';
         match[key] += 1;
         emit(world, { type: 'score', slot, wins: match[key] });
@@ -71,6 +76,12 @@ export function rules(world: World): void {
 
   world.set(RoundState, round);
   world.set(MatchState, match);
+}
+
+/** Players may move during the countdown but nobody can hurt anybody until "FIGHT". */
+export function combatAllowed(world: World): boolean {
+  const phase = world.get(RoundState)?.phase ?? RoundPhase.Fighting;
+  return phase !== RoundPhase.Loading && phase !== RoundPhase.Countdown;
 }
 
 export function stepScaleForPhase(world: World): number {

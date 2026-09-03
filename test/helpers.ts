@@ -6,15 +6,28 @@ import { blankInputs, type PlayerInput } from '../src/sim/input';
 import { createSimWorld, type CreateSimOptions, type SimHandle } from '../src/sim/world';
 import { Controller, Health, Player, Transform } from '../src/sim/traits';
 
-export function makeSim(partial?: Partial<CreateSimOptions>): SimHandle {
+/**
+ * Builds a sim for tests. Nobody can deal damage during the countdown, so by default we
+ * fast-forward to the Fighting phase (2 ticks with a zero-length countdown); pass
+ * `skipCountdown: false` to observe the countdown itself.
+ */
+export function makeSim(partial?: Partial<CreateSimOptions> & { skipCountdown?: boolean }): SimHandle {
   universe.reset();
-  return createSimWorld({
+  const sim = createSimWorld({
     level: partial?.level ?? gymLevel,
     seed: partial?.seed ?? 1,
     settings: partial?.settings ?? { playerCount: 1, bots: 0 },
     spawnPlayers: partial?.spawnPlayers,
     boxes: partial?.boxes,
   });
+  if (partial?.skipCountdown !== false) {
+    const saved = sim.ctx.tuning.countdownTicks;
+    sim.ctx.tuning.countdownTicks = 0;
+    sim.step();
+    sim.step();
+    sim.ctx.tuning.countdownTicks = saved;
+  }
+  return sim;
 }
 
 export function hold(partial: Partial<PlayerInput>): PlayerInput {

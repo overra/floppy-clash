@@ -1,7 +1,7 @@
 import { getContext } from '../context';
 import { createBoxBody, registerBody } from '../physics/bodies';
 import { HazardKind, Static, Transform } from '../traits';
-import { nearKill, spawnHazardEntity } from './common';
+import { kill, spawnHazardEntity } from './common';
 import type { HazardModule } from './types';
 
 export const spikes: HazardModule = {
@@ -16,8 +16,11 @@ export const spikes: HazardModule = {
     registerBody(world, entity, body);
     return entity;
   },
-  contact(world, player, _hz, ht) {
+  contact(world, player, hz, ht) {
     const pt = player.get(Transform);
-    if (pt) nearKill(world, player, pt, ht, 0.7);
+    if (!pt) return;
+    // The strip is w wide (param0); anyone whose feet land on it dies along its whole length.
+    const halfW = (hz.param0 || 2) / 2;
+    if (Math.abs(pt.x - ht.x) < halfW + 0.2 && Math.abs(pt.y - ht.y) < 0.75) kill(world, player, pt.x, pt.y);
   },
 };

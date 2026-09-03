@@ -9,6 +9,8 @@ export interface MatchSettings {
   enabledLevels: string[] | 'all';
   playerCount: number;
   bots: number;
+  /** Palette index per slot (humans pick theirs on the join screen); slots past the end use their index. */
+  colors?: number[];
 }
 
 export const DEFAULT_SETTINGS: MatchSettings = {

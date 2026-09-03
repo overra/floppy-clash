@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { consumeLatch, emptyLatch, radialDeadzone, readPad } from '../src/input/gamepad';
+import { consumeLatch, createPadEdgeTracker, emptyLatch, isPadKey, padIndexOf, padKey, padLabel, radialDeadzone, readPad } from '../src/input/gamepad';
 
 function fakePad(partial: { id?: string; mapping?: GamepadMappingType; axes?: number[]; buttons?: boolean[] }): Gamepad {
   const buttons = (partial.buttons ?? []).map((pressed) => ({
@@ -94,5 +94,57 @@ describe('gamepad mapping', () => {
     });
     const input = readPad(pad, latch, { x: 1, y: 0 }, { jump: 2, attack: 7, block: 6, throw: 3, pause: 9 });
     expect(input.jump).toBe(true);
+  });
+});
+
+describe('pad menu edges', () => {
+  it('keys seats by browser slot, not the (shared) id string, and shortens the label', () => {
+    const pad = fakePad({ id: 'DualSense Wireless Controller (STANDARD GAMEPAD Vendor: 054c Product: 0ce6)' });
+    expect(padKey(pad)).toBe('pad:0');
+    expect(padKey({ index: 2 })).toBe('pad:2');
+    expect(padIndexOf('pad:3')).toBe(3);
+    expect(padIndexOf('keyboard')).toBe(-1);
+    expect(isPadKey('pad:1')).toBe(true);
+    expect(isPadKey('keyboard')).toBe(false);
+    expect(padLabel(pad)).toBe('DualSense Wireless Controller');
+    expect(padLabel({ id: 'Xbox 360 Controller (XInput STANDARD GAMEPAD)' })).toBe('Xbox 360 Controller');
+  });
+
+  it('fires A / B / Start / Select once per press, however long they are held', () => {
+    const t = createPadEdgeTracker();
+    const held = fakePad({ buttons: [true, true, false, false, false, false, false, false, true, true] });
+    const first = t.update(held, 0);
+    expect(first).toMatchObject({ a: true, b: true, start: true, select: true });
+    const again = t.update(held, 16);
+    expect(again).toMatchObject({ a: false, b: false, start: false, select: false });
+    t.update(fakePad({ buttons: [] }), 32);
+    expect(t.update(held, 48).a).toBe(true);
+  });
+
+  it('honours a remapped pause button for Start', () => {
+    const t = createPadEdgeTracker();
+    expect(t.update(fakePad({ buttons: [false, false, false, false, true] }), 0, 4).start).toBe(true);
+  });
+
+  it('turns the d-pad and left stick into a repeating digital direction with hysteresis', () => {
+    const t = createPadEdgeTracker();
+    const down = fakePad({ buttons: [false, false, false, false, false, false, false, false, false, false, false, false, false, true] });
+    expect(t.update(down, 0).down).toBe(true);
+    // Held: quiet until the repeat delay, then a tick every repeat interval.
+    expect(t.update(down, 100).down).toBe(false);
+    expect(t.update(down, 400).down).toBe(true);
+    expect(t.update(down, 450).down).toBe(false);
+    expect(t.update(down, 520).down).toBe(true);
+    // Release, then the stick: a nudge under the threshold is nothing, a push is a move, and
+    // easing back to the hysteresis band does not re-trigger or flip.
+    t.update(fakePad({ buttons: [] }), 600);
+    expect(t.update(fakePad({ axes: [0.4, 0, 0, 0] }), 620)).toMatchObject({ right: false, left: false });
+    expect(t.update(fakePad({ axes: [0.9, 0, 0, 0] }), 640).right).toBe(true);
+    expect(t.update(fakePad({ axes: [0.5, 0, 0, 0] }), 660).right).toBe(false);
+    expect(t.update(fakePad({ axes: [0.2, 0, 0, 0] }), 680).right).toBe(false);
+    expect(t.update(fakePad({ axes: [0.9, 0, 0, 0] }), 700).right).toBe(true);
+    // Up on the stick is negative Y.
+    t.update(fakePad({ buttons: [] }), 720);
+    expect(t.update(fakePad({ axes: [0, -0.9, 0, 0] }), 740).up).toBe(true);
   });
 });

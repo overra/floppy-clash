@@ -1,6 +1,8 @@
+import { universe } from 'koota';
 import { describe, expect, it } from 'vitest';
 import { Health, MatchState, RoundPhase, RoundState } from '../src/sim/traits';
-import { hold, makeSim, playerOf } from './helpers';
+import { createSimWorld, type SimHandle } from '../src/sim/world';
+import { gymLevel, hold, makeSim, playerOf } from './helpers';
 
 describe('fists-only match', () => {
   it('finishes 10 rounds and survives a mid-round zero-input disconnect', () => {
@@ -31,4 +33,18 @@ describe('fists-only match', () => {
     expect(host.ecs.get(MatchState)?.round ?? 0).toBeGreaterThanOrEqual(10);
     expect(host.hash()).toMatch(/^[0-9a-f]{8}$/);
   }, 60_000);
+
+  it('can start and tear down far more matches than the ECS world cap in one session', () => {
+    // Koota caps live worlds at 16; a long couch session starts a new sim per match, so every
+    // old one must be released or the game dies on the seventeenth "Start".
+    universe.reset();
+    let sim: SimHandle | null = null;
+    for (let i = 0; i < 40; i++) {
+      sim?.destroy();
+      sim = createSimWorld({ level: gymLevel, seed: i, settings: { playerCount: 1, bots: 1 } });
+      sim.step();
+    }
+    expect(sim!.getTick()).toBe(1);
+    sim!.destroy();
+  });
 });

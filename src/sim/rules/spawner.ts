@@ -1,5 +1,6 @@
 import { type World } from 'koota';
 import { getContext } from '../context';
+import { raycastClosest } from '../physics/queries';
 import { DropState, Loose, RoundPhase, RoundState, Weapon } from '../traits';
 import { droppableWeapons } from '../weapons/defs';
 import { spawnWeapon } from '../weapons/systems';
@@ -35,10 +36,22 @@ export function spawner(world: World): void {
       break;
     }
   }
-  const x = ctx.rng.range(ctx.level.drops.xMin, ctx.level.drops.xMax);
-  const y = ctx.level.bounds.y + ctx.level.bounds.h + 1.5;
+  const { bounds } = ctx.level;
+  const y = bounds.y + bounds.h + 1.5;
+  // A crate that falls straight into the void is a wasted drop: prefer columns with ground under them.
+  let x = ctx.rng.range(ctx.level.drops.xMin, ctx.level.drops.xMax);
+  for (let attempt = 0; attempt < 6; attempt++) {
+    const candidate = attempt === 0 ? x : ctx.rng.range(ctx.level.drops.xMin, ctx.level.drops.xMax);
+    const ground = raycastClosest(world, candidate, y, candidate, bounds.y - 1, (h) => h.kind !== 'solid' && h.kind !== 'prop');
+    if (ground) {
+      x = candidate;
+      break;
+    }
+  }
   spawnWeapon(world, def.id, x, y);
-  const scale = ctx.level.drops.intervalScale ?? 1;
+  // More fighters burn through more guns: tighten the cadence as the lobby grows.
+  const crowd = 1 + 0.15 * Math.max(0, ctx.players.length - 2);
+  const scale = (ctx.level.drops.intervalScale ?? 1) / crowd;
   drop.nextDrop =
     ctx.tick +
     Math.floor(ctx.rng.range(ctx.tuning.dropIntervalMinTicks, ctx.tuning.dropIntervalMaxTicks) * scale);

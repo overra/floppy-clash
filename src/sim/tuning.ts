@@ -9,23 +9,34 @@ export const tuning = {
   runSpeed: 8,
   duckSpeedScale: 0.5,
   groundAccelTicks: 6,
-  airAccelTicks: 20,
-  jumpSpeed: 11,
+  // Full air speed in a quarter second: steering back over a ledge after a wall-kick has to be quick.
+  airAccelTicks: 14,
+  // Apex ≈ v²/2g ≈ 3.1 m (~1.7 body heights): ledges up to ~2.7 m above the feet are a single hop,
+  // which is what lets a platform sit a full head above a fighter (2.2 m of air) and still be hopped.
+  jumpSpeed: 13.6,
   coyoteTicks: 5,
   jumpBufferTicks: 6,
   wallSlideMaxFall: 3,
-  wallJumpX: 6.5,
-  wallJumpY: 12,
-  wallJumpLockTicks: 8,
+  // A wall-kick is mostly up and only a little out: holding towards the wall brings the fighter back
+  // to it at the apex (~2.8 m higher), so repeated kicks climb instead of looping in a wide arc.
+  wallJumpX: 4.5,
+  wallJumpY: 13,
+  wallJumpLockTicks: 5,
   wallDetectDistance: 0.55,
+  // Ledge assist: a lip no more than this far above the feet gets scrambled onto (see controller.ts),
+  // probed this far outside the capsule, with at least this much speed carried over the edge.
+  mantleReach: 0.9,
+  mantleProbe: 0.25,
+  mantleSpeed: 2.5,
   maxFallSpeed: 28,
   maxHorizontalSpeed: 40,
 
   punchSelfImpulse: 4,
   blockPunchBonus: 3,
   punchDamage: 22,
-  punchKnockback: 6,
-  punchKnockbackUp: 0.3,
+  // The pop lifts the victim off the ground so the shove carries instead of dying to floor friction.
+  punchKnockback: 8,
+  punchKnockbackUp: 6,
   punchRange: 0.9,
   punchRadius: 0.45,
   punchActiveTicks: 4,
@@ -49,17 +60,19 @@ export const tuning = {
   refillOnPickup: true,
   flingWhenEmpty: true,
 
-  firstDropDelayTicks: 180,
-  dropIntervalMinTicks: 360,
-  dropIntervalMaxTicks: 600,
+  // Guns rain steadily: first one lands as the fight opens, then every 3–6 s (faster with more players).
+  firstDropDelayTicks: 90,
+  dropIntervalMinTicks: 180,
+  dropIntervalMaxTicks: 360,
   maxLooseWeapons: 6,
 
   lavaDamage: 35,
   lavaCooldownTicks: 30,
 
-  countdownTicks: 180,
-  lastKillSlowmo: 0.25,
-  slowmoTicks: 72,
+  countdownTicks: 120,
+  // 45 sim ticks at 0.3x is ~2.5 s of real time: long enough to savour, short enough not to stall the party.
+  lastKillSlowmo: 0.3,
+  slowmoTicks: 45,
   scoreboardTicks: 90,
 
   cameraPadding: 4,
