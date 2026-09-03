@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { DEFAULT_USER_SETTINGS, loadSettings, saveSettings } from '../src/ui/settingsStore';
-import { brandMarkup, edgePressed } from '../src/ui/menus';
+import { brandMarkup, edgePressed, hpSelectOptions } from '../src/ui/menus';
+import { HP_PRESETS } from '../src/input/seats';
 import { loadStats, recordKos, recordMatch } from '../src/ui/statsStore';
 import { objectSchemaFields, applyField } from '../src/editor/properties';
 import { createEditorState, addObject, addSpawn, setDropEdge } from '../src/editor/editor';
@@ -21,6 +22,15 @@ function memoryStorage() {
 }
 
 describe('settings persistence', () => {
+  it('HP preset select lists Appendix A values', () => {
+    const markup = hpSelectOptions(100);
+    for (const hp of HP_PRESETS) {
+      expect(markup).toContain(`value="${hp}"`);
+    }
+    expect(markup).toContain('value="100" selected');
+    expect(hpSelectOptions(75)).toContain('value="75" selected');
+  });
+
   it('brand markup ships the distinctive logo and title', () => {
     expect(brandMarkup()).toContain('id="brand-logo"');
     expect(brandMarkup()).toContain('/favicon.svg');

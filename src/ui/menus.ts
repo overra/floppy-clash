@@ -40,6 +40,10 @@ export type MenuState = {
   lastSnapTick: number;
   /** Seat index opened by a mid-round disconnect; first new pad may claim it. */
   claimSeat: number;
+  /** Pad id that triggered the automatic remap offer (PLAN 4.12). */
+  remapPadId: string;
+  /** Screen to restore after Settings opened by remap / Back. */
+  returnScreen: Screen | '';
   wins?: number[];
 };
 
@@ -68,7 +72,32 @@ export function createMenuState(): MenuState {
     netState: 'idle',
     lastSnapTick: 0,
     claimSeat: -1,
+    remapPadId: '',
+    returnScreen: '',
   };
+}
+
+/** PLAN 4.12: offer remap at connect time, not mid-round (play/pause/disconnect). */
+export function shouldOfferRemapOnScreen(screen: Screen): boolean {
+  return screen === 'menu' || screen === 'join' || screen === 'lobby' || screen === 'settings';
+}
+
+/** Read lobby/settings HP + first-to so Start match is not stale vs the form. */
+export function readMatchSettingsFromCard(root: ParentNode, menus: MenuState): void {
+  const hp = root.querySelector('#hp') as HTMLInputElement | HTMLSelectElement | null;
+  const ft = root.querySelector('#ft') as HTMLInputElement | null;
+  if (hp) menus.maxHp = Number(hp.value) || menus.maxHp;
+  if (ft) menus.firstTo = Number(ft.value) || 0;
+}
+
+export function syncMatchSettingsFromDom(
+  root: ParentNode,
+  menus: MenuState,
+  settings: { maxHp: number; firstTo: number },
+): void {
+  readMatchSettingsFromCard(root, menus);
+  settings.maxHp = menus.maxHp;
+  settings.firstTo = menus.firstTo;
 }
 
 /** PLAN 4.12: remember which joined seat lost its pad. */
@@ -290,7 +319,8 @@ export function renderMenus(
   root.append(wrap);
 }
 
-function hpSelectOptions(current: number): string {
+/** PLAN Appendix A host HP values as `<option>` markup. */
+export function hpSelectOptions(current: number): string {
   const values = (HP_PRESETS as readonly number[]).includes(current)
     ? [...HP_PRESETS]
     : [...HP_PRESETS, current].sort((a, b) => a - b);
@@ -322,9 +352,10 @@ function renderSettings(
     userLevels.length === 0
       ? '<p style="color:#9aa3b2;font-size:12px">No saved editor levels yet.</p>'
       : userLevels.map((l) => boxFor(l, ' · user')).join('');
-  const lastMap = Object.entries(maps)[0]?.[1] ?? DEFAULT_MAP;
-  const lastId = Object.keys(maps)[0] ?? '';
-  card.innerHTML = `<h2>Settings</h2>
+  const lastMap = (state.remapPadId && maps[state.remapPadId]) || Object.entries(maps)[0]?.[1] || DEFAULT_MAP;
+  const lastId = state.remapPadId || Object.keys(maps)[0] || '';
+  if (state.remapPadId) card.dataset.remapPad = state.remapPadId;
+  card.innerHTML = `<h2>Settings</h2>`
       <label>HP <select id="hp">${hpSelectOptions(state.maxHp)}</select></label><br/>
       <label>First to <input id="ft" type="number" value="${state.firstTo}"></label><br/>
       <label>Bots <input id="bots" type="number" value="${state.bots}"></label><br/>
@@ -398,7 +429,7 @@ function renderLobby(
   card.innerHTML = `<h2>Online lobby</h2>
     <p>Host-authoritative WebRTC. Signaling is local (<code>npm run server</code>); live WAN STUN/TURN is a hardware path.</p>
     <label>Room code <input id="room" value="${state.roomCode}" placeholder="ABC123" maxlength="8"></label>
-    <label>HP <input id="hp" type="number" value="${state.maxHp}"></label>
+    <label>HP <select id="hp">${hpSelectOptions(state.maxHp)}</select></label>
     <label>First to <input id="ft" type="number" value="${state.firstTo}"></label>
     <p style="color:#9aa3b2;font-size:13px">Host-only: HP / first-to apply when you Host. Chat is reliable-channel text.</p>
     <p id="netstatus" data-net-role="${state.netRole}" data-net-state="${state.netState}">${

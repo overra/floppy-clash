@@ -53,6 +53,21 @@ function countJoints(physics: PhysicsWorld): number {
 }
 
 describe('M8 snapshot', () => {
+  it('late-join restores each HP preset onto Health and MatchState', () => {
+    for (const maxHp of [1, 25, 50, 200] as const) {
+      const host = makeSim({ seed: 300 + maxHp, settings: { playerCount: 2, maxHp } });
+      expect(playerOf(host, 0).get(Health)?.hp).toBe(maxHp);
+      expect(playerOf(host, 0).get(Health)?.maxHp).toBe(maxHp);
+      const snap = serializeWorld(host.ecs);
+      expect(snap.maxHp).toBe(maxHp);
+      const view = createClientView(snap);
+      expect(playerOf(view.sim, 0).get(Health)?.hp).toBe(maxHp);
+      expect(playerOf(view.sim, 0).get(Health)?.maxHp).toBe(maxHp);
+      expect(playerOf(view.sim, 1).get(Health)?.hp).toBe(maxHp);
+      expect(view.sim.ecs.get(MatchState)?.maxHp).toBe(maxHp);
+    }
+  });
+
   it('ensureSeat spawns a missing late-join slot and snapshots it', () => {
     const host = makeSim({ seed: 210, settings: { playerCount: 1 } });
     expect(host.players().length).toBe(1);

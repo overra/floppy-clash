@@ -38,7 +38,12 @@ export function worldFromSnapshot(snap: WorldSnapshot, levelOverride?: LevelDef)
   return createSimWorld({
     level,
     seed: snap.seed ?? 1,
-    settings: { playerCount, bots: 0 },
+    settings: {
+      playerCount,
+      bots: 0,
+      maxHp: snap.maxHp ?? 100,
+      firstTo: snap.firstTo ?? 0,
+    },
     boxes: 0,
   });
 }

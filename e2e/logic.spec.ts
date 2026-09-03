@@ -480,10 +480,235 @@ test('same-id pad reconnect resumes play after disconnect overlay', async ({ pag
   await expect.poll(async () => page.evaluate(() => window.__floppy?.phase)).toBe(2);
 });
 
+test('HP preset 25 is the spawned match Health', async ({ page }) => {
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Settings' }).click();
+  await expect(page.locator('#hp')).toHaveValue('100');
+  const opts = await page.locator('#hp option').allTextContents();
+  expect(opts.map((s) => s.trim())).toEqual(expect.arrayContaining(['1', '25', '50', '100', '200']));
+  await page.locator('#hp').selectOption('25');
+  await page.getByRole('button', { name: 'Save', exact: true }).click();
+  await page.getByRole('button', { name: 'Solo vs Bots' }).click();
+  await page.keyboard.press('Enter');
+  await page.waitForTimeout(800);
+  if (await page.getByRole('heading', { name: 'Join' }).isVisible()) {
+    await page.getByRole('button', { name: 'Start' }).click();
+  }
+  await page.waitForFunction(() => window.__floppy?.phase === 2, null, { timeout: 15_000 });
+  await expect.poll(async () => page.evaluate(() => window.__floppy?.p0Hp ?? 0)).toBe(25);
+  await expect.poll(async () => page.evaluate(() => window.__floppy?.maxHp ?? 0)).toBe(25);
+});
+
+test('pad Start pauses on the rising edge; hold does not resume; same pad resumes', async ({
+  page,
+}) => {
+  await page.addInitScript(() => {
+    const mk = (id: string, index: number) => {
+      const buttons = Array.from({ length: 17 }, () => ({ pressed: false, touched: false, value: 0 }));
+      return {
+        id,
+        index,
+        connected: true,
+        mapping: 'standard' as const,
+        axes: [0, 0, 0, 0],
+        buttons,
+        timestamp: 1,
+        hapticActuators: [],
+        vibrationActuator: null,
+      };
+    };
+    const pads = [mk('e2e-pause-a', 0), mk('e2e-pause-b', 1)];
+    Object.defineProperty(navigator, 'getGamepads', { value: () => pads, configurable: true });
+    (window as unknown as { __e2ePads: typeof pads }).__e2ePads = pads;
+  });
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Local Play' }).click();
+  await page.evaluate(() => {
+    const pads = (window as unknown as { __e2ePads: Gamepad[] }).__e2ePads;
+    for (const pad of pads) {
+      window.dispatchEvent(Object.assign(new Event('gamepadconnected'), { gamepad: pad }));
+    }
+  });
+  await page.evaluate(() => {
+    const pads = (window as unknown as { __e2ePads: { buttons: { pressed: boolean }[] }[] }).__e2ePads;
+    for (const pad of pads) pad.buttons[0]!.pressed = true;
+  });
+  await page.waitForTimeout(80);
+  await page.evaluate(() => {
+    const pads = (window as unknown as { __e2ePads: { buttons: { pressed: boolean }[] }[] }).__e2ePads;
+    for (const pad of pads) pad.buttons[0]!.pressed = false;
+  });
+  await expect(page.locator('[data-seat="0"]')).toHaveAttribute('data-ready', '1');
+  await page.getByRole('button', { name: 'Start' }).click();
+  await page.waitForFunction(() => window.__floppy?.phase === 2, null, { timeout: 15_000 });
+  await page.evaluate(() => {
+    const pads = (window as unknown as { __e2ePads: { buttons: { pressed: boolean }[] }[] }).__e2ePads;
+    pads[0]!.buttons[9]!.pressed = true;
+  });
+  await expect(page.getByRole('heading', { name: 'Paused' })).toBeVisible();
+  await expect.poll(async () => page.evaluate(() => window.__floppy?.pausedBy)).toBe('e2e-pause-a');
+  await page.waitForTimeout(200);
+  await expect(page.getByRole('heading', { name: 'Paused' })).toBeVisible();
+  await page.evaluate(() => {
+    const pads = (window as unknown as { __e2ePads: { buttons: { pressed: boolean }[] }[] }).__e2ePads;
+    pads[1]!.buttons[9]!.pressed = true;
+  });
+  await page.waitForTimeout(120);
+  await expect(page.getByRole('heading', { name: 'Paused' })).toBeVisible();
+  await page.evaluate(() => {
+    const pads = (window as unknown as { __e2ePads: { buttons: { pressed: boolean }[] }[] }).__e2ePads;
+    pads[0]!.buttons[9]!.pressed = false;
+    pads[1]!.buttons[9]!.pressed = false;
+  });
+  await page.waitForTimeout(80);
+  await page.evaluate(() => {
+    const pads = (window as unknown as { __e2ePads: { buttons: { pressed: boolean }[] }[] }).__e2ePads;
+    pads[0]!.buttons[9]!.pressed = true;
+  });
+  await expect(page.getByRole('heading', { name: 'Paused' })).toHaveCount(0);
+  await expect.poll(async () => page.evaluate(() => window.__floppy?.pausedBy)).toBeNull();
+});
+
+test('non-standard pad on the menu opens remap with that pad id', async ({ page }) => {
+  await page.addInitScript(() => {
+    const buttons = Array.from({ length: 17 }, () => ({ pressed: false, touched: false, value: 0 }));
+    const pad = {
+      id: 'e2e-nonstandard',
+      index: 0,
+      connected: true,
+      mapping: '' as GamepadMappingType,
+      axes: [0, 0, 0, 0],
+      buttons,
+      timestamp: 1,
+      hapticActuators: [],
+      vibrationActuator: null,
+    };
+    Object.defineProperty(navigator, 'getGamepads', { value: () => [pad], configurable: true });
+    (window as unknown as { __e2ePad: typeof pad }).__e2ePad = pad;
+  });
+  await page.goto('/');
+  await expect(page.getByRole('heading', { name: 'Floppy Clash' })).toBeVisible();
+  await page.evaluate(() => {
+    const pad = (window as unknown as { __e2ePad: Gamepad }).__e2ePad;
+    window.dispatchEvent(Object.assign(new Event('gamepadconnected'), { gamepad: pad }));
+  });
+  await expect(page.getByRole('heading', { name: 'Settings' })).toBeVisible();
+  await expect(page.locator('.notice')).toContainText(/remap offered/i);
+  await expect(page.locator('#padid')).toHaveValue('e2e-nonstandard');
+  await expect(page.locator('[data-remap-pad]')).toHaveAttribute('data-remap-pad', 'e2e-nonstandard');
+});
+
+test('four pads: seat 1 stick moves P2, not P1', async ({ page }) => {
+  await page.addInitScript(() => {
+    const mk = (id: string, index: number) => {
+      const buttons = Array.from({ length: 17 }, () => ({ pressed: false, touched: false, value: 0 }));
+      return {
+        id,
+        index,
+        connected: true,
+        mapping: 'standard' as const,
+        axes: [0, 0, 0, 0],
+        buttons,
+        timestamp: 1,
+        hapticActuators: [],
+        vibrationActuator: null,
+      };
+    };
+    const pads = [mk('e2e-route-0', 0), mk('e2e-route-1', 1), mk('e2e-route-2', 2), mk('e2e-route-3', 3)];
+    Object.defineProperty(navigator, 'getGamepads', { value: () => pads, configurable: true });
+    (window as unknown as { __e2ePads: typeof pads }).__e2ePads = pads;
+  });
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Local Play' }).click();
+  await page.evaluate(() => {
+    const pads = (window as unknown as { __e2ePads: Gamepad[] }).__e2ePads;
+    for (const pad of pads) {
+      window.dispatchEvent(Object.assign(new Event('gamepadconnected'), { gamepad: pad }));
+    }
+  });
+  await page.evaluate(() => {
+    const pads = (window as unknown as { __e2ePads: { buttons: { pressed: boolean }[] }[] }).__e2ePads;
+    for (const pad of pads) pad.buttons[0]!.pressed = true;
+  });
+  await page.waitForTimeout(80);
+  await page.evaluate(() => {
+    const pads = (window as unknown as { __e2ePads: { buttons: { pressed: boolean }[] }[] }).__e2ePads;
+    for (const pad of pads) pad.buttons[0]!.pressed = false;
+  });
+  await page.getByRole('button', { name: 'Start' }).click();
+  await page.waitForFunction(() => window.__floppy?.phase === 2, null, { timeout: 15_000 });
+  const before = await page.evaluate(() => ({
+    x0: window.__floppy?.playerXs?.[0] ?? 0,
+    x1: window.__floppy?.playerXs?.[1] ?? 0,
+  }));
+  await page.evaluate(() => {
+    const pads = (window as unknown as { __e2ePads: { axes: number[] }[] }).__e2ePads;
+    pads[1]!.axes[0] = 1;
+  });
+  await expect
+    .poll(async () => page.evaluate(() => window.__floppy?.playerXs?.[1] ?? 0), { timeout: 8_000 })
+    .toBeGreaterThan(before.x1 + 0.35);
+  const after0 = await page.evaluate(() => window.__floppy?.playerXs?.[0] ?? 0);
+  expect(Math.abs(after0 - before.x0)).toBeLessThan(0.35);
+});
+
+test('saved remap jump button makes the joined seat jump', async ({ page }) => {
+  await page.addInitScript(() => {
+    const buttons = Array.from({ length: 17 }, () => ({ pressed: false, touched: false, value: 0 }));
+    const pad = {
+      id: 'e2e-jump-pad',
+      index: 0,
+      connected: true,
+      mapping: 'standard' as const,
+      axes: [0, 0, 0, 0],
+      buttons,
+      timestamp: 1,
+      hapticActuators: [],
+      vibrationActuator: null,
+    };
+    Object.defineProperty(navigator, 'getGamepads', { value: () => [pad], configurable: true });
+    (window as unknown as { __e2ePad: typeof pad }).__e2ePad = pad;
+  });
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Settings' }).click();
+  await page.locator('#padid').fill('e2e-jump-pad');
+  await page.locator('#map-jump').fill('2');
+  await page.getByRole('button', { name: 'Save remap' }).click();
+  await page.getByRole('button', { name: 'Back' }).click();
+  await page.getByRole('button', { name: 'Local Play' }).click();
+  await page.evaluate(() => {
+    const pad = (window as unknown as { __e2ePad: Gamepad }).__e2ePad;
+    window.dispatchEvent(Object.assign(new Event('gamepadconnected'), { gamepad: pad }));
+  });
+  await page.evaluate(() => {
+    const pad = (window as unknown as { __e2ePad: { buttons: { pressed: boolean }[] } }).__e2ePad;
+    pad.buttons[0]!.pressed = true;
+  });
+  await page.waitForTimeout(80);
+  await page.evaluate(() => {
+    const pad = (window as unknown as { __e2ePad: { buttons: { pressed: boolean }[] } }).__e2ePad;
+    pad.buttons[0]!.pressed = false;
+  });
+  await expect(page.locator('[data-seat="0"]')).toHaveAttribute('data-ready', '1');
+  await page.getByRole('button', { name: 'Start' }).click();
+  await page.waitForFunction(() => window.__floppy?.phase === 2, null, { timeout: 15_000 });
+  const y0 = await page.evaluate(() => window.__floppy?.playerYs?.[0] ?? 0);
+  await page.evaluate(() => {
+    const pad = (window as unknown as { __e2ePad: { buttons: { pressed: boolean }[] } }).__e2ePad;
+    pad.buttons[2]!.pressed = true;
+  });
+  await expect
+    .poll(async () => page.evaluate(() => window.__floppy?.playerYs?.[0] ?? 0), { timeout: 5_000 })
+    .toBeGreaterThan(y0 + 0.4);
+});
+
 test('online lobby has room code and chat', async ({ page }) => {
   await page.goto('/');
   await page.getByRole('button', { name: 'Online' }).click();
   await expect(page.getByRole('heading', { name: 'Online lobby' })).toBeVisible();
+  await expect(page.locator('#hp')).toHaveValue('100');
+  const lobbyHp = await page.locator('#hp option').allTextContents();
+  expect(lobbyHp.map((s) => s.trim())).toEqual(expect.arrayContaining(['1', '25', '50', '100', '200']));
   await page.locator('#room').fill('TEST01');
   await page.locator('#chat').fill('hello couch');
   await page.getByRole('button', { name: 'Send' }).click();

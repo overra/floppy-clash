@@ -8,12 +8,23 @@ import {
   humanSeatAssignments,
   keyboardSeatIndex,
   matchPlayerCount,
+  pauseRisingEdge,
   routeSeatInputs,
   samplePrimaryLocal,
   seatIndexForPad,
 } from '../src/input/seats';
-import { canStartMatch, createMenuState, cycleSeatColor, takeOrReadySeat, takeSeat } from '../src/ui/menus';
-import { Player } from '../src/sim/traits';
+import {
+  canStartMatch,
+  createMenuState,
+  cycleSeatColor,
+  hpSelectOptions,
+  readMatchSettingsFromCard,
+  shouldOfferRemapOnScreen,
+  syncMatchSettingsFromDom,
+  takeOrReadySeat,
+  takeSeat,
+} from '../src/ui/menus';
+import { Health, Player } from '../src/sim/traits';
 import { hold, makeSim, playerOf } from './helpers';
 import { EMPTY_INPUT, type PlayerInput } from '../src/sim/input';
 
@@ -149,5 +160,54 @@ describe('join seats (PLAN 4.12)', () => {
     expect(playerOf(sim, 0).get(Player)?.color).toBe(3);
     expect(playerOf(sim, 1).get(Player)?.color).toBe(1);
     expect(playerOf(sim, 0).get(Player)?.inputIndex).toBe(0);
+  });
+
+  it('each HP preset is the spawned player Health, not a label-only constant', () => {
+    for (const maxHp of HP_PRESETS) {
+      const sim = makeSim({ seed: 50 + maxHp, settings: { playerCount: 2, maxHp } });
+      expect(playerOf(sim, 0).get(Health)?.hp, String(maxHp)).toBe(maxHp);
+      expect(playerOf(sim, 0).get(Health)?.maxHp, String(maxHp)).toBe(maxHp);
+      expect(playerOf(sim, 1).get(Health)?.hp, String(maxHp)).toBe(maxHp);
+    }
+    const markup = hpSelectOptions(25);
+    for (const hp of HP_PRESETS) expect(markup).toContain(`value="${hp}"`);
+    expect(markup).toContain('selected');
+  });
+
+  it('Start/Options pause is a rising edge (hold does not re-fire)', () => {
+    expect(pauseRisingEdge(false, true)).toBe(true);
+    expect(pauseRisingEdge(true, true)).toBe(false);
+    expect(pauseRisingEdge(true, false)).toBe(false);
+    expect(pauseRisingEdge(false, false)).toBe(false);
+  });
+
+  it('offers remap on menu/join/lobby, not mid-round play/pause/disconnect', () => {
+    expect(shouldOfferRemapOnScreen('menu')).toBe(true);
+    expect(shouldOfferRemapOnScreen('join')).toBe(true);
+    expect(shouldOfferRemapOnScreen('lobby')).toBe(true);
+    expect(shouldOfferRemapOnScreen('settings')).toBe(true);
+    expect(shouldOfferRemapOnScreen('play')).toBe(false);
+    expect(shouldOfferRemapOnScreen('pause')).toBe(false);
+    expect(shouldOfferRemapOnScreen('disconnect')).toBe(false);
+  });
+
+  it('reads HP / first-to from the live form so Start is not stale', () => {
+    const menus = createMenuState();
+    menus.maxHp = 100;
+    menus.firstTo = 0;
+    const settings = { maxHp: 100, firstTo: 0 };
+    const root = {
+      querySelector: (sel: string) => {
+        if (sel === '#hp') return { value: '25' };
+        if (sel === '#ft') return { value: '3' };
+        return null;
+      },
+    } as unknown as ParentNode;
+    readMatchSettingsFromCard(root, menus);
+    expect(menus.maxHp).toBe(25);
+    expect(menus.firstTo).toBe(3);
+    syncMatchSettingsFromDom(root, menus, settings);
+    expect(settings.maxHp).toBe(25);
+    expect(settings.firstTo).toBe(3);
   });
 });

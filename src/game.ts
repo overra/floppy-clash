@@ -20,6 +20,8 @@ import {
   edgePressed,
   markDisconnectedSeat,
   renderMenus,
+  shouldOfferRemapOnScreen,
+  syncMatchSettingsFromDom,
   takeOrReadySeat,
   takeSeat,
 } from './ui/menus';
@@ -31,6 +33,7 @@ import {
   humanSeatAssignments,
   keyboardSeatIndex,
   matchPlayerCount,
+  pauseRisingEdge,
   routeSeatInputs,
   samplePrimaryLocal,
 } from './input/seats';
@@ -111,6 +114,8 @@ type FloppyDebug = {
   lastInputTick: number;
   lastInputBundleLen: number;
   playerXs: number[];
+  playerYs: number[];
+  maxHp: number;
   holdInput: (partial: Partial<PlayerInput>) => void;
   clearInput: () => void;
   clientViewTick: number;
@@ -180,6 +185,7 @@ export function createGame(root: HTMLElement): Game {
   ];
   const joinAHeld = [false, false, false, false];
   const joinStartHeld = [false, false, false, false];
+  const pauseHeld = [false, false, false, false];
   const joinLeftHeld = [false, false, false, false];
   const joinRightHeld = [false, false, false, false];
   let renderer: Renderer | null = null;
@@ -256,6 +262,8 @@ export function createGame(root: HTMLElement): Game {
         },
         editor: () => openEditor(),
         settings: () => {
+          menus.returnScreen = 'menu';
+          menus.remapPadId = '';
           void loadLibrary()
             .then((levels) => {
               extraLevels = levels;
@@ -272,7 +280,11 @@ export function createGame(root: HTMLElement): Game {
           void beginMatch();
         },
         back: () => {
-          menus.screen = 'menu';
+          const ret = menus.returnScreen;
+          menus.returnScreen = '';
+          menus.remapPadId = '';
+          menus.notice = '';
+          menus.screen = ret && ret !== 'settings' ? ret : 'menu';
           show();
         },
         save: () => {
@@ -354,6 +366,7 @@ export function createGame(root: HTMLElement): Game {
   }
 
   async function beginMatch() {
+    syncMatchSettingsFromDom(menusEl, menus, settings);
     const taken = menus.seats.filter((s) => s.taken).length;
     const online = menus.netRole === 'host' && net.peerCount > 0 ? 1 + net.peerCount : 0;
     const vsBots = menus.bots > 0;
@@ -369,8 +382,8 @@ export function createGame(root: HTMLElement): Game {
     startSim(level, {
       playerCount: online ? humans : vsBots ? 1 : matchPlayerCount(menus.seats, false),
       bots: menus.bots,
-      maxHp: settings.maxHp,
-      firstTo: settings.firstTo,
+      maxHp: menus.maxHp,
+      firstTo: menus.firstTo,
       seats,
     });
   }
@@ -390,8 +403,14 @@ export function createGame(root: HTMLElement): Game {
       if (msg.t === 'settings') {
         try {
           const parsed = JSON.parse(msg.json) as { maxHp?: number; firstTo?: number };
-          if (parsed.maxHp) menus.maxHp = parsed.maxHp;
-          if (parsed.firstTo != null) menus.firstTo = parsed.firstTo;
+          if (parsed.maxHp != null) {
+            menus.maxHp = parsed.maxHp;
+            settings.maxHp = parsed.maxHp;
+          }
+          if (parsed.firstTo != null) {
+            menus.firstTo = parsed.firstTo;
+            settings.firstTo = parsed.firstTo;
+          }
           menus.notice = 'Host settings received';
         } catch {
           /* ignore */
@@ -719,10 +738,12 @@ export function createGame(root: HTMLElement): Game {
         joinStartHeld[i] = startDown;
       }
       padInputs.set(pad.id, readConnectedPad(pad, i));
-      if (latch.pause) {
-        latch.pause = false;
+      const pauseDown = latch.pause;
+      latch.pause = false;
+      if (pauseRisingEdge(pauseHeld[i] ?? false, pauseDown)) {
         handlePadStart(pad.id);
       }
+      pauseHeld[i] = pauseDown;
     });
     const online = menus.netRole === 'host' || menus.netRole === 'client';
     if (online || !routeByJoinSeats) {
@@ -959,6 +980,8 @@ export function createGame(root: HTMLElement): Game {
       lastInputTick,
       lastInputBundleLen,
       playerXs: readPlayerXs(handle),
+      playerYs: readPlayerYs(handle),
+      maxHp: handle?.ecs.get(MatchState)?.maxHp ?? settings.maxHp,
       holdInput: (partial) => {
         heldNetInput = { ...EMPTY_INPUT, ...partial };
       },
@@ -1051,6 +1074,15 @@ export function createGame(root: HTMLElement): Game {
       if (p.slot >= 0 && p.slot < 4) xs[p.slot] = t.x;
     });
     return xs;
+  }
+
+  function readPlayerYs(world: SimHandle | null | undefined): number[] {
+    const ys = [0, 0, 0, 0];
+    if (!world) return ys;
+    world.ecs.query(Player, Transform).updateEach(([p, t]) => {
+      if (p.slot >= 0 && p.slot < 4) ys[p.slot] = t.y;
+    });
+    return ys;
   }
 
   function readPlayerColors(world: SimHandle | null | undefined): number[] {
@@ -1269,9 +1301,13 @@ export function createGame(root: HTMLElement): Game {
         if (!pad) return;
         if (shouldOfferRemap(pad.mapping ?? '', pad.id, maps)) {
           menus.notice = `Non-standard pad “${pad.id}” — remap offered.`;
-          menus.screen = 'settings';
-          show();
-          return;
+          menus.remapPadId = pad.id;
+          if (shouldOfferRemapOnScreen(menus.screen)) {
+            if (menus.screen !== 'settings') menus.returnScreen = menus.screen;
+            menus.screen = 'settings';
+            show();
+            return;
+          }
         }
         const existing = menus.seats.find((s) => s.padId === pad.id);
         if (existing && menus.screen === 'disconnect') {

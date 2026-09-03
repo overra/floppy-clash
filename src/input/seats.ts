@@ -82,3 +82,11 @@ export function canResumePause(actor: string, pausedBy: string | null, seats: Se
   if (!seat1?.taken || seat1.padId === 'bot') return false;
   return actor === seat1.padId;
 }
+
+/**
+ * PLAN 4.12 Start/Options is a rising edge: hold must not pause then immediately resume.
+ * `wasDown` is the previous sample; `isDown` is this frame (latched or live).
+ */
+export function pauseRisingEdge(wasDown: boolean, isDown: boolean): boolean {
+  return isDown && !wasDown;
+}
