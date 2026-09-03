@@ -57,7 +57,7 @@ import {
   type NetSession,
 } from './net/transport';
 import { createRecorder, parseReplay } from './input/replay';
-import type { LevelDef } from './sim/level/schema';
+import { parseLevel, type LevelDef } from './sim/level/schema';
 
 export type Game = {
   start: () => Promise<void>;
@@ -102,6 +102,9 @@ type FloppyDebug = {
   lastFrameGroups: number;
   lastFrameColored: number;
   inspect: string;
+  lastLevelId: string;
+  pendingLevelId: string;
+  loadLevel: (raw: unknown) => string;
   gpuPipelineBackend: 'typegpu' | 'none';
   gpuPipelineApi: 'root.createRenderPipeline' | '';
   gpuPipelineResourceType: string;
@@ -297,9 +300,10 @@ export function createGame(root: HTMLElement): Game {
     extraLevels = settings.includeUserLevels ? await loadLibrary().catch(() => []) : [];
     const pool = matchLevelPool(settings.enabledLevels, extraLevels);
     const level =
-      settings.rotation === 'ordered'
+      pendingLevel ??
+      (settings.rotation === 'ordered'
         ? (pool[0] ?? gymLevel)
-        : (pool[Math.floor(Math.random() * pool.length)] ?? gymLevel);
+        : (pool[Math.floor(Math.random() * pool.length)] ?? gymLevel));
     startSim(level, {
       playerCount: humans,
       bots: menus.bots,
@@ -330,10 +334,14 @@ export function createGame(root: HTMLElement): Game {
       if (msg.t === 'level') {
         menus.notice = 'Host level JSON received';
         try {
-          const parsed = JSON.parse(msg.json) as LevelDef;
-          if (parsed?.id && parsed.bounds) pendingLevel = parsed;
+          pendingLevel = parseLevel(JSON.parse(msg.json));
         } catch {
-          /* id-only payload */
+          try {
+            const parsed = JSON.parse(msg.json) as LevelDef;
+            if (parsed?.id && parsed.bounds) pendingLevel = parsed;
+          } catch {
+            /* id-only payload */
+          }
         }
         if (menus.screen === 'lobby') show();
       }
@@ -772,6 +780,7 @@ export function createGame(root: HTMLElement): Game {
     gpuMs: number,
     phase: number,
   ): void {
+    const handle = sim ?? clientView?.sim;
     window.__floppy = {
       rendererKind,
       lastHash: hash,
@@ -779,7 +788,7 @@ export function createGame(root: HTMLElement): Game {
       countdown,
       physicsMs,
       gpuMs,
-      phase,
+      phase: handle?.ecs.get(RoundState)?.phase ?? phase,
       debugDraw,
       debugHud,
       freezeCam,
@@ -787,6 +796,16 @@ export function createGame(root: HTMLElement): Game {
       netState: menus.netState,
       netReady: net.ready,
       lastSnapTick: menus.lastSnapTick,
+      lastLevelId: handle?.ctx.level.id ?? pendingLevel?.id ?? '',
+      pendingLevelId: pendingLevel?.id ?? '',
+      loadLevel: (raw: unknown) => {
+        try {
+          pendingLevel = parseLevel(raw);
+          return pendingLevel.id;
+        } catch {
+          return '';
+        }
+      },
           forceLastStand: () => {
         if (!sim) return;
         sim.players().forEach((p) => {
@@ -800,7 +819,7 @@ export function createGame(root: HTMLElement): Game {
         sim.ctx.tuning.slowmoTicks = 2;
         sim.ctx.tuning.scoreboardTicks = 2;
       },
-      matchRound: sim?.ecs.get(MatchState)?.round ?? 0,
+      matchRound: handle?.ecs.get(MatchState)?.round ?? 0,
       clientViewTick: clientView?.appliedTick ?? 0,
       clientAppliedX: clientView?.appliedX ?? 0,
       clientRestored: clientView?.restored ?? false,

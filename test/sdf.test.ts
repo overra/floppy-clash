@@ -63,6 +63,7 @@ describe('TypeGPU use-gpu fns on CPU', () => {
     expect(box).toBeLessThan(0);
     const u = evalSmoothUnionGpu(-0.2, -0.1, 0.3);
     expect(Number.isFinite(u)).toBe(true);
+    expect(u).toBeLessThan(Math.min(-0.2, -0.1));
     const tri = { kind: PRIM_TRIANGLE, ax: 0, ay: 0, bx: 1, by: 0, r: 0.8 };
     expect(evalPrimitiveSdfGpu(tri, 0.4, 0.2)).toBeLessThan(0.5);
     expect(

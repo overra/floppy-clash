@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { createInterpBuffer } from '../src/net/interp';
 import { applyInputBundle, bundleInputs, createSimulatedLink } from '../src/net/simnet';
-import { hostContentMessages, lateJoinSnapshotMessage, snapshotBytes } from '../src/net/protocol';
+import { decode, encode, hostContentMessages, lateJoinSnapshotMessage, snapshotBytes } from '../src/net/protocol';
+import { parseLevel } from '../src/sim/level/schema';
 import { SeededRng } from '../src/core/rng';
 import { blankInputs } from '../src/sim/input';
 import { Health, MatchState, RoundPhase, RoundState } from '../src/sim/traits';
@@ -80,5 +81,29 @@ describe('M8 netcode', () => {
     expect(late.t).toBe('snapshot');
     if (late.t !== 'snapshot') throw new Error('expected snapshot');
     expect(late.snap.entities.length).toBeGreaterThan(0);
+  });
+
+  it('custom level JSON survives encode → decode → parseLevel', () => {
+    const custom = parseLevel({
+      id: 'net-custom',
+      name: 'Net Custom',
+      theme: 'arena',
+      bounds: { x: 0, y: 0, w: 40, h: 18 },
+      spawns: [
+        { x: 4, y: 8 },
+        { x: 36, y: 8 },
+        { x: 12, y: 8 },
+        { x: 28, y: 8 },
+      ],
+      objects: [{ type: 'solid', x: 20, y: 1, w: 40, h: 2 }],
+    });
+    const msgs = hostContentMessages(JSON.stringify({ maxHp: 80, firstTo: 5 }), JSON.stringify(custom));
+    const levelMsg = msgs[1]!;
+    expect(levelMsg.t).toBe('level');
+    const roundTrip = decode(encode(levelMsg));
+    expect(roundTrip.t).toBe('level');
+    const parsed = parseLevel(JSON.parse(roundTrip.t === 'level' ? roundTrip.json : '{}'));
+    expect(parsed.id).toBe('net-custom');
+    expect(parsed.bounds.h).toBe(18);
   });
 });

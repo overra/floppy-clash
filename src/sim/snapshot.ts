@@ -1,23 +1,32 @@
 import { createAdded, createChanged, createRemoved, type Entity, type World } from 'koota';
 import { fnv1a, hashToHex, quantize } from '../core/hash';
-import { createBoxBody, destroyBody, registerBody } from './physics/bodies';
+import { createBoxBody, createCircleBody, destroyBody, registerBody } from './physics/bodies';
 import { getContext } from './context';
+import { attachRagdollJoints, isRagdollRoot, ragdollPartSpec, RAGDOLL_JOINTS } from './player/ragdoll';
 import {
   Aim,
   Combat,
   Controller,
   Dead,
+  Destructible,
+  Hazard,
+  HazardKind,
   Health,
   Held,
   HeldBy,
+  Lifetime,
   Loose,
+  MatchState,
   NetId,
+  OwnedBy,
+  PartOf,
   Player,
   PrevTransform,
   Projectile,
   RagdollPart,
   RoundState,
   Snake,
+  Status,
   Transform,
   Weapon,
 } from './traits';
@@ -26,6 +35,9 @@ import {
 const Changed = createChanged();
 const Added = createAdded();
 const Removed = createRemoved();
+
+/** Joints are rebuilt once per root NetId; restoreWorld runs every interpolating frame. */
+const ragdollJointsBuilt = new WeakMap<World, Set<number>>();
 
 export type TraitSnapshot = {
   netId: number;
@@ -39,6 +51,13 @@ export type WorldSnapshot = {
   seed?: number;
   levelId?: string;
   playerCount?: number;
+  /** PLAN 4.13: `RoundState` / `MatchState` are replicated world traits. */
+  phase?: number;
+  roundTicks?: number;
+  aliveMask?: number;
+  lastKiller?: number;
+  wins?: number[];
+  matchRound?: number;
   entities: TraitSnapshot[];
   /** false = Changed(Transform) + Added/Removed NetId (PLAN 4.13). Late join uses full. */
   full?: boolean;
@@ -56,7 +75,13 @@ export function serializeWorld(world: World): WorldSnapshot {
     const h = entity.get(Health);
     if (h) snap.traits.Health = { hp: h.hp, maxHp: h.maxHp };
     const p = entity.get(Player);
-    if (p) snap.traits.Player = { slot: p.slot, color: p.color, inputIndex: p.inputIndex };
+    if (p) {
+      if (isRagdollRoot(entity)) {
+        snap.traits.RagdollRoot = { slot: p.slot, color: p.color };
+      } else {
+        snap.traits.Player = { slot: p.slot, color: p.color, inputIndex: p.inputIndex };
+      }
+    }
     const c = entity.get(Controller);
     if (c) snap.traits.Controller = { grounded: c.grounded, facing: c.facing, vx: c.vx, vy: c.vy };
     const a = entity.get(Aim);
@@ -90,13 +115,44 @@ export function serializeWorld(world: World): WorldSnapshot {
     const sn = entity.get(Snake);
     if (sn) snap.traits.Snake = { hp: sn.hp, giant: sn.giant, flying: sn.flying };
     const rp = entity.get(RagdollPart);
-    if (rp) snap.traits.RagdollPart = { part: rp.part };
+    if (rp) {
+      const root = entity.targetFor(PartOf);
+      snap.traits.RagdollPart = { part: rp.part, rootNetId: root?.get(NetId)?.id ?? -1 };
+    }
     const cb = entity.get(Combat);
     if (cb) snap.traits.Combat = { blockMeter: cb.blockMeter, blocking: cb.blocking };
+    const st = entity.get(Status);
+    if (st) {
+      snap.traits.Status = {
+        burning: st.burning,
+        slowed: st.slowed,
+        glued: st.glued,
+        bubbled: st.bubbled,
+      };
+    }
+    const owner = entity.targetFor(OwnedBy);
+    if (owner) snap.traits.OwnedBy = { ownerNetId: owner.get(NetId)?.id ?? -1 };
+    const hz = entity.get(Hazard);
+    if (hz) {
+      snap.traits.Hazard = {
+        kind: hz.kind,
+        param0: hz.param0,
+        param1: hz.param1,
+        param2: hz.param2,
+        param3: hz.param3,
+        hp: hz.hp,
+        armed: hz.armed,
+      };
+      const life = entity.get(Lifetime);
+      if (life) snap.traits.Lifetime = { ticksLeft: life.ticksLeft };
+    }
+    const dest = entity.get(Destructible);
+    if (dest) snap.traits.Destructible = { hp: dest.hp, maxHp: dest.maxHp };
     entities.push(snap);
   });
   entities.sort((a, b) => a.netId - b.netId);
   const rs = world.get(RoundState);
+  const ms = world.get(MatchState);
   return {
     tick: ctx.tick,
     rng: ctx.rng.getState(),
@@ -104,6 +160,12 @@ export function serializeWorld(world: World): WorldSnapshot {
     seed: rs?.seed ?? 0,
     levelId: ctx.level.id,
     playerCount: ctx.settings.playerCount + ctx.settings.bots,
+    phase: rs?.phase,
+    roundTicks: rs?.ticks,
+    aliveMask: rs?.aliveMask,
+    lastKiller: rs?.lastKiller,
+    wins: ms ? [ms.wins0, ms.wins1, ms.wins2, ms.wins3] : undefined,
+    matchRound: ms?.round,
     entities,
     full: true,
   };
@@ -224,9 +286,47 @@ function applyRecord(world: World, entity: Entity, rec: TraitSnapshot): void {
       kind: Number(pr.kind ?? curPr.kind),
     });
   }
+  const st = rec.traits.Status;
+  if (st) {
+    const next = {
+      burning: Number(st.burning ?? 0),
+      slowed: Number(st.slowed ?? 0),
+      glued: Number(st.glued ?? 0),
+      bubbled: Number(st.bubbled ?? 0),
+    };
+    if (entity.get(Status)) entity.set(Status, next);
+    else entity.add(Status(next));
+  }
+  const hz = rec.traits.Hazard;
+  const curHz = entity.get(Hazard);
+  if (hz && curHz) {
+    entity.set(Hazard, {
+      ...curHz,
+      kind: Number(hz.kind ?? curHz.kind),
+      param0: Number(hz.param0 ?? curHz.param0),
+      param1: Number(hz.param1 ?? curHz.param1),
+      param2: Number(hz.param2 ?? curHz.param2),
+      param3: Number(hz.param3 ?? curHz.param3),
+      hp: Number(hz.hp ?? curHz.hp),
+      armed: Number(hz.armed ?? curHz.armed),
+    });
+  }
+  const life = rec.traits.Lifetime;
+  if (life) {
+    const ticksLeft = Number(life.ticksLeft ?? 0);
+    if (entity.get(Lifetime)) entity.set(Lifetime, { ticksLeft });
+    else entity.add(Lifetime({ ticksLeft }));
+  }
+  const dest = rec.traits.Destructible;
+  if (dest && entity.get(Destructible)) {
+    entity.set(Destructible, { hp: Number(dest.hp), maxHp: Number(dest.maxHp ?? dest.hp) });
+  }
   if (h) {
     if (Number(h.hp) <= 0) {
       if (!entity.has(Dead)) entity.add(Dead());
+      if (entity.has(Player) && entity.has(Controller) && ctx.bodies.get(entity)) {
+        destroyBody(world, entity);
+      }
     } else if (entity.has(Dead)) {
       entity.remove(Dead);
     }
@@ -260,6 +360,14 @@ function entityByNetId(world: World, id: number): Entity | undefined {
   return found;
 }
 
+function livingSeatBySlot(world: World, slot: number): Entity | undefined {
+  let found: Entity | undefined;
+  world.query(Player, NetId).updateEach(([p], e) => {
+    if (p.slot === slot && e.has(Controller)) found = e;
+  });
+  return found;
+}
+
 function applyHeldLinks(world: World, snap: WorldSnapshot): void {
   for (const rec of snap.entities) {
     const w = rec.traits.Weapon;
@@ -269,11 +377,7 @@ function applyHeldLinks(world: World, snap: WorldSnapshot): void {
     if (!holder) {
       const holderSnap = snap.entities.find((e) => e.netId === Number(w.holderNetId));
       const slot = holderSnap?.traits.Player?.slot;
-      if (slot != null) {
-        world.query(Player, NetId).updateEach(([p], e) => {
-          if (p.slot === Number(slot)) holder = e;
-        });
-      }
+      if (slot != null) holder = livingSeatBySlot(world, Number(slot));
     }
     if (!weapon || !holder) continue;
     weapon.remove(HeldBy('*'));
@@ -283,8 +387,70 @@ function applyHeldLinks(world: World, snap: WorldSnapshot): void {
   }
 }
 
-/** Late-join: host-spawned weapons / projectiles / snakes are not in the client's level load. */
-function spawnMissing(world: World, rec: TraitSnapshot): void {
+function applyOwnedByLinks(world: World, snap: WorldSnapshot): void {
+  for (const rec of snap.entities) {
+    const ob = rec.traits.OwnedBy;
+    if (!ob) continue;
+    const entity = entityByNetId(world, rec.netId);
+    let owner = entityByNetId(world, Number(ob.ownerNetId));
+    if (!owner) {
+      const ownerSnap = snap.entities.find((e) => e.netId === Number(ob.ownerNetId));
+      const slot = ownerSnap?.traits.Player?.slot;
+      if (slot != null) owner = livingSeatBySlot(world, Number(slot));
+    }
+    if (!entity || !owner) continue;
+    entity.remove(OwnedBy('*'));
+    entity.add(OwnedBy(owner));
+  }
+}
+
+function applyPartOfLinks(world: World, snap: WorldSnapshot, newRootNetIds: Set<number>): void {
+  for (const rec of snap.entities) {
+    const rp = rec.traits.RagdollPart;
+    if (!rp) continue;
+    const part = entityByNetId(world, rec.netId);
+    const root = entityByNetId(world, Number(rp.rootNetId));
+    if (!part || !root) continue;
+    part.remove(PartOf('*'));
+    part.add(PartOf(root));
+  }
+  const built = ragdollJointsBuilt.get(world) ?? new Set<number>();
+  ragdollJointsBuilt.set(world, built);
+  for (const rootId of newRootNetIds) {
+    if (built.has(rootId)) continue;
+    const root = entityByNetId(world, rootId);
+    if (!root) continue;
+    if (attachRagdollJoints(world, root) >= RAGDOLL_JOINTS.length) built.add(rootId);
+  }
+}
+
+function applyWorldTraits(world: World, snap: WorldSnapshot): void {
+  const rs = world.get(RoundState);
+  if (rs && snap.phase != null) {
+    world.set(RoundState, {
+      ...rs,
+      phase: snap.phase,
+      ticks: snap.roundTicks ?? rs.ticks,
+      aliveMask: snap.aliveMask ?? rs.aliveMask,
+      lastKiller: snap.lastKiller ?? rs.lastKiller,
+      seed: snap.seed ?? rs.seed,
+    });
+  }
+  const ms = world.get(MatchState);
+  if (ms && snap.wins) {
+    world.set(MatchState, {
+      ...ms,
+      wins0: snap.wins[0] ?? 0,
+      wins1: snap.wins[1] ?? 0,
+      wins2: snap.wins[2] ?? 0,
+      wins3: snap.wins[3] ?? 0,
+      round: snap.matchRound ?? ms.round,
+    });
+  }
+}
+
+/** Late-join: host-spawned weapons / projectiles / snakes / ragdolls / debris are not in the client's level load. */
+function spawnMissing(world: World, rec: TraitSnapshot, newRootNetIds: Set<number>): void {
   if (rec.traits.Player) return;
   const ctx = getContext(world);
   const t = rec.traits.Transform;
@@ -292,9 +458,29 @@ function spawnMissing(world: World, rec: TraitSnapshot): void {
   const pr = rec.traits.Projectile;
   const sn = rec.traits.Snake;
   const rp = rec.traits.RagdollPart;
+  const root = rec.traits.RagdollRoot;
+  const hz = rec.traits.Hazard;
   const x = Number(t?.x ?? pr?.x ?? 0);
   const y = Number(t?.y ?? pr?.y ?? 0);
   const angle = Number(t?.angle ?? 0);
+
+  if (root) {
+    world.spawn(
+      Player({
+        slot: Number(root.slot ?? 0),
+        color: Number(root.color ?? 0),
+        inputIndex: Number(root.slot ?? 0),
+      }),
+      Dead(),
+      Health({
+        hp: 0,
+        maxHp: Number(rec.traits.Health?.maxHp ?? 100),
+      }),
+      NetId({ id: rec.netId }),
+    );
+    newRootNetIds.add(rec.netId);
+    return;
+  }
 
   if (w) {
     const entity = world.spawn(
@@ -374,20 +560,87 @@ function spawnMissing(world: World, rec: TraitSnapshot): void {
   }
 
   if (rp && t) {
+    const spec = ragdollPartSpec(Number(rp.part ?? 0));
     const entity = world.spawn(
-      RagdollPart({ part: Number(rp.part ?? 0) }),
+      RagdollPart({ part: spec.part }),
       Transform({ x, y, angle }),
       PrevTransform({ x, y, angle }),
       NetId({ id: rec.netId }),
     );
-    const body = createBoxBody(ctx.physics, entity, 'ragdoll', x, y, 0.12, 0.16, 'dynamic', {
-      density: 0.8,
+    const body = spec.circle
+      ? createCircleBody(ctx.physics, entity, 'ragdoll', x, y, spec.hx, 'dynamic', {
+          density: 0.8,
+          friction: 0.4,
+          restitution: 0.05,
+        })
+      : createBoxBody(ctx.physics, entity, 'ragdoll', x, y, spec.hx, spec.hy, 'dynamic', {
+          density: 0.9,
+          friction: 0.45,
+          restitution: 0.05,
+          fixedRotation: false,
+        });
+    registerBody(world, entity, body);
+    const rootId = Number(rp.rootNetId);
+    if (rootId >= 0) newRootNetIds.add(rootId);
+    return;
+  }
+
+  if (hz && t && Number(hz.kind) === HazardKind.Debris) {
+    const hx = Number(hz.param0 ?? 0.24) / 2;
+    const hy = Number(hz.param1 ?? 0.24) / 2;
+    const entity = world.spawn(
+      Transform({ x, y, angle }),
+      PrevTransform({ x, y, angle }),
+      Hazard({
+        kind: HazardKind.Debris,
+        param0: Number(hz.param0 ?? 0.24),
+        param1: Number(hz.param1 ?? 0.24),
+        param2: Number(hz.param2 ?? 0),
+        param3: Number(hz.param3 ?? 0),
+        hp: Number(hz.hp ?? 0),
+        armed: Number(hz.armed ?? 1),
+      }),
+      Lifetime({ ticksLeft: Number(rec.traits.Lifetime?.ticksLeft ?? 50) }),
+      NetId({ id: rec.netId }),
+    );
+    const body = createBoxBody(ctx.physics, entity, 'prop', x, y, hx, hy, 'dynamic', {
+      density: 0.35,
+      friction: 0.4,
+      restitution: 0.15,
+      fixedRotation: false,
+    });
+    registerBody(world, entity, body);
+    return;
+  }
+
+  if (t) {
+    const entity = world.spawn(
+      Transform({ x, y, angle }),
+      PrevTransform({ x, y, angle }),
+      NetId({ id: rec.netId }),
+    );
+    const body = createBoxBody(ctx.physics, entity, 'prop', x, y, 0.4, 0.4, 'dynamic', {
+      density: 1,
       friction: 0.4,
       restitution: 0.05,
       fixedRotation: false,
     });
     registerBody(world, entity, body);
-    body.setActive(false);
+  }
+}
+
+function pruneMissingFromFull(world: World, snap: WorldSnapshot): void {
+  if (snap.full === false) return;
+  const keep = new Set(snap.entities.map((e) => e.netId));
+  const kill: Entity[] = [];
+  world.query(NetId).updateEach(([net], entity) => {
+    if (keep.has(net.id)) return;
+    if (entity.has(Player) && entity.has(Controller)) return;
+    kill.push(entity);
+  });
+  for (const entity of kill) {
+    destroyBody(world, entity);
+    entity.destroy();
   }
 }
 
@@ -408,6 +661,8 @@ export function restoreWorld(world: World, snap: WorldSnapshot): void {
       entity.destroy();
     }
   }
+  pruneMissingFromFull(world, snap);
+  applyWorldTraits(world, snap);
   const byNet = new Map<number, TraitSnapshot>();
   for (const e of snap.entities) byNet.set(e.netId, e);
   const used = new Set<number>();
@@ -417,18 +672,21 @@ export function restoreWorld(world: World, snap: WorldSnapshot): void {
     used.add(net.id);
     applyRecord(world, entity, rec);
   });
-  world.query(Player, NetId).updateEach(([p, net], entity) => {
+  world.query(Player, Controller, NetId).updateEach(([_p, _c, net], entity) => {
     if (used.has(net.id)) return;
-    const rec = snap.entities.find((e) => Number(e.traits.Player?.slot) === p.slot);
+    const rec = snap.entities.find((e) => Number(e.traits.Player?.slot) === entity.get(Player)?.slot);
     if (!rec) return;
     used.add(net.id);
     applyRecord(world, entity, rec);
   });
+  const newRootNetIds = new Set<number>();
   for (const rec of snap.entities) {
     if (used.has(rec.netId)) continue;
-    spawnMissing(world, rec);
+    spawnMissing(world, rec, newRootNetIds);
   }
   applyHeldLinks(world, snap);
+  applyOwnedByLinks(world, snap);
+  applyPartOfLinks(world, snap, newRootNetIds);
 }
 
 export function hashWorld(world: World): string {

@@ -588,36 +588,34 @@ export function primitiveSdfCpu(prim: Primitive, px: number, py: number): number
   return primitiveSdf(prim, { x: px, y: py });
 }
 
-/** Invoke the TypeGPU `'use gpu'` DualFns as JS (PLAN §6). Falls back to CPU math. */
+/** Invoke the TypeGPU `'use gpu'` DualFn as JS (PLAN §6). DualFn must run or this throws. */
 export function evalPrimitiveSdfGpu(prim: Primitive, px: number, py: number): number {
-  try {
-    const out = primitiveSdfGpu(
-      {
-        kind: prim.kind,
-        ax: prim.ax,
-        ay: prim.ay,
-        bx: prim.bx,
-        by: prim.by,
-        r: prim.r,
-        cx: prim.cx ?? 0,
-        cy: prim.cy ?? 0,
-      },
-      { x: px, y: py } as never,
-    );
-    const n = Number(out);
-    return Number.isFinite(n) ? n : primitiveSdfCpu(prim, px, py);
-  } catch {
-    return primitiveSdfCpu(prim, px, py);
+  const out = primitiveSdfGpu(
+    {
+      kind: prim.kind,
+      ax: prim.ax,
+      ay: prim.ay,
+      bx: prim.bx,
+      by: prim.by,
+      r: prim.r,
+      cx: prim.cx ?? 0,
+      cy: prim.cy ?? 0,
+    },
+    { x: px, y: py } as never,
+  );
+  const n = Number(out);
+  if (!Number.isFinite(n)) {
+    throw new Error('evalPrimitiveSdfGpu: DualFn did not return a finite number');
   }
+  return n;
 }
 
 export function evalCoverageGpu(dist: number): number {
-  try {
-    const n = Number(coverageGpu(dist));
-    return Number.isFinite(n) ? n : dist < 0 ? 1 : 0;
-  } catch {
-    return dist < 0 ? 1 : 0;
+  const n = Number(coverageGpu(dist));
+  if (!Number.isFinite(n)) {
+    throw new Error('evalCoverageGpu: DualFn did not return a finite number');
   }
+  return n;
 }
 
 export function evalWarpWorldGpu(
@@ -669,10 +667,9 @@ export function evalWarpPostUvGpu(
 }
 
 export function evalSmoothUnionGpu(a: number, b: number, k: number): number {
-  try {
-    const n = Number(smoothUnionGpu(a, b, k));
-    return Number.isFinite(n) ? n : Math.min(a, b);
-  } catch {
-    return Math.min(a, b);
+  const n = Number(smoothUnionGpu(a, b, k));
+  if (!Number.isFinite(n)) {
+    throw new Error('evalSmoothUnionGpu: DualFn did not return a finite number');
   }
+  return n;
 }

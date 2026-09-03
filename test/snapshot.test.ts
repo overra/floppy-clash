@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
+import type { World as PhysicsWorld } from 'planck';
 import { createClientView } from '../src/net/clientView';
+import { test_block_destructible } from '../src/levels/generated';
 import {
   drainChangeTrackers,
   hashWorld,
@@ -9,8 +11,29 @@ import {
   serializeWorld,
 } from '../src/sim/snapshot';
 import { spawnWeapon } from '../src/sim/systems/weapons';
-import { Dead, Health, Held, HeldBy, Loose, NetId, RagdollPart, Weapon } from '../src/sim/traits';
+import {
+  Dead,
+  Destructible,
+  Hazard,
+  HazardKind,
+  Health,
+  Held,
+  HeldBy,
+  Loose,
+  NetId,
+  OwnedBy,
+  PartOf,
+  RagdollPart,
+  Status,
+  Weapon,
+} from '../src/sim/traits';
 import { hold, makeSim, playerOf, pos } from './helpers';
+
+function countJoints(physics: PhysicsWorld): number {
+  let n = 0;
+  for (let j = physics.getJointList(); j; j = j.getNext()) n += 1;
+  return n;
+}
 
 describe('M8 snapshot', () => {
   it('round-trips transforms and rng', () => {
@@ -93,18 +116,89 @@ describe('M8 snapshot', () => {
     const snap = serializeWorld(host.ecs);
     const parts = snap.entities.filter((e) => e.traits.RagdollPart);
     expect(parts.length).toBeGreaterThanOrEqual(8);
+    expect(parts.every((p) => Number(p.traits.RagdollPart?.rootNetId) >= 0)).toBe(true);
+    expect(snap.entities.some((e) => e.traits.RagdollRoot)).toBe(true);
 
     const client = makeSim({ seed: 93, settings: { playerCount: 2 } });
     let before = 0;
     client.ecs.query(RagdollPart).updateEach(() => {
       before += 1;
     });
+    const jointsBefore = countJoints(client.ctx.physics);
     restoreWorld(client.ecs, snap);
     let after = 0;
-    client.ecs.query(RagdollPart).updateEach(() => {
+    let linked = 0;
+    let active = 0;
+    client.ecs.query(RagdollPart).updateEach((_, e) => {
       after += 1;
+      if (e.targetFor(PartOf)) linked += 1;
+      if (client.ctx.bodies.get(e)?.isActive()) active += 1;
     });
     expect(before).toBe(0);
     expect(after).toBe(parts.length);
+    expect(linked).toBe(parts.length);
+    expect(active).toBe(parts.length);
+    const jointsAfter = countJoints(client.ctx.physics);
+    expect(jointsAfter - jointsBefore).toBeGreaterThanOrEqual(9);
+    restoreWorld(client.ecs, snap);
+    expect(countJoints(client.ctx.physics)).toBe(jointsAfter);
+  });
+
+  it('late-join snapshot includes Status, OwnedBy, and mid-round debris', () => {
+    const host = makeSim({
+      level: test_block_destructible,
+      seed: 94,
+      settings: { playerCount: 2 },
+    });
+    const a = playerOf(host, 0);
+    host.ecs.query(Destructible).updateEach(([d], e) => {
+      e.set(Destructible, { hp: 0, maxHp: d.maxHp });
+    });
+    host.step([hold({}), hold({}), hold({}), hold({})]);
+    a.set(Status, { burning: 40, slowed: 0, glued: 90, bubbled: 12 });
+    const snap = serializeWorld(host.ecs);
+    const aRec = snap.entities.find((e) => Number(e.traits.Player?.slot) === 0);
+    expect(aRec?.traits.Status).toMatchObject({ burning: 40, glued: 90, bubbled: 12 });
+    const debris = snap.entities.filter((e) => Number(e.traits.Hazard?.kind) === HazardKind.Debris);
+    expect(debris.length).toBeGreaterThanOrEqual(4);
+    expect(debris.every((e) => e.traits.Lifetime)).toBe(true);
+
+    const view = createClientView(snap, 120, test_block_destructible);
+    expect(playerOf(view.sim, 0).get(Status)).toMatchObject({
+      burning: 40,
+      glued: 90,
+      bubbled: 12,
+    });
+    let clientDebris = 0;
+    let destLeft = 0;
+    view.sim.ecs.query(Hazard).updateEach(([hz]) => {
+      if (hz.kind === HazardKind.Debris) clientDebris += 1;
+    });
+    view.sim.ecs.query(Destructible).updateEach(() => {
+      destLeft += 1;
+    });
+    expect(clientDebris).toBe(debris.length);
+    expect(destLeft).toBe(0);
+  });
+
+  it('serializes OwnedBy so kill credit survives restore', () => {
+    const host = makeSim({ seed: 95, settings: { playerCount: 2 } });
+    const a = playerOf(host, 0);
+    const gun = spawnWeapon(host.ecs, 'pistol', 8, 6);
+    gun.add(Held(), HeldBy(a));
+    gun.remove(Loose);
+    gun.add(OwnedBy(a));
+    const snap = serializeWorld(host.ecs);
+    const rec = snap.entities.find((e) => e.netId === gun.get(NetId)!.id);
+    expect(Number(rec?.traits.OwnedBy?.ownerNetId)).toBe(a.get(NetId)!.id);
+
+    const client = makeSim({ seed: 96, settings: { playerCount: 2 } });
+    restoreWorld(client.ecs, snap);
+    let ownerOk = false;
+    client.ecs.query(Weapon, NetId).updateEach(([_w, n], e) => {
+      if (n.id !== gun.get(NetId)!.id) return;
+      ownerOk = e.targetFor(OwnedBy) === playerOf(client, 0);
+    });
+    expect(ownerOk).toBe(true);
   });
 });

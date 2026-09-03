@@ -157,3 +157,59 @@ test('four localhost peers connect; 100ms/2% shaping still delivers chat', async
   expect(rounds).toBeGreaterThanOrEqual(10);
   await Promise.all(ctxs.map((c) => c.close()));
 });
+
+test('host custom level JSON is applied on the client sim', async ({ browser }) => {
+  const hostCtx = await browser.newContext();
+  const guestCtx = await browser.newContext();
+  const host = await hostCtx.newPage();
+  const guest = await guestCtx.newPage();
+  await host.goto('/?signal=ws://127.0.0.1:8787');
+  await guest.goto('/?signal=ws://127.0.0.1:8787');
+  await host.getByRole('button', { name: 'Online' }).click();
+  await guest.getByRole('button', { name: 'Online' }).click();
+  await host.locator('#room').fill('LVL01');
+  await guest.locator('#room').fill('LVL01');
+  await Promise.all([
+    host.getByRole('button', { name: 'Host' }).click(),
+    guest.getByRole('button', { name: 'Join' }).click(),
+  ]);
+  await expect(host.locator('#netstatus')).toHaveAttribute('data-net-state', 'up', {
+    timeout: 20_000,
+  });
+  await expect(guest.locator('#netstatus')).toHaveAttribute('data-net-state', 'up', {
+    timeout: 20_000,
+  });
+  await expect
+    .poll(async () => host.evaluate(() => Boolean(window.__floppy?.loadLevel)), { timeout: 10_000 })
+    .toBe(true);
+  const loaded = await host.evaluate(() =>
+    window.__floppy?.loadLevel({
+      id: 'e2e-custom',
+      name: 'E2E Custom',
+      theme: 'arena',
+      bounds: { x: 0, y: 0, w: 36, h: 16 },
+      spawns: [
+        { x: 4, y: 8 },
+        { x: 32, y: 8 },
+        { x: 10, y: 8 },
+        { x: 26, y: 8 },
+      ],
+      objects: [{ type: 'solid', x: 18, y: 1, w: 36, h: 2 }],
+    }),
+  );
+  expect(loaded).toBe('e2e-custom');
+  await host.getByRole('button', { name: 'Start match' }).click();
+  await expect
+    .poll(async () => host.evaluate(() => window.__floppy?.lastLevelId ?? ''), { timeout: 20_000 })
+    .toBe('e2e-custom');
+  await expect
+    .poll(async () => guest.evaluate(() => window.__floppy?.lastLevelId ?? ''), { timeout: 20_000 })
+    .toBe('e2e-custom');
+  await expect
+    .poll(async () => guest.evaluate(() => window.__floppy?.clientRestored ?? false), {
+      timeout: 20_000,
+    })
+    .toBe(true);
+  await hostCtx.close();
+  await guestCtx.close();
+});
