@@ -3,6 +3,7 @@ import { RevoluteJoint, type Body, type World as PhysicsWorld } from 'planck';
 import { getContext } from '../context';
 import { assignNetId, createBoxBody, createCircleBody, registerBody } from '../physics/bodies';
 import {
+  Controller,
   Dead,
   Health,
   PartOf,

@@ -3,10 +3,13 @@ import { fnv1a, hashToHex, quantize } from '../core/hash';
 import { createBoxBody, createCircleBody, destroyBody, registerBody } from './physics/bodies';
 import { getContext } from './context';
 import { attachRagdollJoints, isRagdollRoot, ragdollPartSpec, RAGDOLL_JOINTS } from './player/ragdoll';
+import { assignCrownToLeader } from './rules/rounds';
 import {
   Aim,
+  Boss,
   Combat,
   Controller,
+  Crown,
   Dead,
   Destructible,
   Hazard,
@@ -148,6 +151,9 @@ export function serializeWorld(world: World): WorldSnapshot {
     }
     const dest = entity.get(Destructible);
     if (dest) snap.traits.Destructible = { hp: dest.hp, maxHp: dest.maxHp };
+    const boss = entity.get(Boss);
+    if (boss) snap.traits.Boss = { hp: boss.hp, bite: boss.bite, speed: boss.speed };
+    if (entity.has(Crown)) snap.traits.Crown = { on: 1 };
     entities.push(snap);
   });
   entities.sort((a, b) => a.netId - b.netId);
@@ -321,6 +327,17 @@ function applyRecord(world: World, entity: Entity, rec: TraitSnapshot): void {
   if (dest && entity.get(Destructible)) {
     entity.set(Destructible, { hp: Number(dest.hp), maxHp: Number(dest.maxHp ?? dest.hp) });
   }
+  const boss = rec.traits.Boss;
+  if (boss) {
+    const next = {
+      hp: Number(boss.hp ?? 200),
+      bite: Number(boss.bite ?? 0),
+      speed: Number(boss.speed ?? 3.2),
+    };
+    if (entity.get(Boss)) entity.set(Boss, next);
+    else entity.add(Boss(next));
+  }
+  if (rec.traits.Crown && !entity.has(Crown)) entity.add(Crown());
   if (h) {
     if (Number(h.hp) <= 0) {
       if (!entity.has(Dead)) entity.add(Dead());
@@ -438,14 +455,15 @@ function applyWorldTraits(world: World, snap: WorldSnapshot): void {
   }
   const ms = world.get(MatchState);
   if (ms && snap.wins) {
-    world.set(MatchState, {
+    const next = {
       ...ms,
       wins0: snap.wins[0] ?? 0,
       wins1: snap.wins[1] ?? 0,
       wins2: snap.wins[2] ?? 0,
       wins3: snap.wins[3] ?? 0,
       round: snap.matchRound ?? ms.round,
-    });
+    };
+    world.set(MatchState, next);
   }
 }
 
@@ -687,6 +705,8 @@ export function restoreWorld(world: World, snap: WorldSnapshot): void {
   applyHeldLinks(world, snap);
   applyOwnedByLinks(world, snap);
   applyPartOfLinks(world, snap, newRootNetIds);
+  const match = world.get(MatchState);
+  if (match) assignCrownToLeader(world, match);
 }
 
 export function hashWorld(world: World): string {

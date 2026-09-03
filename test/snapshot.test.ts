@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { World as PhysicsWorld } from 'planck';
 import { createClientView } from '../src/net/clientView';
-import { test_block_destructible } from '../src/levels/generated';
+import { getLevel } from '../src/levels/catalog';
 import {
   drainChangeTrackers,
   hashWorld,
@@ -12,6 +12,8 @@ import {
 } from '../src/sim/snapshot';
 import { spawnWeapon } from '../src/sim/systems/weapons';
 import {
+  Boss,
+  Crown,
   Dead,
   Destructible,
   Hazard,
@@ -20,6 +22,7 @@ import {
   Held,
   HeldBy,
   Loose,
+  MatchState,
   NetId,
   OwnedBy,
   PartOf,
@@ -145,14 +148,15 @@ describe('M8 snapshot', () => {
   });
 
   it('late-join snapshot includes Status, OwnedBy, and mid-round debris', () => {
+    const debrisLevel = getLevel('test-block.destructible');
     const host = makeSim({
-      level: test_block_destructible,
+      level: debrisLevel,
       seed: 94,
       settings: { playerCount: 2 },
     });
     const a = playerOf(host, 0);
-    host.ecs.query(Destructible).updateEach(([d], e) => {
-      e.set(Destructible, { hp: 0, maxHp: d.maxHp });
+    host.ecs.query(Destructible, Hazard).updateEach(([d, hz]) => {
+      if (hz.kind === HazardKind.Destructible) d.hp = 0;
     });
     host.step([hold({}), hold({}), hold({}), hold({})]);
     a.set(Status, { burning: 40, slowed: 0, glued: 90, bubbled: 12 });
@@ -163,7 +167,7 @@ describe('M8 snapshot', () => {
     expect(debris.length).toBeGreaterThanOrEqual(4);
     expect(debris.every((e) => e.traits.Lifetime)).toBe(true);
 
-    const view = createClientView(snap, 120, test_block_destructible);
+    const view = createClientView(snap, 120, debrisLevel);
     expect(playerOf(view.sim, 0).get(Status)).toMatchObject({
       burning: 40,
       glued: 90,
@@ -200,5 +204,30 @@ describe('M8 snapshot', () => {
       ownerOk = e.targetFor(OwnedBy) === playerOf(client, 0);
     });
     expect(ownerOk).toBe(true);
+  });
+
+  it('late-join snapshot restores Crown from match wins and Boss hp', () => {
+    const host = makeSim({
+      level: getLevel('halloween-boss'),
+      seed: 97,
+      settings: { playerCount: 2 },
+    });
+    const ms = host.ecs.get(MatchState)!;
+    host.ecs.set(MatchState, { ...ms, wins0: 3, wins1: 1, wins2: 0, wins3: 0 });
+    host.ecs.query(Boss).updateEach(([b]) => {
+      b.hp = 77;
+    });
+    const snap = serializeWorld(host.ecs);
+    expect(snap.wins?.[0]).toBe(3);
+    expect(snap.entities.some((e) => Number(e.traits.Boss?.hp) === 77)).toBe(true);
+
+    const view = createClientView(snap, 120, getLevel('halloween-boss'));
+    expect(playerOf(view.sim, 0).has(Crown)).toBe(true);
+    expect(playerOf(view.sim, 1).has(Crown)).toBe(false);
+    let bossHp = 0;
+    view.sim.ecs.query(Boss).updateEach(([b]) => {
+      bossHp = b.hp;
+    });
+    expect(bossHp).toBe(77);
   });
 });
