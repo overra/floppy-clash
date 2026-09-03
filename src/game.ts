@@ -65,6 +65,7 @@ import {
   Transform,
   Weapon,
 } from './sim/traits';
+import { applyExistingClientSnap } from './net/clientSnapApply';
 import { createClientView, snapshotCanOpenClientView, type ClientView } from './net/clientView';
 import { enqueuePendingSnap, extrasAfterOpen, takeOpenableFromQueue } from './net/lateJoinBuffer';
 import { createSimWorld, type SimHandle } from './sim/world';
@@ -565,13 +566,15 @@ export function createGame(root: HTMLElement): Game {
           if (pendingLevel) clientView?.useLevel(pendingLevel);
           if (!clientView) tryOpenClientView(msg.snap);
           if (clientView) {
-            try {
-              clientView.push(performance.now(), msg.snap);
-              clientView.apply(performance.now());
-              syncClientLevelChrome();
-            } catch {
-              /* wait for a later snapshot */
-            }
+            clientView = applyExistingClientSnap({
+              view: clientView,
+              apply: (view) => {
+                view.push(performance.now(), msg.snap);
+                view.apply(performance.now());
+                syncClientLevelChrome();
+              },
+              rebuild: () => openClientViewFrom(msg.snap, []),
+            });
           }
           retryClientHello();
           enterClientPlayIfReady();

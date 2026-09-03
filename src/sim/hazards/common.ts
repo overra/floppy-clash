@@ -52,13 +52,16 @@ export function paramsFromObject(obj: LevelObject): {
     case 'saw':
       // param2/param3 remember the spawn so a speed wobble stays centered (not a random walk).
       return { param0: obj.omega ?? 6, param1: obj.speed ?? 0, param2: obj.x, param3: obj.y };
-    case 'spikeball':
+    case 'spikeball': {
+      const style = obj.style === 'roll' ? 1 : obj.style === 'drop' ? 2 : 0;
+      // Swing hang is an anonymous static body; persist its world point for late-join.
       return {
         param0: obj.r ?? 0.4,
-        param1: 0,
-        param2: obj.style === 'roll' ? 1 : obj.style === 'drop' ? 2 : 0,
-        param3: 0,
+        param1: style === 0 ? obj.x : 0,
+        param2: style,
+        param3: style === 0 ? obj.y + 2.4 : 0,
       };
+    }
     case 'crusher':
       return {
         param0: obj.period ?? 60,
@@ -67,18 +70,20 @@ export function paramsFromObject(obj: LevelObject): {
         param3: (obj.h ?? 6) / 2,
       };
     case 'platform.disappearing':
-      return { param0: obj.period ?? 140, param1: obj.delay ?? 0, param2: 0, param3: 0 };
+      return { param0: obj.period ?? 140, param1: obj.delay ?? 0, param2: obj.w ?? 3, param3: obj.h ?? 0.5 };
     case 'platform.collapsing':
       return { param0: obj.w ?? 3, param1: 0, param2: obj.delay ?? 20, param3: 0 };
     case 'platform.rotating':
-      return { param0: obj.omega ?? 1, param1: 0, param2: 0, param3: 0 };
+      return { param0: obj.omega ?? 1, param1: obj.w ?? 4, param2: obj.h ?? 0.6, param3: 0 };
     case 'platform.moving':
       return {
         param0: obj.speed ?? 3,
-        param1: obj.path?.length ?? 2,
+        param1: obj.w ?? 4,
         param2: obj.mode === 'loop' ? 0 : 1,
-        param3: 0,
+        param3: obj.h ?? 0.6,
       };
+    case 'platform.momentum':
+      return { param0: obj.w ?? 4, param1: obj.h ?? 0.6, param2: obj.x, param3: obj.y };
     default:
       return {
         param0: obj.speed ?? obj.period ?? obj.w ?? 0,

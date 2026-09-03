@@ -8,7 +8,7 @@ import type { HazardModule } from './types';
 /** Shared negative group: links and the hung deck never collide with each other. */
 const CHAIN_GROUP = -11;
 
-function isolateChainBody(body: Body): void {
+export function isolateChainBody(body: Body): void {
   body.setLinearDamping(0.18);
   body.setAngularDamping(1.6);
   for (let f = body.getFixtureList(); f; f = f.getNext()) {
@@ -27,16 +27,18 @@ export const chain: HazardModule = {
     const anchor = createBoxBody(ctx.physics, entity, 'solid', obj.x, obj.y, 0.1, 0.1, 'static');
     registerBody(world, entity, anchor);
     let prevBody = anchor;
+    let prevNet = entity.get(NetId)?.id ?? 0;
     let lastNet = 0;
     for (let i = 0; i < links; i++) {
       const ly = obj.y - (i + 1) * 0.35;
       const link = world.spawn(
         Transform({ x: obj.x, y: ly, angle: 0 }),
         PrevTransform({ x: obj.x, y: ly, angle: 0 }),
-        Hazard({ kind: HazardKind.Chain, param0: i, param1: 0, param2: 0, param3: 0, hp: 20, armed: 1 }),
+        Hazard({ kind: HazardKind.Chain, param0: i, param1: prevNet, param2: 0, param3: 0, hp: 20, armed: 1 }),
         Destructible({ hp: 20, maxHp: 20 }),
       );
       lastNet = assignNetId(world, link);
+      prevNet = lastNet;
       const body = createBoxBody(ctx.physics, link, 'prop', obj.x, ly, 0.08, 0.16, 'dynamic', {
         density: 0.4,
         friction: 0.3,

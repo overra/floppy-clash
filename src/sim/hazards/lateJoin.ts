@@ -255,6 +255,30 @@ export function lateJoinBodySpec(
         friction: 0.6,
         fixtureKind: 'solid',
       });
+    case HazardKind.MovingPlatform:
+      return box({
+        bodyType: 'kinematic',
+        hx: Math.max(0.2, (hz.param1 || 4) / 2),
+        hy: Math.max(0.1, (hz.param3 || 0.6) / 2),
+        density: 0,
+        friction: 0.8,
+      });
+    case HazardKind.RotatingPlatform:
+      return box({
+        bodyType: 'kinematic',
+        hx: Math.max(0.2, (hz.param1 || 4) / 2),
+        hy: Math.max(0.1, (hz.param2 || 0.6) / 2),
+        density: 0,
+        friction: 0.8,
+      });
+    case HazardKind.Disappearing:
+      return box({
+        bodyType: 'kinematic',
+        hx: Math.max(0.2, (hz.param2 || 3) / 2),
+        hy: Math.max(0.1, (hz.param3 || 0.5) / 2),
+        density: 0,
+        friction: 0.8,
+      });
     case HazardKind.Laser:
     case HazardKind.TriggerDrop:
       return box({

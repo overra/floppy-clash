@@ -6,9 +6,10 @@ import { getLevel } from '../src/levels/catalog';
 import { DYNAMIC_APPENDIX_D_KINDS, lateJoinBodySpec } from '../src/sim/hazards/lateJoin';
 import { destroyBody } from '../src/sim/physics/bodies';
 import { restoreWorld, serializeWorld } from '../src/sim/snapshot';
-import { Destructible, Hazard, HazardKind, NetId, Static } from '../src/sim/traits';
+import { Destructible, Hazard, HazardKind, NetId, PhysBody, SpawnPoint, Static } from '../src/sim/traits';
 import { hold, makeSim } from './helpers';
 import type { SimHandle } from '../src/sim/world';
+import type { Body } from 'planck';
 
 type LateJoinExpect = 'static' | 'dynamic' | 'kinematic';
 
@@ -31,6 +32,26 @@ function materialOf(sim: SimHandle, entity: Entity): BodyMaterial {
     friction: fixture?.getFriction() ?? -1,
     circle: fixture?.getShape() instanceof Circle,
   };
+}
+
+function jointCount(body: Body | undefined): number {
+  if (!body) return 0;
+  let n = 0;
+  for (let edge = body.getJointList(); edge; edge = edge.next) n += 1;
+  return n;
+}
+
+function boxExtents(sim: SimHandle, entity: Entity): { hx: number; hy: number } {
+  const verts = sim.ctx.bodies.get(entity)?.getFixtureList()?.getShape() as
+    | { m_vertices?: { x: number; y: number }[] }
+    | undefined;
+  let hx = 0;
+  let hy = 0;
+  for (const v of verts?.m_vertices ?? []) {
+    hx = Math.max(hx, Math.abs(v.x));
+    hy = Math.max(hy, Math.abs(v.y));
+  }
+  return { hx, hy };
 }
 
 function expectNotGenericProp(got: BodyMaterial, kind: number): void {
@@ -85,6 +106,8 @@ describe('lateJoinBodySpec Appendix D materials', () => {
     density: number;
     friction: number;
     shape?: 'box' | 'circle';
+    hx?: number;
+    hy?: number;
   }[] = [
     { name: 'crate', kind: HazardKind.Crate, bodyType: 'dynamic', density: 0.5, friction: 0.5 },
     { name: 'barrel', kind: HazardKind.Barrel, bodyType: 'dynamic', density: 0.5, friction: 0.5 },
@@ -134,6 +157,36 @@ describe('lateJoinBodySpec Appendix D materials', () => {
     },
     { name: 'momentum', kind: HazardKind.Momentum, bodyType: 'dynamic', density: 0.35, friction: 0.8 },
     { name: 'collapsing', kind: HazardKind.Collapsing, bodyType: 'dynamic', density: 0, friction: 0.8 },
+    {
+      name: 'moving platform',
+      kind: HazardKind.MovingPlatform,
+      hz: { param0: 3, param1: 5, param2: 1, param3: 0.6 },
+      bodyType: 'kinematic',
+      density: 0,
+      friction: 0.8,
+      hx: 2.5,
+      hy: 0.3,
+    },
+    {
+      name: 'rotating platform',
+      kind: HazardKind.RotatingPlatform,
+      hz: { param0: 1, param1: 4, param2: 0.6, param3: 0 },
+      bodyType: 'kinematic',
+      density: 0,
+      friction: 0.8,
+      hx: 2,
+      hy: 0.3,
+    },
+    {
+      name: 'disappearing platform',
+      kind: HazardKind.Disappearing,
+      hz: { param0: 140, param1: 0, param2: 3, param3: 0.5 },
+      bodyType: 'kinematic',
+      density: 0,
+      friction: 0.8,
+      hx: 1.5,
+      hy: 0.25,
+    },
   ];
 
   it('lists every mid-round dynamic Appendix D kind', () => {
@@ -157,6 +210,12 @@ describe('lateJoinBodySpec Appendix D materials', () => {
     expect(spec.density).toBeCloseTo(row.density, 5);
     expect(spec.friction).toBeCloseTo(row.friction, 5);
     if (row.shape) expect(spec.shape).toBe(row.shape);
+    if (row.hx != null) {
+      expect(spec.hx).toBeCloseTo(row.hx, 5);
+      expect(spec.hy).toBeCloseTo(row.hy ?? 0, 5);
+      expect(spec.hx).not.toBeCloseTo(1, 5);
+      expect(spec.hy).not.toBeCloseTo(0.5, 5);
+    }
     if (row.kind !== HazardKind.Boss) expect(spec.density).not.toBeCloseTo(1, 5);
     else expect(spec.density).not.toBeCloseTo(1, 5);
   });
@@ -292,6 +351,124 @@ describe('spawnMissing restores host hazard density/type', () => {
       expect(row.friction).toBeCloseTo(0.5, 5);
       expect(row.density).not.toBeCloseTo(1, 5);
     }
+  });
+
+  it.each([
+    { name: 'moving', level: 'test-platform.moving', kind: HazardKind.MovingPlatform, hx: 2.5, hy: 0.3 },
+    { name: 'rotating', level: 'test-platform.rotating', kind: HazardKind.RotatingPlatform, hx: 2, hy: 0.3 },
+    { name: 'disappearing', level: 'test-platform.disappearing', kind: HazardKind.Disappearing, hx: 1.5, hy: 0.25 },
+  ])('$name platform spawnMissing keeps host half-extents (not 1×0.5)', ({ level, kind, hx, hy }) => {
+    const host = makeSim({ level: getLevel(level), seed: 470 + kind, settings: { playerCount: 1 } });
+    const wanted: number[] = [];
+    host.ecs.query(Hazard, NetId).updateEach(([hz, n], e) => {
+      if (hz.kind !== kind) return;
+      const ext = boxExtents(host, e);
+      expect(ext.hx).toBeCloseTo(hx, 5);
+      expect(ext.hy).toBeCloseTo(hy, 5);
+      wanted.push(n.id);
+    });
+    expect(wanted.length).toBeGreaterThan(0);
+    const snap = serializeWorld(host.ecs);
+    const view = createClientView(snap, 120, getLevel(level));
+    const kill: Entity[] = [];
+    view.sim.ecs.query(Hazard, NetId).updateEach(([_hz, n], e) => {
+      if (wanted.includes(n.id)) kill.push(e);
+    });
+    for (const e of kill) {
+      destroyBody(view.sim.ecs, e);
+      e.destroy();
+    }
+    restoreWorld(view.sim.ecs, snap);
+    view.sim.ecs.query(Hazard, NetId).updateEach(([hz, n], e) => {
+      if (hz.kind !== kind || !wanted.includes(n.id)) return;
+      const ext = boxExtents(view.sim, e);
+      expect(ext.hx).toBeCloseTo(hx, 5);
+      expect(ext.hy).toBeCloseTo(hy, 5);
+      expect(ext.hx).not.toBeCloseTo(1, 5);
+      expect(view.sim.ctx.bodies.get(e)?.getType()).toBe('kinematic');
+    });
+  });
+
+  it('spawnMissing rebuilds spikeball hang, chain revolutes, and momentum joints', () => {
+    const cases: { level: string; kind: number; minJoints: number; pick: (hz: { kind: number; param2: number; param3: number }) => boolean }[] = [
+      {
+        level: 'test-spikeball',
+        kind: HazardKind.Spikeball,
+        minJoints: 1,
+        pick: (hz) => hz.kind === HazardKind.Spikeball && hz.param2 === 0,
+      },
+      {
+        level: 'test-chain',
+        kind: HazardKind.Chain,
+        minJoints: 1,
+        pick: (hz) => hz.kind === HazardKind.Chain && hz.param3 !== 1,
+      },
+      {
+        level: 'test-platform.momentum',
+        kind: HazardKind.Momentum,
+        minJoints: 1,
+        pick: (hz) => hz.kind === HazardKind.Momentum,
+      },
+    ];
+    for (const row of cases) {
+      const host = makeSim({ level: getLevel(row.level), seed: 480 + row.kind, settings: { playerCount: 1 } });
+      step(host);
+      const nets: number[] = [];
+      host.ecs.query(Hazard, NetId).updateEach(([hz, n], e) => {
+        if (!row.pick(hz)) return;
+        if (e.has(Static)) return;
+        nets.push(n.id);
+      });
+      expect(nets.length, row.level).toBeGreaterThan(0);
+      const snap = serializeWorld(host.ecs);
+      const view = createClientView(snap, 120, getLevel(row.level));
+      const kill: Entity[] = [];
+      view.sim.ecs.query(Hazard, NetId).updateEach(([_hz, n], e) => {
+        if (nets.includes(n.id)) kill.push(e);
+      });
+      for (const e of kill) {
+        destroyBody(view.sim.ecs, e);
+        e.destroy();
+      }
+      restoreWorld(view.sim.ecs, snap);
+      let joined = 0;
+      view.sim.ecs.query(Hazard, NetId).updateEach(([_hz, n], e) => {
+        if (!nets.includes(n.id)) return;
+        if (jointCount(view.sim.ctx.bodies.get(e)) >= row.minJoints) joined += 1;
+      });
+      expect(joined, row.level).toBe(nets.length);
+      const after = { n: 0 };
+      view.sim.ecs.query(Hazard, NetId).updateEach(([_hz, n], e) => {
+        if (nets.includes(n.id)) after.n += jointCount(view.sim.ctx.bodies.get(e));
+      });
+      restoreWorld(view.sim.ecs, snap);
+      let again = 0;
+      view.sim.ecs.query(Hazard, NetId).updateEach(([_hz, n], e) => {
+        if (nets.includes(n.id)) again += jointCount(view.sim.ctx.bodies.get(e));
+      });
+      expect(again, `${row.level} no dup joints`).toBe(after.n);
+    }
+  });
+
+  it('Transform-only spawn points do not become density-1 boxes', () => {
+    const host = makeSim({ seed: 490, settings: { playerCount: 1 } });
+    const snap = serializeWorld(host.ecs);
+    const view = createClientView(snap, 120);
+    const kill: Entity[] = [];
+    view.sim.ecs.query(SpawnPoint, NetId).updateEach((_, e) => kill.push(e));
+    expect(kill.length).toBeGreaterThan(0);
+    for (const e of kill) {
+      destroyBody(view.sim.ecs, e);
+      e.destroy();
+    }
+    restoreWorld(view.sim.ecs, snap);
+    let boxed = 0;
+    view.sim.ecs.query(PhysBody, NetId).updateEach((_, e) => {
+      if (e.has(Hazard) || e.has(SpawnPoint)) return;
+      const d = view.sim.ctx.bodies.get(e)?.getFixtureList()?.getDensity() ?? 0;
+      if (Math.abs(d - 1) < 0.01) boxed += 1;
+    });
+    expect(boxed).toBe(0);
   });
 
   it('destructible / ice stay static with host friction after spawnMissing', () => {

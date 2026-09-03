@@ -1,6 +1,8 @@
 import { createAdded, createChanged, createRemoved, type Entity, type World } from 'koota';
 import { fnv1a, hashToHex, quantize } from '../core/hash';
+import { isolateChainBody } from './hazards/chain';
 import { createLateJoinHazardBody, lateJoinBodySpec } from './hazards/lateJoin';
+import { attachLateJoinHazardJoints } from './hazards/lateJoinJoints';
 import { createBoxBody, createCircleBody, destroyBody, registerBody } from './physics/bodies';
 import { getContext } from './context';
 import { spawnPlayer } from './level/loader';
@@ -745,7 +747,12 @@ function applyWorldTraits(world: World, snap: WorldSnapshot): void {
 }
 
 /** Late-join: host-spawned weapons / projectiles / snakes / ragdolls / debris are not in the client's level load. */
-function spawnMissing(world: World, rec: TraitSnapshot, newRootNetIds: Set<number>): void {
+function spawnMissing(
+  world: World,
+  rec: TraitSnapshot,
+  newRootNetIds: Set<number>,
+  newHazardNetIds: Set<number>,
+): void {
   if (rec.traits.Player) return;
   const ctx = getContext(world);
   const t = rec.traits.Transform;
@@ -949,12 +956,17 @@ function spawnMissing(world: World, rec: TraitSnapshot, newRootNetIds: Set<numbe
     if (spec.bodyType === 'kinematic') entity.add(Kinematic());
     if (spec.fixtureKind === 'solid') entity.add(Solid());
     createLateJoinHazardBody(world, entity, spec, x, y, angle);
+    if (kind === HazardKind.Chain && spec.bodyType === 'dynamic') {
+      const chainBody = ctx.bodies.get(entity);
+      if (chainBody) isolateChainBody(chainBody);
+    }
+    newHazardNetIds.add(rec.netId);
     applyRecord(world, entity, rec, true);
     writeBodyVel(world, entity, rec);
     return;
   }
 
-  if (t) {
+  if (t && rec.traits.BodyVel) {
     const entity = world.spawn(
       Transform({ x, y, angle }),
       PrevTransform({ x, y, angle }),
@@ -1077,10 +1089,12 @@ export function restoreWorld(world: World, snap: WorldSnapshot): void {
     applyRecord(world, entity, rec, full);
   });
   const newRootNetIds = new Set<number>();
+  const newHazardNetIds = new Set<number>();
   for (const rec of snap.entities) {
     if (used.has(rec.netId)) continue;
-    spawnMissing(world, rec, newRootNetIds);
+    spawnMissing(world, rec, newRootNetIds, newHazardNetIds);
   }
+  attachLateJoinHazardJoints(world, newHazardNetIds);
   applyHeldLinks(world, snap);
   applyOwnedByLinks(world, snap);
   applyPartOfLinks(world, snap, newRootNetIds);
