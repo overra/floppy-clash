@@ -11,7 +11,7 @@ Numbers are from `src/sim/tuning.ts` and pinned by `test/movement.test.ts` (±10
 | Run | 30 m in ≈ 4 s | Dedicated `run-track` (60 m floor), `runSpeed` 8 |
 | Punch slam | Fast descent | Hold `down` while airborne punching (`punchSlamImpulse`) |
 
-Held weapons follow the hand (Transform + deactivated body) so SDF merge / net snapshots stay on the aim arm. Sword / spear `recoil.forward` is along aim, including Y (Appendix C lunge). Melee uses a short forward arc (not a disk).
+Held weapons are re-posed after `syncTransforms` (this tick's hand, deactivated body + Transform). Sword / spear `recoil.forward` is along aim, including Y (Appendix C lunge). Melee uses a short forward arc (not a disk), including at overlapping range.
 
 GPU pass (4) blits the scene through `warpPostUvGpu` (black-hole UV). Canvas warps world samples in `worldToScreen`. Chain hung decks are dynamic bodies on a revolute joint.
 

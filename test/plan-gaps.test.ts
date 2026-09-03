@@ -2,7 +2,8 @@ import { describe, expect, it } from 'vitest';
 import { woodsClearing } from '../src/levels/handauthored';
 import { getLevel } from '../src/levels/catalog';
 import { hitZoneAt } from '../src/sim/player/health';
-import { spawnWeapon } from '../src/sim/systems/weapons';
+import { heldHandPose, spawnWeapon } from '../src/sim/systems/weapons';
+import { inMeleeArc } from '../src/sim/weapons/projectiles';
 import { spawnSnake } from '../src/sim/weapons/projectiles';
 import {
   Controller,
@@ -304,7 +305,7 @@ describe('PLAN gaps closed this audit', () => {
     expect(b.get(Status)?.burning ?? 0).toBeGreaterThan(0);
   });
 
-  it('held weapon Transform follows the hand after the player moves', () => {
+  it('held weapon Transform is this tick\'s hand, not last tick\'s pose', () => {
     const sim = makeSim({ seed: 401, settings: { playerCount: 1 } });
     const p = playerOf(sim);
     sim.ctx.bodies.get(p)?.setPosition({ x: 10, y: 4 });
@@ -314,17 +315,25 @@ describe('PLAN gaps closed this audit', () => {
     expect(gun.has(Held)).toBe(true);
     expect(sim.ctx.bodies.get(gun)?.isActive()).toBe(false);
     sim.ctx.bodies.get(p)?.setPosition({ x: 16, y: 6 });
+    sim.ctx.bodies.get(p)?.setLinearVelocity({ x: 0, y: 0 });
     p.set(Transform, { x: 16, y: 6, angle: 0 });
-    for (let i = 0; i < 6; i++) {
-      sim.step([hold({ moveX: 1, aimX: 1, aimY: 0 }), hold({}), hold({}), hold({})]);
-    }
+    sim.step([hold({ aimX: 1, aimY: 0 }), hold({}), hold({}), hold({})]);
     const wt = gun.get(Transform)!;
     const pt = p.get(Transform)!;
-    expect(Math.hypot(wt.x - pt.x, wt.y - pt.y)).toBeLessThan(1.8);
-    expect(wt.x).toBeGreaterThan(14);
+    const hand = heldHandPose(pt, { x: 1, y: 0 }, 0.45);
+    expect(Math.hypot(wt.x - hand.x, wt.y - hand.y)).toBeLessThan(0.04);
+    expect(wt.x).toBeGreaterThan(pt.x + 0.3);
+    const body = sim.ctx.bodies.get(gun)!.getPosition();
+    expect(body.x).toBeCloseTo(wt.x, 3);
+    expect(body.y).toBeCloseTo(wt.y, 3);
   });
 
   it('melee hits a short forward arc and misses behind the wielder', () => {
+    expect(inMeleeArc(10, 4, 1, 0, 10.55, 4.45, 0.7)).toBe(true);
+    expect(inMeleeArc(10, 4, 1, 0, 9.1, 4, 0.7)).toBe(false);
+    expect(inMeleeArc(10, 4, 1, 0, 9.85, 4, 0.7)).toBe(false);
+    expect(inMeleeArc(10, 4, 1, 0, 10, 4.65, 0.7)).toBe(false);
+
     const hit = makeSim({ seed: 407, settings: { playerCount: 2 } });
     const ha = playerOf(hit, 0);
     const hb = playerOf(hit, 1);
@@ -343,9 +352,9 @@ describe('PLAN gaps closed this audit', () => {
     const ma = playerOf(miss, 0);
     const mb = playerOf(miss, 1);
     miss.ctx.bodies.get(ma)?.setPosition({ x: 10, y: 4 });
-    miss.ctx.bodies.get(mb)?.setPosition({ x: 9.1, y: 4 });
+    miss.ctx.bodies.get(mb)?.setPosition({ x: 9.85, y: 4 });
     ma.set(Transform, { x: 10, y: 4, angle: 0 });
-    mb.set(Transform, { x: 9.1, y: 4, angle: 0 });
+    mb.set(Transform, { x: 9.85, y: 4, angle: 0 });
     const blade = spawnWeapon(miss.ecs, 'sword', 10, 5);
     blade.add(Held(), HeldBy(ma));
     blade.remove(Loose);

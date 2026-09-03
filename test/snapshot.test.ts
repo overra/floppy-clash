@@ -8,7 +8,9 @@ import {
   serializeDelta,
   serializeWorld,
 } from '../src/sim/snapshot';
-import { hold, makeSim, pos } from './helpers';
+import { spawnWeapon } from '../src/sim/systems/weapons';
+import { Held, HeldBy, Loose, NetId, Weapon } from '../src/sim/traits';
+import { hold, makeSim, playerOf, pos } from './helpers';
 
 describe('M8 snapshot', () => {
   it('round-trips transforms and rng', () => {
@@ -41,5 +43,44 @@ describe('M8 snapshot', () => {
     view.push(50, delta);
     view.apply(180);
     expect(view.appliedX).toBeCloseTo(x1, 1);
+  });
+
+  it('serializes Held + holder and late-join spawns a weapon the client never had', () => {
+    const host = makeSim({ seed: 90, settings: { playerCount: 2 } });
+    const p = playerOf(host, 0);
+    const gun = spawnWeapon(host.ecs, 'pistol', 8, 6);
+    gun.add(Held(), HeldBy(p));
+    gun.remove(Loose);
+    host.step([hold({ aimX: 1, aimY: 0 }), hold({}), hold({}), hold({})]);
+    const gunNet = gun.get(NetId)!.id;
+    const snap = serializeWorld(host.ecs);
+    const rec = snap.entities.find((e) => e.netId === gunNet);
+    expect(rec?.traits.Weapon?.held).toBe(1);
+    expect(Number(rec?.traits.Weapon?.holderNetId)).toBeGreaterThanOrEqual(0);
+
+    const client = makeSim({ seed: 91, settings: { playerCount: 2 } });
+    let before = 0;
+    client.ecs.query(Weapon).updateEach(() => {
+      before += 1;
+    });
+    restoreWorld(client.ecs, snap);
+    let found = false;
+    let held = false;
+    let holderOk = false;
+    client.ecs.query(Weapon, NetId).updateEach(([_w, n], e) => {
+      if (n.id !== gunNet) return;
+      found = true;
+      held = e.has(Held);
+      holderOk = e.targetFor(HeldBy) === playerOf(client, 0);
+    });
+    expect(before).toBe(0);
+    expect(found).toBe(true);
+    expect(held).toBe(true);
+    expect(holderOk).toBe(true);
+    let bodyActive = true;
+    client.ecs.query(Weapon, NetId).updateEach(([_w, n], e) => {
+      if (n.id === gunNet) bodyActive = client.ctx.bodies.get(e)?.isActive() ?? true;
+    });
+    expect(bodyActive).toBe(false);
   });
 });

@@ -55,6 +55,28 @@ function segmentHit(
 }
 
 /**
+ * PLAN 4.9 / Appendix C: short forward arc, not a disk.
+ * Close overlap still requires the victim to be in front of aim (no behind-the-back hit).
+ */
+export function inMeleeArc(
+  ox: number,
+  oy: number,
+  aimX: number,
+  aimY: number,
+  tx: number,
+  ty: number,
+  reach: number,
+  halfArc = 0.7,
+): boolean {
+  const dx = tx - ox;
+  const dy = ty - oy;
+  const dist = Math.hypot(dx, dy);
+  if (dist > reach + 0.35) return false;
+  const facing = dist < 1e-4 ? 1 : (dx * aimX + dy * aimY) / dist;
+  return facing >= Math.cos(halfArc);
+}
+
+/**
  * PLAN 4.9: hits on a held weapon's far end deflect; hits near the hand disarm.
  * Held bodies are deactivated, so this is a line test against the aim-aligned barrel.
  */
@@ -197,15 +219,9 @@ export function projectiles(world: World): void {
       const reach = def.projectile.radius || 0.7;
       if (aim && ot) {
         // PLAN 4.9 / Appendix C: short arc in front of the wielder, not a full disk.
-        const halfArc = 0.7;
-        const cosArc = Math.cos(halfArc);
         world.query(Player, Transform, Not(Dead)).updateEach(([_p, pt], other) => {
           if (other === owner) return;
-          const dx = pt.x - ot.x;
-          const dy = pt.y - ot.y;
-          const dist = Math.hypot(dx, dy);
-          const facing = dist < 0.25 ? 1 : (dx * aim.x + dy * aim.y) / dist;
-          if (dist > reach + 0.35 || facing < cosArc) return;
+          if (!inMeleeArc(ot.x, ot.y, aim.x, aim.y, pt.x, pt.y, reach)) return;
           const hx = ot.x + aim.x * reach;
           const hy = ot.y + aim.y * reach;
           const block = shieldBlocks(world, other, hx, hy, aim.x, aim.y);

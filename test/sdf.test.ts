@@ -20,6 +20,7 @@ import {
   evalCoverageGpu,
   evalPrimitiveSdfGpu,
   evalSmoothUnionGpu,
+  evalWarpWorldGpu,
 } from '../src/render/gpu/shaders';
 
 describe('sdf primitives', () => {
@@ -87,6 +88,9 @@ describe('TypeGPU use-gpu fns on CPU', () => {
       sdBezier({ x: 1, y: 0.4 }, { x: 0, y: 0 }, { x: 1, y: 0.8 }, { x: 2, y: 0 }, 0.1),
     ).toBeLessThan(0);
     expect(evalPrimitiveSdfGpu(curve, 1, 0.4)).toBeLessThan(0);
+    const warped = evalWarpWorldGpu(2, 0, { x: 0, y: 0, z: 4, w: 0.35 });
+    expect(warped.via).toBe('dualfn');
+    expect(warped.x).toBeLessThan(2);
   });
 });
 

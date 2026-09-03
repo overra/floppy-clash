@@ -135,7 +135,20 @@ function heldWeapon(world: World, player: Entity): Entity | undefined {
   return undefined;
 }
 
-/** PLAN 4.9: held body is deactivated and posed at the hand so syncTransforms / net / render follow aim. */
+/** PLAN 4.9: hand pose in meters from the holder origin along aim. */
+export function heldHandPose(
+  transform: { x: number; y: number },
+  aim: { x: number; y: number },
+  barrel: number,
+): { x: number; y: number; angle: number } {
+  return {
+    x: transform.x + aim.x * (0.45 + barrel * 0.25),
+    y: transform.y + aim.y * (0.45 + barrel * 0.25),
+    angle: Math.atan2(aim.y, aim.x),
+  };
+}
+
+/** PLAN 4.9: held body is deactivated and Transform is written so render / net / pickup stay on the aim arm. */
 function poseHeldWeapon(
   world: World,
   weapon: Entity,
@@ -144,19 +157,29 @@ function poseHeldWeapon(
   barrel: number,
 ): void {
   const ctx = getContext(world);
-  const hx = transform.x + aim.x * (0.45 + barrel * 0.25);
-  const hy = transform.y + aim.y * (0.45 + barrel * 0.25);
-  const angle = Math.atan2(aim.y, aim.x);
+  const pose = heldHandPose(transform, aim, barrel);
+  weapon.set(Transform, pose);
   const wbody = ctx.bodies.get(weapon);
   if (wbody) {
     wbody.setActive(false);
-    wbody.setPosition(new Vec2(hx, hy));
-    wbody.setAngle(angle);
+    wbody.setPosition(new Vec2(pose.x, pose.y));
+    wbody.setAngle(pose.angle);
     wbody.setLinearVelocity(new Vec2(0, 0));
     wbody.setAngularVelocity(0);
-    return;
   }
-  weapon.set(Transform, { x: hx, y: hy, angle });
+}
+
+/** Call after syncTransforms so the gun sits on this tick's player pose, not last tick's. */
+export function syncHeldWeapons(world: World): void {
+  for (const weapon of world.query(Weapon, Held)) {
+    const holder = weapon.targetFor(HeldBy);
+    if (!holder || holder.has(Dead)) continue;
+    const t = holder.get(Transform);
+    const aim = holder.get(Aim);
+    const wep = weapon.get(Weapon);
+    if (!t || !aim || !wep) continue;
+    poseHeldWeapon(world, weapon, t, aim, weaponByIndex(wep.defId).shape.length);
+  }
 }
 
 export function weapons(world: World): void {

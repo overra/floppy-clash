@@ -624,21 +624,48 @@ export function evalWarpWorldGpu(
   x: number,
   y: number,
   hole: { x: number; y: number; z: number; w: number },
-): { x: number; y: number } {
+): { x: number; y: number; via: 'dualfn' | 'cpu' } {
   try {
     const out = warpWorldGpu({ x, y } as never, hole as never) as { x: number; y: number };
     if (Number.isFinite(Number(out.x)) && Number.isFinite(Number(out.y))) {
-      return { x: Number(out.x), y: Number(out.y) };
+      return { x: Number(out.x), y: Number(out.y), via: 'dualfn' };
     }
   } catch {
-    /* CPU fallback */
+    /* CPU fallback — tests must fail if they require the DualFn path */
   }
   const dx = x - hole.x;
   const dy = y - hole.y;
   const dist = Math.hypot(dx, dy) || 1e-4;
   const fall = Math.max(0, Math.min(1, 1 - dist / hole.z));
   const k = hole.w * fall * fall;
-  return { x: x - dx * k, y: y - dy * k };
+  return { x: x - dx * k, y: y - dy * k, via: 'cpu' };
+}
+
+export function evalWarpPostUvGpu(
+  uvx: number,
+  uvy: number,
+  hole: { x: number; y: number; z: number; w: number },
+  view: { x: number; y: number },
+): { x: number; y: number; via: 'dualfn' | 'cpu' } {
+  try {
+    const out = warpPostUvGpu({ x: uvx, y: uvy } as never, hole as never, view as never) as {
+      x: number;
+      y: number;
+    };
+    if (Number.isFinite(Number(out.x)) && Number.isFinite(Number(out.y))) {
+      return { x: Number(out.x), y: Number(out.y), via: 'dualfn' };
+    }
+  } catch {
+    /* CPU fallback */
+  }
+  const px = uvx * view.x;
+  const py = uvy * view.y;
+  const dx = px - hole.x;
+  const dy = py - hole.y;
+  const dist = Math.hypot(dx, dy) || 1e-4;
+  const fall = Math.max(0, Math.min(1, 1 - dist / hole.z));
+  const k = hole.w * fall * fall;
+  return { x: (px - dx * k) / view.x, y: (py - dy * k) / view.y, via: 'cpu' };
 }
 
 export function evalSmoothUnionGpu(a: number, b: number, k: number): number {

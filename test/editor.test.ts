@@ -6,6 +6,7 @@ import {
   fromHash,
   importLevel,
   levelHashFromLocation,
+  deleteLibrary,
   loadLibrary,
   loadMemory,
   moveSelected,
@@ -18,6 +19,7 @@ import {
 } from '../src/editor/editor';
 import { parseLevel } from '../src/sim/level/schema';
 import { hold, makeSim } from './helpers';
+import { installMemoryIndexedDB } from './idb-memory';
 
 describe('M7 editor', () => {
   it('can place every hazard type, export, and reload', () => {
@@ -73,5 +75,22 @@ describe('M7 editor', () => {
     await saveLibrary(state.level);
     const lib = await loadLibrary();
     expect(lib.some((l) => l.id === state.level.id && l.name === 'Plus Pit')).toBe(true);
+  });
+
+  it('saveLibrary / loadLibrary persist through the IndexedDB object store', async () => {
+    const dbs = installMemoryIndexedDB();
+    resetMemoryLibrary();
+    const state = createEditorState();
+    state.level.id = 'idb-pit';
+    state.level.name = 'IDB Pit';
+    await saveLibrary(state.level);
+    resetMemoryLibrary();
+    expect((await loadMemory()).length).toBe(0);
+    const fromDb = dbs.get('floppy-clash-levels');
+    expect(fromDb?.has('idb-pit')).toBe(true);
+    const lib = await loadLibrary();
+    expect(lib.some((l) => l.id === 'idb-pit' && l.name === 'IDB Pit')).toBe(true);
+    await deleteLibrary('idb-pit');
+    expect((await loadLibrary()).some((l) => l.id === 'idb-pit')).toBe(false);
   });
 });

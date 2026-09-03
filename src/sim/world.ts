@@ -23,7 +23,7 @@ import { damageDeath } from './systems/damage';
 import { hazardsStep } from './systems/hazards';
 import { physicsStep, syncTransforms } from './systems/syncTransforms';
 import { projectiles } from './weapons/projectiles';
-import { weapons } from './weapons/systems';
+import { syncHeldWeapons, weapons } from './weapons/systems';
 import { DropState, MatchState, PrevTransform, RoundPhase, RoundState, SimClock, Transform } from './traits';
 
 export type CreateSimOptions = {
@@ -107,6 +107,7 @@ export function createSimWorld(opts: CreateSimOptions): SimHandle {
     hazardsStep(ecs);
     physicsStep(ecs);
     syncTransforms(ecs);
+    syncHeldWeapons(ecs);
     damageDeath(ecs);
     rules(ecs);
     spawner(ecs);
