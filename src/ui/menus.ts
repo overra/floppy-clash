@@ -1,6 +1,7 @@
 import { builtInMatchLevels } from '../levels/catalog';
 import type { LevelDef } from '../sim/level/schema';
 import { DEFAULT_MAP, type PadMap } from '../input/remap';
+import { HP_PRESETS } from '../input/seats';
 import { WEAPON_DEFS, weaponDisplayName } from '../sim/weapons/defs';
 import { scoreboardMarkup } from './scoreboard';
 import { DEFAULT_USER_SETTINGS, type UserSettings } from './settingsStore';
@@ -289,6 +290,15 @@ export function renderMenus(
   root.append(wrap);
 }
 
+function hpSelectOptions(current: number): string {
+  const values = (HP_PRESETS as readonly number[]).includes(current)
+    ? [...HP_PRESETS]
+    : [...HP_PRESETS, current].sort((a, b) => a - b);
+  return values
+    .map((h) => `<option value="${h}" ${h === current ? 'selected' : ''}>${h}</option>`)
+    .join('');
+}
+
 function renderSettings(
   card: HTMLElement,
   state: MenuState,
@@ -315,7 +325,7 @@ function renderSettings(
   const lastMap = Object.entries(maps)[0]?.[1] ?? DEFAULT_MAP;
   const lastId = Object.keys(maps)[0] ?? '';
   card.innerHTML = `<h2>Settings</h2>
-      <label>HP <input id="hp" type="number" value="${state.maxHp}"></label><br/>
+      <label>HP <select id="hp">${hpSelectOptions(state.maxHp)}</select></label><br/>
       <label>First to <input id="ft" type="number" value="${state.firstTo}"></label><br/>
       <label>Bots <input id="bots" type="number" value="${state.bots}"></label><br/>
       <label>Show wins <input id="wins" type="checkbox" ${settings.showWins ? 'checked' : ''}></label><br/>

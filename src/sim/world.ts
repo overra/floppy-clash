@@ -35,6 +35,12 @@ import {
   Transform,
 } from './traits';
 
+export type SeatSpawn = {
+  slot: number;
+  color: number;
+  inputIndex: number;
+};
+
 export type CreateSimOptions = {
   level: LevelDef;
   seed: number;
@@ -42,6 +48,8 @@ export type CreateSimOptions = {
   spawnPlayers?: boolean;
   boxes?: number;
   extraLevels?: LevelDef[];
+  /** Join-screen seats: color / inputIndex follow the pad, not spawn order. */
+  seats?: SeatSpawn[];
 };
 
 export type SimHandle = {
@@ -88,14 +96,26 @@ export function createSimWorld(opts: CreateSimOptions): SimHandle {
   loadLevel(ecs, opts.level);
 
   if (opts.spawnPlayers !== false) {
-    const count = Math.max(1, Math.min(4, settings.playerCount + settings.bots));
+    const assigned = new Map((opts.seats ?? []).map((s) => [s.slot, s]));
+    const humanSlots = new Set(assigned.keys());
+    const base = Math.max(1, Math.min(4, settings.playerCount + settings.bots));
+    const maxHuman = humanSlots.size ? Math.max(...humanSlots) : -1;
+    const count = Math.min(4, Math.max(base, maxHuman + 1));
     const order = ctx.rng.shuffle(opts.level.spawns.slice());
     for (let i = 0; i < count; i++) {
       const spawn = order[i % order.length]!;
-      spawnPlayer(ecs, i, spawn.x, spawn.y + 1, i, i);
+      const seat = assigned.get(i);
+      if (seat) spawnPlayer(ecs, seat.slot, spawn.x, spawn.y + 1, seat.color, seat.inputIndex);
+      else spawnPlayer(ecs, i, spawn.x, spawn.y + 1, i, i);
     }
     const botSlots: number[] = [];
-    for (let i = settings.playerCount; i < count; i++) botSlots.push(i);
+    if (humanSlots.size) {
+      for (let i = 0; i < count; i++) {
+        if (!humanSlots.has(i)) botSlots.push(i);
+      }
+    } else {
+      for (let i = settings.playerCount; i < count; i++) botSlots.push(i);
+    }
     if (botSlots.length) attachBots(ecs, botSlots);
   }
 

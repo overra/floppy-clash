@@ -34,6 +34,7 @@ import {
   NetId,
   OwnedBy,
   PartOf,
+  Player,
   Projectile,
   ProjectileKind,
   RagdollPart,
@@ -73,6 +74,25 @@ describe('M8 snapshot', () => {
     restoreWorld(view.sim.ecs, host.snapshot());
     expect(view.sim.players().length).toBe(3);
     expect(playerOf(view.sim, 2).get(Transform)).toBeTruthy();
+  });
+
+  it('restoreWorld copies Player color and inputIndex onto late-join seats', () => {
+    const host = makeSim({
+      seed: 214,
+      settings: { playerCount: 2 },
+      seats: [
+        { slot: 0, color: 3, inputIndex: 0 },
+        { slot: 1, color: 2, inputIndex: 1 },
+      ],
+    });
+    expect(playerOf(host, 0).get(Player)?.color).toBe(3);
+    const snap = host.snapshot();
+    expect(snap.entities.some((e) => Number(e.traits.Player?.color) === 3)).toBe(true);
+    const client = makeSim({ seed: 215, settings: { playerCount: 1 } });
+    restoreWorld(client.ecs, snap);
+    expect(playerOf(client, 0).get(Player)?.color).toBe(3);
+    expect(playerOf(client, 1).get(Player)?.color).toBe(2);
+    expect(playerOf(client, 1).get(Player)?.inputIndex).toBe(1);
   });
 
   it('round-trips transforms and rng', () => {

@@ -24,7 +24,16 @@ import {
   takeSeat,
 } from './ui/menus';
 import { scoreboardMarkup } from './ui/scoreboard';
+import { playRumble } from './input/haptics';
 import { loadMaps, saveMap, shouldOfferRemap } from './input/remap';
+import {
+  canResumePause,
+  humanSeatAssignments,
+  keyboardSeatIndex,
+  matchPlayerCount,
+  routeSeatInputs,
+  samplePrimaryLocal,
+} from './input/seats';
 import { getLevel, gymLevel, matchLevelPool } from './levels/catalog';
 import { addShake, createCamera } from './render/camera';
 import { buildFrame } from './render/buildFrame';
@@ -133,6 +142,8 @@ type FloppyDebug = {
   gpuPipelineResourceType: string;
   gpuInitError: string;
   readFramebuffer: () => Promise<FramebufferReadback>;
+  playerColors: number[];
+  pausedBy: string | null;
 };
 
 declare global {
@@ -220,6 +231,8 @@ export function createGame(root: HTMLElement): Game {
   let stats = loadStats();
   let lastFrameGroups = 0;
   let lastFrameColored = 0;
+  let pausedBy: string | null = null;
+  let routeByJoinSeats = false;
 
   function show() {
     renderMenus(
@@ -280,13 +293,13 @@ export function createGame(root: HTMLElement): Game {
           show();
         },
         resume: () => {
-          paused = false;
-          menus.screen = 'play';
-          show();
+          requestResume('*');
         },
         quit: () => {
           sim = null;
           paused = false;
+          pausedBy = null;
+          routeByJoinSeats = false;
           if (playtestingEditor && editor) {
             playtestingEditor = false;
             menus.screen = 'editor';
@@ -343,6 +356,8 @@ export function createGame(root: HTMLElement): Game {
   async function beginMatch() {
     const taken = menus.seats.filter((s) => s.taken).length;
     const online = menus.netRole === 'host' && net.peerCount > 0 ? 1 + net.peerCount : 0;
+    const vsBots = menus.bots > 0;
+    const seats = online ? undefined : humanSeatAssignments(menus.seats);
     const humans = online || Math.max(1, taken);
     extraLevels = settings.includeUserLevels ? await loadLibrary().catch(() => []) : [];
     const pool = matchLevelPool(settings.enabledLevels, extraLevels);
@@ -352,10 +367,11 @@ export function createGame(root: HTMLElement): Game {
         ? (pool[0] ?? gymLevel)
         : (pool[Math.floor(Math.random() * pool.length)] ?? gymLevel));
     startSim(level, {
-      playerCount: humans,
+      playerCount: online ? humans : vsBots ? 1 : matchPlayerCount(menus.seats, false),
       bots: menus.bots,
       maxHp: settings.maxHp,
       firstTo: settings.firstTo,
+      seats,
     });
   }
 
@@ -525,19 +541,44 @@ export function createGame(root: HTMLElement): Game {
     decalLayer = createDecalLayer(clientView.sim.ctx.level.bounds);
   }
 
+  function requestPause(actor: string): void {
+    if (menus.screen !== 'play' || paused) return;
+    paused = true;
+    pausedBy = actor;
+    menus.screen = 'pause';
+    show();
+  }
+
+  function requestResume(actor: string): void {
+    if (!paused || menus.screen !== 'pause') return;
+    if (!canResumePause(actor, pausedBy, menus.seats)) return;
+    paused = false;
+    pausedBy = null;
+    menus.screen = 'play';
+    show();
+  }
+
   function startSim(
     level: LevelDef,
-    opts: { playerCount: number; bots: number; maxHp?: number; firstTo?: number },
+    opts: {
+      playerCount: number;
+      bots: number;
+      maxHp?: number;
+      firstTo?: number;
+      seats?: { slot: number; color: number; inputIndex: number }[];
+    },
   ) {
     mixer.stopMusic();
     mixer.resume();
     mixer.startMusic();
     const seed = (Math.random() * 1e9) | 0;
     recorder = createRecorder(seed, level.id);
+    routeByJoinSeats = Boolean(opts.seats?.length);
     sim = createSimWorld({
       level,
       seed,
       extraLevels,
+      seats: opts.seats,
       settings: {
         playerCount: opts.playerCount,
         bots: opts.bots,
@@ -613,14 +654,41 @@ export function createGame(root: HTMLElement): Game {
     return maps[id];
   }
 
+  function playerTransformForSlot(slot: number) {
+    const list = sim?.players() ?? [];
+    const found = list.find((e) => e.get(Player)?.slot === slot) ?? list[0];
+    return found?.get(Transform) ?? { x: 8, y: 6 };
+  }
+
+  function sampleKeyboardFor(slot: number): PlayerInput {
+    const t = playerTransformForSlot(slot);
+    return keys.sample({ x: t.x, y: t.y }, cam, canvas.clientWidth, canvas.clientHeight);
+  }
+
+  function readConnectedPad(pad: Gamepad, apiIndex: number): PlayerInput {
+    const latch = latches[apiIndex] ?? emptyLatch();
+    const aim = lastAim[apiIndex] ?? { x: 1, y: 0 };
+    const input = readPad(pad, latch, aim, padMapFor(pad.id), stickMem[apiIndex]);
+    lastAim[apiIndex] = { x: input.aimX, y: input.aimY };
+    return input;
+  }
+
+  function handlePadStart(padId: string): void {
+    if (menus.screen === 'join') {
+      startIfReady();
+      return;
+    }
+    if (menus.screen === 'play') requestPause(padId);
+    else if (menus.screen === 'pause') requestResume(padId);
+  }
+
   function sampleInputs(): PlayerInput[] {
     if (chatOpen) return blankInputs(4);
-    const inputs = blankInputs(4);
     const pads = pollGamepads();
+    const padInputs = new Map<string, PlayerInput>();
     pads.forEach((pad, i) => {
       if (!pad) return;
       const latch = latches[i] ?? emptyLatch();
-      const aim = lastAim[i] ?? { x: 1, y: 0 };
       if (menus.screen === 'join') {
         const leftDown = !!pad.buttons[14]?.pressed;
         const rightDown = !!pad.buttons[15]?.pressed;
@@ -650,52 +718,40 @@ export function createGame(root: HTMLElement): Game {
         if (startDown && !joinStartHeld[i]) startIfReady();
         joinStartHeld[i] = startDown;
       }
-      inputs[i] = readPad(pad, latch, aim, padMapFor(pad.id), stickMem[i]);
-      lastAim[i] = { x: inputs[i]!.aimX, y: inputs[i]!.aimY };
+      padInputs.set(pad.id, readConnectedPad(pad, i));
       if (latch.pause) {
         latch.pause = false;
-        if (menus.screen === 'join') {
-          startIfReady();
-        } else {
-          paused = !paused;
-          menus.screen = paused ? 'pause' : 'play';
-          show();
-        }
+        handlePadStart(pad.id);
       }
     });
-    const joinedPad = pads.some(Boolean);
-    if (!joinedPad || menus.seats.some((s) => s.padId === 'keyboard')) {
-      const p = sim?.players()[0];
-      const t = p?.get(Transform) ?? { x: 8, y: 6 };
-      inputs[0] = keys.sample({ x: t.x, y: t.y }, cam, canvas.clientWidth, canvas.clientHeight);
+    const online = menus.netRole === 'host' || menus.netRole === 'client';
+    if (online || !routeByJoinSeats) {
+      const inputs = blankInputs(4);
+      inputs[0] = samplePrimaryLocal({
+        pads,
+        padInput: (pad) => padInputs.get(pad.id) ?? sampleKeyboardFor(0),
+        keyboard: sampleKeyboardFor(0),
+      });
+      return inputs;
     }
-    return inputs;
+    const kb = keyboardSeatIndex(menus.seats);
+    return routeSeatInputs({
+      seats: menus.seats,
+      pads,
+      readPad: (pad) => padInputs.get(pad.id) ?? sampleKeyboardFor(0),
+      keyboard: kb >= 0 ? sampleKeyboardFor(kb) : null,
+    });
   }
 
   function applyPauseHotkey(): void {
     if (!keys.takePause()) return;
-    if (menus.screen === 'play') {
-      paused = true;
-      menus.screen = 'pause';
-      show();
-    } else if (menus.screen === 'pause') {
-      paused = false;
-      menus.screen = 'play';
-      show();
-    }
+    if (menus.screen === 'play') requestPause('keyboard');
+    else if (menus.screen === 'pause') requestResume('keyboard');
   }
 
   function rumble(kind: 'hit' | 'boom') {
-    if (!settings.haptics || typeof navigator === 'undefined' || !navigator.getGamepads) return;
-    for (const pad of navigator.getGamepads()) {
-      const actuator = pad?.vibrationActuator;
-      if (!actuator?.playEffect) continue;
-      void actuator.playEffect('dual-rumble', {
-        duration: kind === 'boom' ? 180 : 60,
-        strongMagnitude: kind === 'boom' ? 0.8 : 0.35,
-        weakMagnitude: 0.4,
-      });
-    }
+    if (typeof navigator === 'undefined' || !navigator.getGamepads) return;
+    playRumble([...navigator.getGamepads()], kind, settings.haptics);
   }
 
   function tick(now: number) {
@@ -964,6 +1020,8 @@ export function createGame(root: HTMLElement): Game {
         (sim ?? clientView?.sim)
           ? formatInspect(inspectWorld((sim ?? clientView!.sim).ecs, 12))
           : '',
+      playerColors: readPlayerColors(handle),
+      pausedBy,
     };
   }
 
@@ -987,6 +1045,15 @@ export function createGame(root: HTMLElement): Game {
       if (p.slot >= 0 && p.slot < 4) xs[p.slot] = t.x;
     });
     return xs;
+  }
+
+  function readPlayerColors(world: SimHandle | null | undefined): number[] {
+    const colors = [-1, -1, -1, -1];
+    if (!world) return colors;
+    world.ecs.query(Player).updateEach(([p]) => {
+      if (p.slot >= 0 && p.slot < 4) colors[p.slot] = p.color;
+    });
+    return colors;
   }
 
   function countWeapons(): number {

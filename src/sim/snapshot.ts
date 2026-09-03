@@ -127,7 +127,7 @@ export function serializeWorld(world: World, opts?: { skipOwnedByCache?: boolean
     const p = entity.get(Player);
     if (p) {
       if (isRagdollRoot(entity)) {
-        snap.traits.RagdollRoot = { slot: p.slot, color: p.color };
+        snap.traits.RagdollRoot = { slot: p.slot, color: p.color, inputIndex: p.inputIndex };
       } else {
         snap.traits.Player = { slot: p.slot, color: p.color, inputIndex: p.inputIndex };
       }
@@ -411,6 +411,15 @@ function applyRecord(world: World, entity: Entity, rec: TraitSnapshot, full: boo
   }
   const h = rec.traits.Health;
   if (h && entity.get(Health)) entity.set(Health, { hp: Number(h.hp), maxHp: Number(h.maxHp) });
+  const pl = rec.traits.Player;
+  const curP = entity.get(Player);
+  if (pl && curP) {
+    entity.set(Player, {
+      slot: Number(pl.slot ?? curP.slot),
+      color: Number(pl.color ?? curP.color),
+      inputIndex: Number(pl.inputIndex ?? curP.inputIndex),
+    });
+  }
   const c = rec.traits.Controller;
   const curC = entity.get(Controller);
   if (c && curC) {
@@ -754,7 +763,7 @@ function spawnMissing(world: World, rec: TraitSnapshot, newRootNetIds: Set<numbe
       Player({
         slot: Number(root.slot ?? 0),
         color: Number(root.color ?? 0),
-        inputIndex: Number(root.slot ?? 0),
+        inputIndex: Number(root.inputIndex ?? root.slot ?? 0),
       }),
       Dead(),
       Health({
@@ -974,8 +983,11 @@ function ensureSnapshotSeats(world: World, snap: WorldSnapshot): void {
       if (p.slot === slot) exists = true;
     });
     if (exists) continue;
+    const rec = snap.entities.find((e) => Number(e.traits.Player?.slot) === slot);
+    const color = Number(rec?.traits.Player?.color ?? slot);
+    const inputIndex = Number(rec?.traits.Player?.inputIndex ?? slot);
     const spawn = ctx.level.spawns[slot % Math.max(1, ctx.level.spawns.length)] ?? { x: 8, y: 6 };
-    spawnPlayer(world, slot, spawn.x, spawn.y + 1, slot, slot);
+    spawnPlayer(world, slot, spawn.x, spawn.y + 1, color, inputIndex);
     ctx.settings.playerCount = Math.max(ctx.settings.playerCount, slot + 1);
   }
 }

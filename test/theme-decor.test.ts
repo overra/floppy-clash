@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { woodsClearing } from '../src/levels/handauthored';
 import { createCamera } from '../src/render/camera';
-import { buildFrame } from '../src/render/buildFrame';
+import { buildFrame, PLAYER_COLORS, PLAYER_COLORS_CB } from '../src/render/buildFrame';
 import { groupBounds } from '../src/render/frame';
 import {
   PRIM_BEZIER,
@@ -117,5 +117,16 @@ describe('PLAN §4.11 theme pass', () => {
     });
     expect(frame.hole?.r ?? 0).toBeGreaterThan(0.2);
     expect(frame.groups.some((g) => g.fx === 'hole')).toBe(true);
+  });
+
+  it('colorblind palette swaps player group colors', () => {
+    const sim = makeSim({ seed: 3, settings: { playerCount: 1 } });
+    const cam = createCamera(sim.ctx.level.bounds);
+    const normal = buildFrame(sim, cam, 0, 1280, 720, [], { freezeCamera: true });
+    const cb = buildFrame(sim, cam, 0, 1280, 720, [], { freezeCamera: true, colorblind: true });
+    expect(PLAYER_COLORS[0]).not.toBe(PLAYER_COLORS_CB[0]);
+    expect(normal.groups.some((g) => g.color === PLAYER_COLORS[0])).toBe(true);
+    expect(cb.groups.some((g) => g.color === PLAYER_COLORS_CB[0])).toBe(true);
+    expect(cb.groups.some((g) => g.color === PLAYER_COLORS[0])).toBe(false);
   });
 });

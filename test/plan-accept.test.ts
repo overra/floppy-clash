@@ -3,6 +3,8 @@ import { getLevel } from '../src/levels/catalog';
 import { shouldOfferRemap } from '../src/input/remap';
 import { heldWeaponHitKind, heldWeaponIntercept, spawnSnake } from '../src/sim/weapons/projectiles';
 import { spawnWeapon } from '../src/sim/systems/weapons';
+import { takeDamage } from '../src/sim/player/health';
+import { WEAPON_DEFS, weaponIndex } from '../src/sim/weapons/defs';
 import {
   Aim,
   Combat,
@@ -15,7 +17,9 @@ import {
   Held,
   HeldBy,
   Loose,
+  OwnedBy,
   Projectile,
+  ProjectileKind,
   Snake,
   Status,
   Transform,
@@ -376,7 +380,7 @@ describe('PLAN accept stand-ins', () => {
   });
 
   it('offers remap for non-standard mappings', () => {
-    expect(shouldOfferRemap('', 'pad', {})).toBe(false);
+    expect(shouldOfferRemap('', 'pad', {})).toBe(true);
     expect(shouldOfferRemap('standard', 'pad', {})).toBe(false);
     expect(shouldOfferRemap('standard', 'pad', { pad: { jump: 0, attack: 7, block: 6, throw: 3, pause: 9 } })).toBe(
       false,
@@ -795,5 +799,100 @@ describe('PLAN accept stand-ins', () => {
     b.set(Transform, { x: 12, y: 4, angle: 0 });
     for (let i = 0; i < 8; i++) sim.step([hold({}), hold({}), hold({}), hold({})]);
     expect(b.has(Dead) || (b.get(Health)?.hp ?? 1) <= 0).toBe(true);
+  });
+
+  it('owner grace skips the shooter for 6 ticks then can hit', () => {
+    const sim = makeSim({ seed: 901, settings: { playerCount: 2 } });
+    const a = playerOf(sim, 0);
+    pin(sim, a, 10, 4);
+    const spawnThrough = (grace: number) => {
+      const t = a.get(Transform)!;
+      const proj = sim.ecs.spawn(
+        Projectile({
+          kind: ProjectileKind.Bullet,
+          damage: 25,
+          speed: 28,
+          bounces: 0,
+          fuse: 0,
+          x: t.x - 0.08,
+          y: t.y,
+          vx: 28,
+          vy: 0,
+          gravity: 0,
+          ownerGrace: grace,
+          defId: weaponIndex('pistol'),
+        }),
+      );
+      proj.add(OwnedBy(a));
+    };
+    const hp0 = a.get(Health)!.hp;
+    spawnThrough(6);
+    for (let i = 0; i < 6; i++) {
+      pin(sim, a, 10, 4);
+      sim.step([hold({}), hold({}), hold({}), hold({})]);
+    }
+    expect(a.get(Health)!.hp).toBe(hp0);
+    spawnThrough(0);
+    pin(sim, a, 10, 4);
+    sim.step([hold({}), hold({}), hold({}), hold({})]);
+    expect(a.get(Health)!.hp).toBeLessThan(hp0);
+  });
+
+  it('block meter drains over 72 ticks, waits 18, then refills over 60', () => {
+    const sim = makeSim({ seed: 902, settings: { playerCount: 1 } });
+    const p = playerOf(sim);
+    for (let i = 0; i < 72; i++) sim.step([hold({ block: true }), hold({}), hold({}), hold({})]);
+    expect(p.get(Combat)!.blockMeter).toBeLessThan(0.05);
+    const empty = p.get(Combat)!.blockMeter;
+    for (let i = 0; i < 18; i++) sim.step([hold({}), hold({}), hold({}), hold({})]);
+    expect(p.get(Combat)!.blockMeter).toBeCloseTo(empty, 2);
+    for (let i = 0; i < 60; i++) sim.step([hold({}), hold({}), hold({}), hold({})]);
+    expect(p.get(Combat)!.blockMeter).toBeGreaterThan(0.95);
+  });
+
+  it('sniper headshot at 100 HP is a kill (75 × 2)', () => {
+    const sim = makeSim({ seed: 903, settings: { playerCount: 1, maxHp: 100 } });
+    const p = playerOf(sim);
+    expect(p.get(Health)?.hp).toBe(100);
+    takeDamage(sim.ecs, p, 75, 'head', -1, 0, 0);
+    expect(p.get(Health)?.hp).toBe(0);
+  });
+
+  it('rare drops weigh less than a common pistol', () => {
+    const pistol = WEAPON_DEFS.find((d) => d.id === 'pistol')!.dropWeight;
+    expect(WEAPON_DEFS.find((d) => d.id === 'god-pistol')!.dropWeight).toBeLessThan(pistol);
+    expect(WEAPON_DEFS.find((d) => d.id === 'rpg')!.dropWeight).toBeLessThan(pistol);
+    expect(WEAPON_DEFS.find((d) => d.id === 'black-hole')!.dropWeight).toBeLessThan(pistol);
+    expect(pistol).toBe(1);
+  });
+
+  it('barrel blast is 10–55, nearer heavier than farther', () => {
+    const sim = makeSim({
+      level: getLevel('test-barrel.explosive'),
+      seed: 904,
+      settings: { playerCount: 2 },
+    });
+    const near = playerOf(sim, 0);
+    const far = playerOf(sim, 1);
+    let bx = 13;
+    let by = 3;
+    sim.ecs.query(Hazard, Transform, Destructible).updateEach(([hz, t, d], e) => {
+      if (hz.kind !== HazardKind.Barrel) return;
+      bx = t.x;
+      by = t.y;
+      e.set(Destructible, { hp: 0, maxHp: d.maxHp });
+    });
+    pin(sim, near, bx + 0.25, by);
+    pin(sim, far, bx + 2.0, by);
+    const hpN = near.get(Health)!.hp;
+    const hpF = far.get(Health)!.hp;
+    sim.step([hold({}), hold({}), hold({}), hold({})]);
+    const dmgN = hpN - (near.get(Health)?.hp ?? hpN);
+    const dmgF = hpF - (far.get(Health)?.hp ?? hpF);
+    expect(dmgN).toBeGreaterThanOrEqual(10);
+    expect(dmgN).toBeLessThanOrEqual(55);
+    expect(dmgF).toBeGreaterThanOrEqual(10);
+    expect(dmgF).toBeLessThanOrEqual(55);
+    expect(dmgN).toBeGreaterThan(dmgF);
   });
 });

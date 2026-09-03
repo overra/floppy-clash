@@ -46,8 +46,8 @@ import {
 import { themePassGroups } from './themeDecor';
 import { weaponPrimitives } from './weaponSilhouette';
 
-const COLORS = ['#f2c14e', '#4c8dff', '#e85d4c', '#3dcf7a'];
-const COLORS_CB = ['#f0e442', '#0072b2', '#d55e00', '#009e73'];
+export const PLAYER_COLORS = ['#f2c14e', '#4c8dff', '#e85d4c', '#3dcf7a'] as const;
+export const PLAYER_COLORS_CB = ['#f0e442', '#0072b2', '#d55e00', '#009e73'] as const;
 const limbs = new Map<number, LimbState>();
 
 function nextLimb(fx: FxWorld | undefined, simId: number, vx: number, vy: number): LimbState {
@@ -150,7 +150,7 @@ export function buildFrame(
   const groups: ShapeGroup[] = themePassGroups(theme, ctx.level.bounds, cam, viewW, viewH);
   const targets: { x: number; y: number }[] = [];
   const lights: LightEmitter[] = [];
-  const palette = opts.colorblind ? COLORS_CB : COLORS;
+  const palette = opts.colorblind ? PLAYER_COLORS_CB : PLAYER_COLORS;
   const physArms = new Map<
     number,
     { left?: { x: number; y: number }; right?: { x: number; y: number } }

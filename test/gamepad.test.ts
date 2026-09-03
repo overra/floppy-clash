@@ -8,6 +8,7 @@ import {
   smoothStick,
 } from '../src/input/gamepad';
 import { tuning } from '../src/sim/tuning';
+import { playRumble, rumbleParams } from '../src/input/haptics';
 import { DEFAULT_MAP, shouldOfferRemap } from '../src/input/remap';
 import { claimDisconnectedSeat, createMenuState, markDisconnectedSeat } from '../src/ui/menus';
 
@@ -99,6 +100,12 @@ describe('gamepad mapping', () => {
   it('offers remap when the mapping is not standard', () => {
     expect(shouldOfferRemap('standard', 'Xbox', {})).toBe(false);
     expect(shouldOfferRemap('custom', '054c-0ce6-Wireless Controller', {})).toBe(true);
+    expect(shouldOfferRemap('', '054c-0ce6-Wireless Controller', {})).toBe(true);
+    expect(
+      shouldOfferRemap('', '054c-0ce6-Wireless Controller', {
+        '054c-0ce6-Wireless Controller': DEFAULT_MAP,
+      }),
+    ).toBe(false);
   });
 
   it('first new pad claims the disconnected seat', () => {
@@ -191,5 +198,16 @@ describe('gamepad mapping', () => {
     });
     const input = readPad(pad, latch, { x: 1, y: 0 }, { jump: 2, attack: 7, block: 6, throw: 3, pause: 9 });
     expect(input.jump).toBe(true);
+  });
+
+  it('playRumble calls playEffect when enabled and skips when disabled', () => {
+    expect(rumbleParams('boom').duration).toBe(180);
+    expect(rumbleParams('hit').duration).toBe(60);
+    const pad = fakePad({});
+    const calls: unknown[] = [];
+    expect(playRumble([pad, null], 'hit', true, (p, params) => calls.push([p.id, params.duration]))).toBe(1);
+    expect(calls).toEqual([[pad.id, 60]]);
+    expect(playRumble([pad], 'boom', false, () => calls.push('nope'))).toBe(0);
+    expect(calls).toHaveLength(1);
   });
 });

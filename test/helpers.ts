@@ -15,6 +15,7 @@ export function makeSim(partial?: Partial<CreateSimOptions>): SimHandle {
     spawnPlayers: partial?.spawnPlayers,
     boxes: partial?.boxes,
     extraLevels: partial?.extraLevels,
+    seats: partial?.seats,
   });
 }
 
