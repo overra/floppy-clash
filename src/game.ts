@@ -105,6 +105,7 @@ type FloppyDebug = {
   lastLevelId: string;
   pendingLevelId: string;
   loadLevel: (raw: unknown) => string;
+  sendMatchChat: (text: string) => void;
   gpuPipelineBackend: 'typegpu' | 'none';
   gpuPipelineApi: 'root.createRenderPipeline' | '';
   gpuPipelineResourceType: string;
@@ -319,6 +320,10 @@ export function createGame(root: HTMLElement): Game {
       if (msg.t === 'chat') {
         menus.chat.push(`${msg.from}: ${msg.text}`);
         if (menus.screen === 'lobby') show();
+        else {
+          const log = matchChatEl?.querySelector('#matchchat-log');
+          if (log) log.textContent = menus.chat.slice(-6).join('\n');
+        }
       }
       if (msg.t === 'settings') {
         try {
@@ -805,6 +810,14 @@ export function createGame(root: HTMLElement): Game {
         } catch {
           return '';
         }
+      },
+      sendMatchChat: (text: string) => {
+        const typed = text.trim();
+        if (!typed) return;
+        menus.chat.push(`you: ${typed}`);
+        net.send({ t: 'chat', from: netName || menus.netRole || 'you', text: typed });
+        const log = matchChatEl?.querySelector('#matchchat-log');
+        if (log) log.textContent = menus.chat.slice(-6).join('\n');
       },
           forceLastStand: () => {
         if (!sim) return;

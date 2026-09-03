@@ -35,8 +35,12 @@ export const ALL_LEVELS: LevelDef[] = uniquify([gymLevel, runTrack, ...HAND_AUTH
 
 const byId = new Map(ALL_LEVELS.map((l) => [l.id, l]));
 
+export function findLevel(id: string): LevelDef | undefined {
+  return byId.get(id);
+}
+
 export function getLevel(id: string): LevelDef {
-  const level = byId.get(id);
+  const level = findLevel(id);
   if (!level) throw new Error(`Unknown level ${id}`);
   return level;
 }

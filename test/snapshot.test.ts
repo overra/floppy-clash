@@ -13,20 +13,27 @@ import {
 import { spawnWeapon } from '../src/sim/systems/weapons';
 import {
   Boss,
+  Combat,
+  Controller,
   Crown,
   Dead,
   Destructible,
+  DropState,
   Hazard,
   HazardKind,
+  HazardPath,
   Health,
   Held,
   HeldBy,
+  Kinematic,
   Loose,
   MatchState,
   NetId,
   OwnedBy,
   PartOf,
   RagdollPart,
+  Solid,
+  Static,
   Status,
   Weapon,
 } from '../src/sim/traits';
@@ -229,5 +236,64 @@ describe('M8 snapshot', () => {
       bossHp = b.hp;
     });
     expect(bossHp).toBe(77);
+  });
+
+  it('serializes HazardPath, tags, DropState, and Combat.blockStartTick', () => {
+    const host = makeSim({
+      level: getLevel('test-platform.moving'),
+      seed: 98,
+      settings: { playerCount: 2 },
+    });
+    for (let i = 0; i < 40; i++) host.step([hold({}), hold({}), hold({}), hold({})]);
+    const a = playerOf(host, 0);
+    const combat = a.get(Combat)!;
+    a.set(Combat, { ...combat, blocking: true, blockStartTick: 42, blockMeter: 1 });
+    const ctrl = a.get(Controller)!;
+    a.set(Controller, { ...ctrl, ducking: true, wallSliding: true, wallDir: -1 });
+    host.ecs.set(DropState, { nextDrop: 333, looseCount: 2 });
+    const snap = serializeWorld(host.ecs);
+    expect(snap.nextDrop).toBe(333);
+    expect(snap.looseCount).toBe(2);
+    const aRec = snap.entities.find((e) => Number(e.traits.Player?.slot) === 0);
+    expect(aRec?.traits.Combat?.blockStartTick).toBe(42);
+    expect(aRec?.traits.Controller?.ducking).toBe(1);
+    expect(aRec?.traits.Controller?.wallSliding).toBe(1);
+    expect(snap.entities.some((e) => e.traits.HazardPath && Number(e.traits.HazardPath.index) >= 0)).toBe(
+      true,
+    );
+    expect(snap.entities.some((e) => e.traits.Static && e.traits.Solid)).toBe(true);
+    expect(snap.entities.some((e) => e.traits.Kinematic && e.traits.HazardPath)).toBe(true);
+
+    const view = createClientView(snap, 120, getLevel('test-platform.moving'));
+    expect(playerOf(view.sim, 0).get(Combat)?.blockStartTick).toBe(42);
+    expect(playerOf(view.sim, 0).get(Controller)?.ducking).toBe(true);
+    expect(view.sim.ecs.get(DropState)?.nextDrop).toBe(333);
+    let pathOk = false;
+    view.sim.ecs.query(HazardPath, Kinematic).updateEach(([path]) => {
+      if (path.points.length >= 2) pathOk = true;
+    });
+    expect(pathOk).toBe(true);
+  });
+
+  it('deltas include Status and OwnedBy changes without Transform motion', () => {
+    const host = makeSim({ seed: 99, settings: { playerCount: 2 } });
+    serializeWorld(host.ecs);
+    drainChangeTrackers(host.ecs);
+    const a = playerOf(host, 0);
+    const idle = serializeDelta(host.ecs);
+    drainChangeTrackers(host.ecs);
+    a.set(Status, { burning: 40, slowed: 0, glued: 90, bubbled: 0 });
+    const statusDelta = serializeDelta(host.ecs);
+    expect(statusDelta.full).toBe(false);
+    const statusRec = statusDelta.entities.find((e) => Number(e.traits.Status?.glued) === 90);
+    expect(statusRec).toBeTruthy();
+    expect(statusDelta.entities.length).toBeLessThanOrEqual(idle.entities.length + 4);
+
+    drainChangeTrackers(host.ecs);
+    const gun = spawnWeapon(host.ecs, 'pistol', 8, 6);
+    gun.add(OwnedBy(a));
+    const creditDelta = serializeDelta(host.ecs);
+    const gunRec = creditDelta.entities.find((e) => e.netId === gun.get(NetId)!.id);
+    expect(Number(gunRec?.traits.OwnedBy?.ownerNetId)).toBe(a.get(NetId)!.id);
   });
 });

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { applyLateJoinSnapshot, createClientView } from '../src/net/clientView';
+import { applyLateJoinSnapshot, createClientView, worldFromSnapshot } from '../src/net/clientView';
 import { createInterpBuffer } from '../src/net/interp';
 import { decode, encode } from '../src/net/protocol';
 import { netShapeFromSearch } from '../src/net/shape';
@@ -76,6 +76,27 @@ describe('client interpolation view', () => {
     expect(pair!.to.tick).toBeGreaterThanOrEqual(pair!.from.tick);
     expect(pair!.alpha).toBeGreaterThanOrEqual(0);
     expect(pair!.alpha).toBeLessThanOrEqual(1);
+  });
+
+  it('worldFromSnapshot throws when custom level JSON is missing', () => {
+    const host = makeSim({ seed: 21, settings: { playerCount: 2 } });
+    const snap = { ...host.snapshot(), levelId: 'user-not-in-catalog' };
+    expect(() => worldFromSnapshot(snap)).toThrow(/requires the host JSON override/);
+    const custom = parseLevel({
+      id: 'user-not-in-catalog',
+      name: 'Override',
+      theme: 'arena',
+      bounds: { x: 0, y: 0, w: 36, h: 16 },
+      spawns: [
+        { x: 4, y: 8 },
+        { x: 32, y: 8 },
+        { x: 10, y: 8 },
+        { x: 26, y: 8 },
+      ],
+      objects: [{ type: 'solid', x: 18, y: 1, w: 36, h: 2 }],
+    });
+    const view = createClientView(snap, 120, custom);
+    expect(view.sim.ctx.level.id).toBe('user-not-in-catalog');
   });
 
   it('parses ?net=100,2 loss shaping', () => {

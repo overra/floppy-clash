@@ -1,5 +1,5 @@
 import { gymLevel } from '../levels/gym';
-import { getLevel } from '../levels/catalog';
+import { findLevel } from '../levels/catalog';
 import type { LevelDef } from '../sim/level/schema';
 import { NetId, Player, PrevTransform, Transform } from '../sim/traits';
 import { mergeSnapshot, restoreWorld, type WorldSnapshot } from '../sim/snapshot';
@@ -17,13 +17,19 @@ export type ClientView = {
 };
 
 export function worldFromSnapshot(snap: WorldSnapshot, levelOverride?: LevelDef): SimHandle {
-  let level = levelOverride ?? gymLevel;
-  if (!levelOverride && snap.levelId) {
-    try {
-      level = getLevel(snap.levelId);
-    } catch {
-      level = gymLevel;
+  let level: LevelDef;
+  if (levelOverride) {
+    level = levelOverride;
+  } else if (!snap.levelId) {
+    level = gymLevel;
+  } else {
+    const found = findLevel(snap.levelId);
+    if (!found) {
+      throw new Error(
+        `worldFromSnapshot: custom level "${snap.levelId}" requires the host JSON override`,
+      );
     }
+    level = found;
   }
   const fromPlayers = snap.entities.filter((e) => e.traits.Player).length;
   const playerCount = Math.max(1, snap.playerCount ?? fromPlayers);

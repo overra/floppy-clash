@@ -15,6 +15,7 @@ export function damageDeath(world: World): void {
   world.query(living).updateEach(([player, health, transform], entity) => {
     const status = entity.get(Status);
     if (status) {
+      let dirty = false;
       if (status.burning > 0) {
         // PLAN Appendix C: 5/s for 6 s. Tick on elapsed time so refreshing
         // `burning` to duration (lava stream / flamethrower) does not instant-proc.
@@ -23,11 +24,21 @@ export function damageDeath(world: World): void {
           health.hp -= ctx.tuning.burnDamage;
         }
         status.burning -= 1;
+        dirty = true;
       }
-      if (status.slowed > 0) status.slowed -= 1;
-      if (status.glued > 0) status.glued -= 1;
-      if (status.bubbled > 0) status.bubbled -= 1;
-      entity.set(Status, status);
+      if (status.slowed > 0) {
+        status.slowed -= 1;
+        dirty = true;
+      }
+      if (status.glued > 0) {
+        status.glued -= 1;
+        dirty = true;
+      }
+      if (status.bubbled > 0) {
+        status.bubbled -= 1;
+        dirty = true;
+      }
+      if (dirty) entity.set(Status, status);
     }
 
     const oob =

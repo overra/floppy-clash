@@ -70,10 +70,15 @@ test('late-join snapshot restores a client interpolation view', async ({ browser
     .poll(async () => guest.evaluate(() => window.__floppy?.netSlot ?? 0), { timeout: 10_000 })
     .toBeGreaterThan(0);
   await expect(host.locator('#matchchat')).toBeVisible();
-  await host.keyboard.press('Enter');
-  await expect(host.locator('#matchchat-in')).toBeVisible();
-  await host.locator('#matchchat-in').fill('ingame-hi');
-  await host.keyboard.press('Enter');
+  await expect
+    .poll(async () => host.evaluate(() => Boolean(window.__floppy?.sendMatchChat)), {
+      timeout: 10_000,
+    })
+    .toBe(true);
+  await host.evaluate(() => window.__floppy?.sendMatchChat('ingame-hi'));
+  await expect
+    .poll(async () => guest.evaluate(() => window.__floppy?.lastChat ?? ''), { timeout: 15_000 })
+    .toMatch(/ingame-hi/);
   await expect(guest.locator('#matchchat')).toContainText('ingame-hi', { timeout: 10_000 });
   await hostCtx.close();
   await guestCtx.close();

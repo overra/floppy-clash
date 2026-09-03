@@ -12,11 +12,14 @@ import {
   Crown,
   Dead,
   Destructible,
+  DropState,
   Hazard,
   HazardKind,
+  HazardPath,
   Health,
   Held,
   HeldBy,
+  Kinematic,
   Lifetime,
   Loose,
   MatchState,
@@ -28,7 +31,10 @@ import {
   Projectile,
   RagdollPart,
   RoundState,
+  SimClock,
   Snake,
+  Solid,
+  Static,
   Status,
   Transform,
   Weapon,
@@ -41,6 +47,8 @@ const Removed = createRemoved();
 
 /** Joints are rebuilt once per root NetId; restoreWorld runs every interpolating frame. */
 const ragdollJointsBuilt = new WeakMap<World, Set<number>>();
+/** Last `OwnedBy` owner NetId per entity, so deltas can include credit/re-own without motion. */
+const lastOwnedBy = new WeakMap<World, Map<number, number>>();
 
 export type TraitSnapshot = {
   netId: number;
@@ -61,6 +69,9 @@ export type WorldSnapshot = {
   lastKiller?: number;
   wins?: number[];
   matchRound?: number;
+  nextDrop?: number;
+  looseCount?: number;
+  stepScale?: number;
   entities: TraitSnapshot[];
   /** false = Changed(Transform) + Added/Removed NetId (PLAN 4.13). Late join uses full. */
   full?: boolean;
@@ -68,7 +79,34 @@ export type WorldSnapshot = {
   removed?: number[];
 };
 
-export function serializeWorld(world: World): WorldSnapshot {
+function snapshotOwnedBy(world: World): Map<number, number> {
+  const map = new Map<number, number>();
+  world.query(NetId).updateEach(([net], entity) => {
+    const owner = entity.targetFor(OwnedBy);
+    if (owner) map.set(net.id, owner.get(NetId)?.id ?? -1);
+  });
+  return map;
+}
+
+function refreshOwnedByCache(world: World): void {
+  lastOwnedBy.set(world, snapshotOwnedBy(world));
+}
+
+function ownedByChangedIds(world: World): number[] {
+  const prev = lastOwnedBy.get(world) ?? new Map<number, number>();
+  const next = snapshotOwnedBy(world);
+  const changed: number[] = [];
+  for (const [id, oid] of next) {
+    if (prev.get(id) !== oid) changed.push(id);
+  }
+  for (const id of prev.keys()) {
+    if (!next.has(id)) changed.push(id);
+  }
+  lastOwnedBy.set(world, next);
+  return changed;
+}
+
+export function serializeWorld(world: World, opts?: { skipOwnedByCache?: boolean }): WorldSnapshot {
   const ctx = getContext(world);
   const entities: TraitSnapshot[] = [];
   world.query(NetId).updateEach(([net], entity) => {
@@ -86,7 +124,17 @@ export function serializeWorld(world: World): WorldSnapshot {
       }
     }
     const c = entity.get(Controller);
-    if (c) snap.traits.Controller = { grounded: c.grounded, facing: c.facing, vx: c.vx, vy: c.vy };
+    if (c) {
+      snap.traits.Controller = {
+        grounded: c.grounded,
+        facing: c.facing,
+        vx: c.vx,
+        vy: c.vy,
+        ducking: c.ducking ? 1 : 0,
+        wallSliding: c.wallSliding ? 1 : 0,
+        wallDir: c.wallDir,
+      };
+    }
     const a = entity.get(Aim);
     if (a) snap.traits.Aim = { x: a.x, y: a.y };
     const w = entity.get(Weapon);
@@ -123,7 +171,16 @@ export function serializeWorld(world: World): WorldSnapshot {
       snap.traits.RagdollPart = { part: rp.part, rootNetId: root?.get(NetId)?.id ?? -1 };
     }
     const cb = entity.get(Combat);
-    if (cb) snap.traits.Combat = { blockMeter: cb.blockMeter, blocking: cb.blocking };
+    if (cb) {
+      snap.traits.Combat = {
+        blockMeter: cb.blockMeter,
+        blocking: cb.blocking,
+        blockStartTick: cb.blockStartTick,
+        punchActive: cb.punchActive,
+        punchCooldown: cb.punchCooldown,
+        refillDelay: cb.refillDelay,
+      };
+    }
     const st = entity.get(Status);
     if (st) {
       snap.traits.Status = {
@@ -154,11 +211,29 @@ export function serializeWorld(world: World): WorldSnapshot {
     const boss = entity.get(Boss);
     if (boss) snap.traits.Boss = { hp: boss.hp, bite: boss.bite, speed: boss.speed };
     if (entity.has(Crown)) snap.traits.Crown = { on: 1 };
+    if (entity.has(Dead)) snap.traits.Dead = { on: 1 };
+    if (entity.has(Static)) snap.traits.Static = { on: 1 };
+    if (entity.has(Kinematic)) snap.traits.Kinematic = { on: 1 };
+    if (entity.has(Solid)) snap.traits.Solid = { on: 1 };
+    const path = entity.get(HazardPath);
+    if (path) {
+      snap.traits.HazardPath = {
+        index: path.index,
+        accum: path.accum,
+        mode: path.mode,
+        dir: path.dir,
+        speed: path.speed,
+        points: path.points.map((p) => `${p.x},${p.y}`).join(';'),
+      };
+    }
     entities.push(snap);
   });
   entities.sort((a, b) => a.netId - b.netId);
   const rs = world.get(RoundState);
   const ms = world.get(MatchState);
+  const drop = world.get(DropState);
+  const clock = world.get(SimClock);
+  if (!opts?.skipOwnedByCache) refreshOwnedByCache(world);
   return {
     tick: ctx.tick,
     rng: ctx.rng.getState(),
@@ -172,6 +247,9 @@ export function serializeWorld(world: World): WorldSnapshot {
     lastKiller: rs?.lastKiller,
     wins: ms ? [ms.wins0, ms.wins1, ms.wins2, ms.wins3] : undefined,
     matchRound: ms?.round,
+    nextDrop: drop?.nextDrop,
+    looseCount: drop?.looseCount,
+    stepScale: clock?.stepScale,
     entities,
     full: true,
   };
@@ -180,17 +258,22 @@ export function serializeWorld(world: World): WorldSnapshot {
 /** Consume change trackers after a full snapshot so the next delta is incremental. */
 export function drainChangeTrackers(world: World): void {
   world.query(Changed(Transform)).forEach(() => undefined);
+  world.query(Changed(Status)).forEach(() => undefined);
+  world.query(Changed(Combat)).forEach(() => undefined);
+  world.query(Changed(HazardPath)).forEach(() => undefined);
   world.query(Added(NetId)).forEach(() => undefined);
   world.query(Removed(NetId)).forEach(() => undefined);
+  refreshOwnedByCache(world);
 }
 
 /**
- * Delta snapshot: `Changed(Transform)` + `Added`/`Removed` on `NetId` (PLAN 4.13).
- * Transform stores are read via `useStores` (SoA). Late join still uses `serializeWorld`.
+ * Delta snapshot: `Changed(Transform|Status|Combat|HazardPath)` + `OwnedBy` diffs
+ * + `Added`/`Removed` on `NetId` (PLAN 4.13). Late join still uses `serializeWorld`.
  */
 export function serializeDelta(world: World): WorldSnapshot {
-  const full = serializeWorld(world);
-  const include = new Set<number>();
+  const ownedChanged = ownedByChangedIds(world);
+  const full = serializeWorld(world, { skipOwnedByCache: true });
+  const include = new Set<number>(ownedChanged);
   const added: number[] = [];
   const removed: number[] = [];
   world.query(Changed(Transform), NetId).useStores(([_tfs, nets], entities) => {
@@ -198,6 +281,15 @@ export function serializeDelta(world: World): WorldSnapshot {
       const id = nets.id[e.id()];
       if (id != null) include.add(id);
     }
+  });
+  world.query(Changed(Status), NetId).updateEach(([_st, net]) => {
+    include.add(net.id);
+  });
+  world.query(Changed(Combat), NetId).updateEach(([_cb, net]) => {
+    include.add(net.id);
+  });
+  world.query(Changed(HazardPath), NetId).updateEach(([_hp, net]) => {
+    include.add(net.id);
   });
   world.query(Added(NetId)).updateEach(([net]) => {
     include.add(net.id);
@@ -232,7 +324,7 @@ export function mergeSnapshot(base: WorldSnapshot, delta: WorldSnapshot): WorldS
   };
 }
 
-function applyRecord(world: World, entity: Entity, rec: TraitSnapshot): void {
+function applyRecord(world: World, entity: Entity, rec: TraitSnapshot, full: boolean): void {
   const ctx = getContext(world);
   const t = rec.traits.Transform;
   if (t && entity.get(Transform)) {
@@ -254,6 +346,9 @@ function applyRecord(world: World, entity: Entity, rec: TraitSnapshot): void {
       facing: Number(c.facing),
       vx: Number(c.vx ?? curC.vx),
       vy: Number(c.vy ?? curC.vy),
+      ducking: c.ducking != null ? Boolean(Number(c.ducking)) : curC.ducking,
+      wallSliding: c.wallSliding != null ? Boolean(Number(c.wallSliding)) : curC.wallSliding,
+      wallDir: Number(c.wallDir ?? curC.wallDir),
     });
   }
   const a = rec.traits.Aim;
@@ -267,6 +362,9 @@ function applyRecord(world: World, entity: Entity, rec: TraitSnapshot): void {
       blockMeter: Number(cb.blockMeter ?? curCb.blockMeter),
       blocking: Boolean(cb.blocking),
       punchActive: Number(cb.punchActive ?? curCb.punchActive),
+      blockStartTick: Number(cb.blockStartTick ?? curCb.blockStartTick),
+      punchCooldown: Number(cb.punchCooldown ?? curCb.punchCooldown),
+      refillDelay: Number(cb.refillDelay ?? curCb.refillDelay),
     });
   }
   const w = rec.traits.Weapon;
@@ -338,6 +436,43 @@ function applyRecord(world: World, entity: Entity, rec: TraitSnapshot): void {
     else entity.add(Boss(next));
   }
   if (rec.traits.Crown && !entity.has(Crown)) entity.add(Crown());
+  const path = rec.traits.HazardPath;
+  if (path) {
+    const points = String(path.points ?? '')
+      .split(';')
+      .map((pair) => {
+        const [px, py] = pair.split(',');
+        return { x: Number(px), y: Number(py) };
+      })
+      .filter((p) => Number.isFinite(p.x) && Number.isFinite(p.y));
+    const next = {
+      points: points.length ? points : (entity.get(HazardPath)?.points ?? []),
+      index: Number(path.index ?? 0),
+      accum: Number(path.accum ?? 0),
+      mode: Number(path.mode ?? 0),
+      dir: Number(path.dir ?? 1),
+      speed: Number(path.speed ?? 3),
+    };
+    if (entity.get(HazardPath)) entity.set(HazardPath, next);
+    else entity.add(HazardPath(next));
+  }
+  const addTag = (key: string, add: () => void, remove: () => void, has: boolean) => {
+    const flag = rec.traits[key];
+    if (flag && Number(flag.on) === 1) {
+      if (!has) add();
+    } else if (full && !flag && has) {
+      remove();
+    }
+  };
+  addTag('Dead', () => entity.add(Dead()), () => entity.remove(Dead), entity.has(Dead));
+  addTag('Static', () => entity.add(Static()), () => entity.remove(Static), entity.has(Static));
+  addTag(
+    'Kinematic',
+    () => entity.add(Kinematic()),
+    () => entity.remove(Kinematic),
+    entity.has(Kinematic),
+  );
+  addTag('Solid', () => entity.add(Solid()), () => entity.remove(Solid), entity.has(Solid));
   if (h) {
     if (Number(h.hp) <= 0) {
       if (!entity.has(Dead)) entity.add(Dead());
@@ -464,6 +599,20 @@ function applyWorldTraits(world: World, snap: WorldSnapshot): void {
       round: snap.matchRound ?? ms.round,
     };
     world.set(MatchState, next);
+  }
+  const drop = world.get(DropState);
+  if (drop && snap.nextDrop != null) {
+    world.set(DropState, {
+      nextDrop: snap.nextDrop,
+      looseCount: snap.looseCount ?? drop.looseCount,
+    });
+  }
+  const clock = world.get(SimClock);
+  if (clock) {
+    world.set(SimClock, {
+      tick: snap.tick,
+      stepScale: snap.stepScale ?? clock.stepScale,
+    });
   }
 }
 
@@ -684,18 +833,19 @@ export function restoreWorld(world: World, snap: WorldSnapshot): void {
   const byNet = new Map<number, TraitSnapshot>();
   for (const e of snap.entities) byNet.set(e.netId, e);
   const used = new Set<number>();
+  const full = snap.full !== false;
   world.query(NetId).updateEach(([net], entity) => {
     const rec = byNet.get(net.id);
     if (!rec) return;
     used.add(net.id);
-    applyRecord(world, entity, rec);
+    applyRecord(world, entity, rec, full);
   });
   world.query(Player, Controller, NetId).updateEach(([_p, _c, net], entity) => {
     if (used.has(net.id)) return;
     const rec = snap.entities.find((e) => Number(e.traits.Player?.slot) === entity.get(Player)?.slot);
     if (!rec) return;
     used.add(net.id);
-    applyRecord(world, entity, rec);
+    applyRecord(world, entity, rec, full);
   });
   const newRootNetIds = new Set<number>();
   for (const rec of snap.entities) {
