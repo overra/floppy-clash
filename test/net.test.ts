@@ -125,6 +125,17 @@ describe('M8 netcode', () => {
     expect(decPlayer?.traits.Combat?.blocking).toBe(false);
     expect(decGun?.traits.Weapon?.thrown).toBe(false);
     expect(Number(decGun?.traits.Weapon?.holderNetId)).toBe(0);
+
+    playerRec!.traits.Controller = { ...playerRec!.traits.Controller, ducking: '0', wallSliding: '0' };
+    const tagged = snap.entities.find((e) => e.traits.Static);
+    expect(tagged).toBeTruthy();
+    tagged!.traits.Static = { on: '0' };
+    const decodedTags = decodeSnapshotBinary(encodeSnapshotBinary(snap));
+    const decDuck = decodedTags.entities.find((e) => e.netId === playerRec!.netId);
+    const decTagged = decodedTags.entities.find((e) => e.netId === tagged!.netId);
+    expect(Number(decDuck?.traits.Controller?.ducking)).toBe(0);
+    expect(Number(decDuck?.traits.Controller?.wallSliding)).toBe(0);
+    expect(decTagged?.traits.Static).toBeUndefined();
   });
 
   it('binary snapshot carries a non-default host scoreboardTicks', () => {

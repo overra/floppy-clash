@@ -1,5 +1,6 @@
 import { createQuery, type World } from 'koota';
 import { Vec2 } from 'planck';
+import { authoredHalfWidth } from '../authored';
 import { emit, getContext } from '../context';
 import { rising } from '../input';
 import { raycastClosest, type RayHit } from '../physics/queries';
@@ -18,7 +19,7 @@ function iceUnderfoot(world: World, x: number, y: number): boolean {
   world.query(Hazard, Transform).updateEach(([hz, t]) => {
     if (hz.kind !== HazardKind.Ice) return;
     // param0 is authored ice width. 0 means no look-ahead — do not `|| 3`.
-    const hw = hz.param0 / 2;
+    const hw = authoredHalfWidth(hz.param0);
     if (Math.abs(t.x - x) < hw + 0.5 && Math.abs(t.y - y) < 2.8) ice = true;
   });
   return ice;

@@ -1,4 +1,4 @@
-import { wireFlag } from '../sim/authored';
+import { wireFlag, wireTag } from '../sim/authored';
 import type { TraitSnapshot, WorldSnapshot } from '../sim/snapshot';
 
 /** PLAN 4.13 quantized WorldSnapshot (v2). First byte is the version. */
@@ -192,6 +192,14 @@ function num(rec: Record<string, number | boolean | string> | undefined, key: st
 
 function flag(rec: Record<string, number | boolean | string> | undefined, key: string): boolean {
   return wireFlag(rec?.[key]);
+}
+
+const TAG_TRAITS = new Set(['Crown', 'Dead', 'Static', 'Kinematic', 'Solid', 'Loose', 'Held']);
+
+function traitOnWire(name: string, rec: Record<string, number | boolean | string> | undefined): boolean {
+  if (rec == null) return false;
+  if (TAG_TRAITS.has(name)) return wireTag(rec);
+  return true;
 }
 
 function writeTrait(w: Writer, name: string, rec: Record<string, number | boolean | string>): void {
@@ -504,7 +512,8 @@ export function encodeSnapshotBinary(snap: WorldSnapshot): Uint8Array {
     let mask = 0;
     for (const key of Object.keys(e.traits)) {
       const id = TRAIT[key as keyof typeof TRAIT];
-      if (id != null) mask |= 1 << id;
+      if (id == null || !traitOnWire(key, e.traits[key])) continue;
+      mask |= 1 << id;
     }
     w.u16(e.netId);
     w.u32(mask >>> 0);

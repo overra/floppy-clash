@@ -1,4 +1,5 @@
 import { RevoluteJoint, type Body } from 'planck';
+import { authoredHalfWidth } from '../authored';
 import { getContext } from '../context';
 import { assignNetId, createBoxBody, registerBody } from '../physics/bodies';
 import { Destructible, Hazard, HazardKind, NetId, PrevTransform, Solid, Static, Transform } from '../traits';
@@ -108,9 +109,10 @@ export const chain: HazardModule = {
     if (hz.param3 !== 1) return;
     const pt = player.get(Transform);
     if (!pt) return;
-    // param0/param1 are authored deck size (default 2.8×0.4). 0 means no reach.
-    const halfW = hz.param0 / 2 + 0.35;
-    const halfH = hz.param1 / 2;
+    // param0/param1 are authored deck size (default 2.8×0.4). Reach is half-width
+    // plus a stand pad. 0 means no reach — do not `|| 2.8`.
+    const halfW = authoredHalfWidth(hz.param0) + 0.35;
+    const halfH = authoredHalfWidth(hz.param1);
     if (Math.abs(pt.x - ht.x) >= halfW) return;
     if (pt.y <= ht.y - 0.05 || pt.y >= ht.y + halfH + 1.55) return;
     ctrl.grounded = true;

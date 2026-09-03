@@ -1,6 +1,6 @@
 import { createAdded, createChanged, createRemoved, type Entity, type World } from 'koota';
 import { fnv1a, hashToHex, quantize } from '../core/hash';
-import { wireFlag } from './authored';
+import { wireFlag, wireTag } from './authored';
 import { isolateChainBody } from './hazards/chain';
 import { applyBodyShapeToSpec, createLateJoinHazardBody, lateJoinBodySpec } from './hazards/lateJoin';
 import { attachLateJoinHazardJoints } from './hazards/lateJoinJoints';
@@ -442,8 +442,8 @@ function applyRecord(world: World, entity: Entity, rec: TraitSnapshot, full: boo
       facing: Number(c.facing),
       vx: Number(c.vx ?? curC.vx),
       vy: Number(c.vy ?? curC.vy),
-      ducking: c.ducking != null ? Boolean(Number(c.ducking)) : curC.ducking,
-      wallSliding: c.wallSliding != null ? Boolean(Number(c.wallSliding)) : curC.wallSliding,
+      ducking: c.ducking != null ? wireFlag(c.ducking) : curC.ducking,
+      wallSliding: c.wallSliding != null ? wireFlag(c.wallSliding) : curC.wallSliding,
       wallDir: Number(c.wallDir ?? curC.wallDir),
       coyote: Number(c.coyote ?? curC.coyote),
       jumpBuffer: Number(c.jumpBuffer ?? curC.jumpBuffer),
@@ -482,7 +482,7 @@ function applyRecord(world: World, entity: Entity, rec: TraitSnapshot, full: boo
       defId: Number(w.defId ?? curW.defId),
       ammo: Number(w.ammo ?? curW.ammo),
       thrown: wireFlag(w.thrown),
-      thrownHit: Boolean(Number(w.thrownHit ?? (curW.thrownHit ? 1 : 0))),
+      thrownHit: wireFlag(w.thrownHit ?? (curW.thrownHit ? 1 : 0)),
       pickupCooldown: Number(w.pickupCooldown ?? curW.pickupCooldown),
     });
     applyHeldFlags(world, entity, w);
@@ -567,7 +567,6 @@ function applyRecord(world: World, entity: Entity, rec: TraitSnapshot, full: boo
     if (entity.get(Boss)) entity.set(Boss, next);
     else entity.add(Boss(next));
   }
-  if (rec.traits.Crown && !entity.has(Crown)) entity.add(Crown());
   const path = rec.traits.HazardPath;
   if (path) {
     const points = String(path.points ?? '')
@@ -589,13 +588,14 @@ function applyRecord(world: World, entity: Entity, rec: TraitSnapshot, full: boo
     else entity.add(HazardPath(next));
   }
   const addTag = (key: string, add: () => void, remove: () => void, has: boolean) => {
-    const flag = rec.traits[key];
-    if (flag && Number(flag.on) === 1) {
+    const on = wireTag(rec.traits[key]);
+    if (on) {
       if (!has) add();
-    } else if (full && !flag && has) {
+    } else if (full && has) {
       remove();
     }
   };
+  addTag('Crown', () => entity.add(Crown()), () => entity.remove(Crown), entity.has(Crown));
   addTag('Dead', () => entity.add(Dead()), () => entity.remove(Dead), entity.has(Dead));
   addTag('Static', () => entity.add(Static()), () => entity.remove(Static), entity.has(Static));
   addTag(
@@ -804,7 +804,7 @@ function spawnMissing(
         ammo: Number(w.ammo ?? 0),
         pickupCooldown: Number(w.pickupCooldown ?? 0),
         thrown: wireFlag(w.thrown),
-        thrownHit: Boolean(Number(w.thrownHit ?? 0)),
+        thrownHit: wireFlag(w.thrownHit ?? 0),
       }),
       Transform({ x, y, angle }),
       PrevTransform({ x, y, angle }),
@@ -934,7 +934,7 @@ function spawnMissing(
     };
     const spec = applyBodyShapeToSpec(
       lateJoinBodySpec(kind, params, {
-        isStatic: Boolean(rec.traits.Static),
+        isStatic: wireTag(rec.traits.Static),
         chainDeck: kind === HazardKind.Chain && params.param3 === 1,
         spikeStyle: kind === HazardKind.Spikeball ? params.param2 : 0,
       }),

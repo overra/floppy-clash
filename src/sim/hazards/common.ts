@@ -1,4 +1,5 @@
 import type { Entity, World } from 'koota';
+import { authoredHalfWidth } from '../authored';
 import { getContext } from '../context';
 import { assignNetId, createBoxBody, createCircleBody, readBodyShape, registerBody } from '../physics/bodies';
 import { takeDamage } from '../player/health';
@@ -45,11 +46,11 @@ export function paramsFromObject(obj: LevelObject): {
         param3: obj.reach ?? 14,
       };
     case 'ice':
-      return { param0: obj.w ?? 2, param1: 0, param2: 0, param3: 0 };
+      return { param0: obj.w ?? 2, param1: obj.h ?? 1, param2: 0, param3: 0 };
     case 'conveyor':
-      return { param0: obj.w ?? 2, param1: obj.speed ?? 4, param2: 0, param3: 0 };
+      return { param0: obj.w ?? 2, param1: obj.speed ?? 4, param2: obj.h ?? 1, param3: 0 };
     case 'bounce':
-      return { param0: obj.w ?? 2, param1: obj.speed ?? 16, param2: 0, param3: 0 };
+      return { param0: obj.w ?? 2, param1: obj.speed ?? 16, param2: obj.h ?? 1, param3: 0 };
     case 'saw':
       // param2/param3 remember the spawn so a speed wobble stays centered (not a random walk).
       return { param0: obj.omega ?? 6, param1: obj.speed ?? 0, param2: obj.x, param3: obj.y };
@@ -73,7 +74,7 @@ export function paramsFromObject(obj: LevelObject): {
     case 'platform.disappearing':
       return { param0: obj.period ?? 140, param1: obj.delay ?? 0, param2: obj.w ?? 3, param3: obj.h ?? 0.5 };
     case 'platform.collapsing':
-      return { param0: obj.w ?? 3, param1: 0, param2: obj.delay ?? 20, param3: 0 };
+      return { param0: obj.w ?? 3, param1: 0, param2: obj.delay ?? 20, param3: obj.h ?? 1 };
     case 'platform.rotating':
       return { param0: obj.omega ?? 1, param1: obj.w ?? 4, param2: obj.h ?? 0.6, param3: 0 };
     case 'platform.moving':
@@ -329,7 +330,7 @@ export function carryRider(
     shape && shape.circle === 0
       ? shape.hx
       : hz && Number.isFinite(hz.param1)
-        ? Math.abs(hz.param1) / 2
+        ? authoredHalfWidth(hz.param1)
         : 0;
   const dx = Math.abs(pt.x - ht.x);
   if (!ctrl.grounded || dx >= halfW || pt.y <= ht.y || pt.y >= ht.y + 1.4) return;

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { getLevel } from '../src/levels/catalog';
 import { woodsClearing } from '../src/levels/handauthored';
-import { authored, wireFlag } from '../src/sim/authored';
+import { authored, authoredHalfWidth, wireFlag, wireTag } from '../src/sim/authored';
 import { diskSweepsPlayer } from '../src/sim/hazards/common';
 import { crusherOverlaps } from '../src/sim/hazards/crusher';
 import { lavaSweepsPlayer } from '../src/sim/hazards/lava';
@@ -409,6 +409,28 @@ describe('honest PLAN stand-ins (no pin/pred OR, no scoreboard shrink)', () => {
     if (ctrl) p.set(Controller, { ...ctrl, grounded: true });
     sim.step([hold({}), hold({}), hold({}), hold({})]);
     expect(p.targetFor(StandingOn)).toBeUndefined();
+  });
+
+  it('a bounce pad does not launch past authored half-width (full-width dx < w is the 2× substitute)', () => {
+    const sim = makeSim({
+      level: {
+        ...getLevel('test-bounce'),
+        id: 'bounce-half-not-full',
+        objects: [
+          { type: 'solid' as const, x: 12, y: 1, w: 24, h: 2 },
+          { type: 'bounce' as const, x: 12, y: 2.3, w: 8, h: 0.4 },
+        ],
+      },
+      seed: 207,
+      settings: { playerCount: 1 },
+    });
+    const p = playerOf(sim);
+    // 4.3 m: inside full-width 8, outside half-width 4. Contact gate is 4.5.
+    pin(sim, p, 16.3, 3.2);
+    const ctrl = p.get(Controller);
+    if (ctrl) p.set(Controller, { ...ctrl, grounded: true });
+    sim.step([hold({}), hold({}), hold({}), hold({})]);
+    expect((sim.ctx.bodies.get(p)?.getLinearVelocity().y ?? 0)).toBeLessThan(4);
   });
 
   it('a wide bounce pad launches at the rim past the old 1.6 m near-check', () => {
@@ -1265,6 +1287,99 @@ describe('honest PLAN stand-ins (no pin/pred OR, no scoreboard shrink)', () => {
     expect(launched).toBe(true);
   });
 
+  it('a conveyor does not carry past authored half-width (dx < w is the 2× substitute)', () => {
+    const sim = makeSim({
+      level: {
+        ...getLevel('test-conveyor'),
+        id: 'conveyor-half-not-full',
+        objects: [
+          { type: 'solid' as const, x: 12, y: 1, w: 24, h: 2 },
+          { type: 'conveyor' as const, x: 16, y: 2.2, w: 8, h: 0.4, speed: 4 },
+        ],
+      },
+      seed: 208,
+      settings: { playerCount: 1 },
+    });
+    const p = playerOf(sim);
+    // 5.2 m: inside full-width 8, outside half-width 4. Conveyor contact is always invoked.
+    sim.ctx.bodies.get(p)?.setPosition({ x: 21.2, y: 3.3 });
+    const ctrl = p.get(Controller);
+    if (ctrl) p.set(Controller, { ...ctrl, grounded: true });
+    const x0 = 21.2;
+    for (let i = 0; i < 20; i++) sim.step([hold({}), hold({}), hold({}), hold({})]);
+    expect(Math.abs((p.get(Transform)?.x ?? 0) - x0)).toBeLessThan(0.35);
+  });
+
+  it('a collapsing platform does not arm past authored half-width', () => {
+    const sim = makeSim({
+      level: {
+        ...getLevel('test-platform.collapsing'),
+        id: 'collapse-half-not-full',
+        objects: [
+          { type: 'solid' as const, x: 12, y: 1, w: 24, h: 2 },
+          { type: 'platform.collapsing' as const, x: 12, y: 5, w: 4, h: 0.5, delay: 0 },
+        ],
+      },
+      seed: 209,
+      settings: { playerCount: 1 },
+    });
+    const p = playerOf(sim);
+    // 2.4 m: inside full-width 4, outside half-width 2.
+    for (let i = 0; i < 8; i++) {
+      pin(sim, p, 14.4, 6.15);
+      sim.step([hold({}), hold({}), hold({}), hold({})]);
+    }
+    let armed = 0;
+    sim.ecs.query(Hazard).updateEach(([hz]) => {
+      if (hz.kind === HazardKind.Collapsing) armed = hz.armed;
+    });
+    expect(armed).toBe(1);
+  });
+
+  it('lava does not damage past authored half-width (reachX = w is the 2× substitute)', () => {
+    const sim = makeSim({
+      level: {
+        ...getLevel('test-lava'),
+        id: 'lava-half-not-full',
+        objects: [
+          { type: 'solid' as const, x: 12, y: 1, w: 24, h: 2 },
+          { type: 'lava' as const, x: 16, y: 6, w: 8, h: 1.2, rate: 0 },
+        ],
+      },
+      seed: 210,
+      settings: { playerCount: 1 },
+    });
+    const p = playerOf(sim);
+    freezeHazardKinematics(sim, HazardKind.Lava);
+    // 5.2 m: inside full-width 8, outside half-width 4.
+    pin(sim, p, 21.2, 6);
+    const before = p.get(Health)?.hp ?? 100;
+    sim.step([hold({}), hold({}), hold({}), hold({})]);
+    expect(p.get(Health)?.hp ?? 0).toBe(before);
+    expect(p.has(Dead)).toBe(false);
+  });
+
+  it('lava still damages inside authored half-width', () => {
+    const sim = makeSim({
+      level: {
+        ...getLevel('test-lava'),
+        id: 'lava-inside-half',
+        objects: [
+          { type: 'solid' as const, x: 12, y: 1, w: 24, h: 2 },
+          { type: 'lava' as const, x: 16, y: 6, w: 8, h: 1.2, rate: 0 },
+        ],
+      },
+      seed: 211,
+      settings: { playerCount: 1 },
+    });
+    const p = playerOf(sim);
+    freezeHazardKinematics(sim, HazardKind.Lava);
+    pin(sim, p, 18.5, 6);
+    const before = p.get(Health)?.hp ?? 100;
+    sim.step([hold({}), hold({}), hold({}), hold({})]);
+    expect(before - (p.get(Health)?.hp ?? 100)).toBe(35);
+  });
+
   it('a collapsing platform with param0 = 0 does not start falling under a standing player', () => {
     const sim = makeSim({
       level: {
@@ -1370,6 +1485,9 @@ describe('honest PLAN stand-ins (no pin/pred OR, no scoreboard shrink)', () => {
     expect(authored(undefined, 2)).toBe(2);
     expect(authored(undefined, 8)).toBe(8);
     expect(authored(undefined, 0.7)).toBe(0.7);
+    expect(authoredHalfWidth(8)).toBe(4);
+    expect(authoredHalfWidth(0)).toBe(0);
+    expect(authoredHalfWidth(2)).toBe(1);
   });
 
   it('wireFlag treats JSON "0" as off (Boolean("0") is the false-green)', () => {
@@ -1382,6 +1500,20 @@ describe('honest PLAN stand-ins (no pin/pred OR, no scoreboard shrink)', () => {
     expect(wireFlag('')).toBe(false);
     expect(wireFlag(undefined)).toBe(false);
     expect(wireFlag(null)).toBe(false);
+    expect(Boolean('0')).toBe(true);
+  });
+
+  it('wireTag treats JSON "0" / { on: "0" } as off (Boolean("0") is the false-green)', () => {
+    expect(wireTag(undefined)).toBe(false);
+    expect(wireTag(null)).toBe(false);
+    expect(wireTag('')).toBe(false);
+    expect(wireTag('0')).toBe(false);
+    expect(wireTag(0)).toBe(false);
+    expect(wireTag({ on: '0' })).toBe(false);
+    expect(wireTag({ on: 0 })).toBe(false);
+    expect(wireTag({ on: 1 })).toBe(true);
+    expect(wireTag({ on: '1' })).toBe(true);
+    expect(wireTag({})).toBe(true);
     expect(Boolean('0')).toBe(true);
   });
 

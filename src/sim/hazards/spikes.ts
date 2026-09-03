@@ -1,3 +1,4 @@
+import { authoredHalfWidth } from '../authored';
 import { getContext } from '../context';
 import { createBoxBody, registerBody } from '../physics/bodies';
 import { HazardKind, Static, Transform } from '../traits';
@@ -19,7 +20,7 @@ export const spikes: HazardModule = {
   contact(world, player, hz, ht) {
     const pt = player.get(Transform);
     // param0 is authored bed width (default 2). 0 means no reach — not a fixed 0.7.
-    const halfW = hz.param0 / 2;
+    const halfW = authoredHalfWidth(hz.param0);
     if (!pt || halfW <= 0) return;
     nearKill(world, player, pt, ht, halfW);
   },

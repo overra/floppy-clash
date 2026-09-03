@@ -182,7 +182,8 @@ export function lateJoinBodySpec(
       return box({
         bodyType: 'dynamic',
         hx: dim(hz.param0) / 2,
-        hy: 0.25,
+        // param3 is authored h (default 1 at create). 0 is zero — not a 0.25 slab.
+        hy: dim(hz.param3) / 2,
         density: 0,
         friction: 0.8,
         fixedRotation: false,
@@ -199,8 +200,9 @@ export function lateJoinBodySpec(
     case HazardKind.Saw:
       return circle({
         bodyType: 'kinematic',
-        // Radius is not in Hazard params (omega/speed/home occupy them). BodyShape wins.
-        radius: 0.45,
+        // Radius is not in Hazard params (omega/speed/home occupy them).
+        // Missing BodyShape is 0 — do not substitute the create-default 0.45.
+        radius: 0,
         density: 0,
         friction: 0.2,
         sensor: true,
@@ -220,7 +222,8 @@ export function lateJoinBodySpec(
       return box({
         bodyType: 'static',
         hx: dim(hz.param0) / 2,
-        hy: 0.25,
+        // param1 is authored h (default 1 at create). 0 is zero — not a 0.25 slab.
+        hy: dim(hz.param1) / 2,
         density: 0,
         friction: 0.02,
         fixtureKind: 'solid',
@@ -228,9 +231,9 @@ export function lateJoinBodySpec(
     case HazardKind.Bounce:
       return box({
         bodyType: 'static',
-        // Host `createStaticBox` omitted h is 1 → hy 0.5. Width is param0.
+        // Width is param0; height is param2 (host omitted h is 1 → hy 0.5).
         hx: dim(hz.param0) / 2,
-        hy: 0.5,
+        hy: dim(hz.param2) / 2,
         density: 0,
         friction: 0.1,
         restitution: 1.2,
@@ -259,7 +262,8 @@ export function lateJoinBodySpec(
       return box({
         bodyType: 'static',
         hx: dim(hz.param0) / 2,
-        hy: 0.2,
+        // param2 is authored h (default 1 at create). 0 is zero — not a 0.2 slab.
+        hy: dim(hz.param2) / 2,
         density: 0,
         friction: 0.6,
         fixtureKind: 'solid',

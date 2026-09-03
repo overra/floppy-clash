@@ -1,4 +1,5 @@
 import { Vec2 } from 'planck';
+import { authoredHalfWidth } from '../authored';
 import { getContext } from '../context';
 import { takeDamage } from '../player/health';
 import { HazardKind, PrevTransform, Transform } from '../traits';
@@ -51,7 +52,7 @@ export function lavaSweepsPlayer(
   lastHy = hy,
   reachX = 0,
 ): boolean {
-  // param1 is authored width. 0 means no reach — do not `|| 4`.
+  // reachX is authored half-width. 0 means no reach — do not `|| 4`.
   if (reachX <= 0) return false;
   const minX = Math.min(lastHx, hx) - reachX;
   const maxX = Math.max(lastHx, hx) + reachX;
@@ -80,7 +81,21 @@ export const lava: HazardModule = {
     const lastY = prev?.y ?? pt.y;
     const lavaLastX = hprev?.x ?? ht.x;
     const lavaLastY = hprev?.y ?? ht.y;
-    if (!lavaSweepsPlayer(pt.x, pt.y, lastX, lastY, ht.x, ht.y, lavaLastX, lavaLastY, hz.param1)) {
+    // param1 is authored full width. Sweep margin is half-width — `reachX = param1`
+    // doubles the bed on each side. 0 means no reach.
+    if (
+      !lavaSweepsPlayer(
+        pt.x,
+        pt.y,
+        lastX,
+        lastY,
+        ht.x,
+        ht.y,
+        lavaLastX,
+        lavaLastY,
+        authoredHalfWidth(hz.param1),
+      )
+    ) {
       return;
     }
     const last = lavaTouch.get(player) ?? -999;

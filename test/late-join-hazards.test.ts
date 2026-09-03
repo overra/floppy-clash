@@ -6,8 +6,8 @@ import { getLevel } from '../src/levels/catalog';
 import { applyBodyShapeToSpec, DYNAMIC_APPENDIX_D_KINDS, lateJoinBodySpec } from '../src/sim/hazards/lateJoin';
 import { destroyBody } from '../src/sim/physics/bodies';
 import { restoreWorld, serializeWorld } from '../src/sim/snapshot';
-import { Destructible, Hazard, HazardKind, NetId, PhysBody, SpawnPoint, Static, Transform } from '../src/sim/traits';
-import { hold, makeSim, playerOf } from './helpers';
+import { Controller, Destructible, Hazard, HazardKind, NetId, PhysBody, SpawnPoint, Static, Transform } from '../src/sim/traits';
+import { hold, makeSim, pin, playerOf } from './helpers';
 import type { SimHandle } from '../src/sim/world';
 import type { Body } from 'planck';
 
@@ -225,6 +225,21 @@ describe('lateJoinBodySpec Appendix D materials', () => {
     expect(ball.radius).toBe(0);
     const spikes = lateJoinBodySpec(HazardKind.Spikes, emptyHz, liveFlags);
     expect(spikes.hx).toBe(0);
+    const saw = lateJoinBodySpec(HazardKind.Saw, emptyHz, liveFlags);
+    expect(saw.radius).toBe(0);
+    expect(saw.radius).not.toBeCloseTo(0.45, 5);
+    const ice = lateJoinBodySpec(HazardKind.Ice, emptyHz, liveFlags);
+    expect(ice.hy).toBe(0);
+    expect(ice.hy).not.toBeCloseTo(0.25, 5);
+    const bounce = lateJoinBodySpec(HazardKind.Bounce, emptyHz, liveFlags);
+    expect(bounce.hy).toBe(0);
+    expect(bounce.hy).not.toBeCloseTo(0.5, 5);
+    const collapsing = lateJoinBodySpec(HazardKind.Collapsing, emptyHz, liveFlags);
+    expect(collapsing.hy).toBe(0);
+    expect(collapsing.hy).not.toBeCloseTo(0.25, 5);
+    const belt = lateJoinBodySpec(HazardKind.Conveyor, emptyHz, liveFlags);
+    expect(belt.hy).toBe(0);
+    expect(belt.hy).not.toBeCloseTo(0.2, 5);
     const authored = lateJoinBodySpec(
       HazardKind.Crate,
       { param0: 2, param1: 1, param2: 0, param3: 0 },
@@ -232,6 +247,21 @@ describe('lateJoinBodySpec Appendix D materials', () => {
     );
     expect(authored.hx).toBeCloseTo(1, 5);
     expect(authored.hy).toBeCloseTo(0.5, 5);
+    const iceH = lateJoinBodySpec(HazardKind.Ice, { param0: 2, param1: 1, param2: 0, param3: 0 }, liveFlags);
+    expect(iceH.hy).toBeCloseTo(0.5, 5);
+    const bounceH = lateJoinBodySpec(
+      HazardKind.Bounce,
+      { param0: 4, param1: 16, param2: 1, param3: 0 },
+      liveFlags,
+    );
+    expect(bounceH.hx).toBeCloseTo(2, 5);
+    expect(bounceH.hy).toBeCloseTo(0.5, 5);
+    const collapseH = lateJoinBodySpec(
+      HazardKind.Collapsing,
+      { param0: 3, param1: 0, param2: 20, param3: 1 },
+      liveFlags,
+    );
+    expect(collapseH.hy).toBeCloseTo(0.5, 5);
   });
 
   it('BodyShape 0 overrides reconstructed size (0 is not ignored)', () => {
@@ -730,6 +760,114 @@ describe('spawnMissing restores host hazard density/type', () => {
       if ((view.sim.ctx.bodies.get(p)?.getLinearVelocity().y ?? 0) > 4) launched = true;
     }
     expect(launched).toBe(true);
+  });
+
+  it('late-join bounce launches at authored half-width rim, not past full-width', () => {
+    const level = {
+      ...getLevel('test-bounce'),
+      id: 'bounce-late-half',
+      objects: [
+        { type: 'solid' as const, x: 12, y: 1, w: 24, h: 2 },
+        { type: 'bounce' as const, x: 12, y: 2.3, w: 8, h: 0.4, speed: 16 },
+      ],
+    };
+    const host = makeSim({ level, seed: 467, settings: { playerCount: 1 } });
+    const snap = serializeWorld(host.ecs);
+    const view = createClientView(snap, 120, level);
+    const kill: Entity[] = [];
+    view.sim.ecs.query(Hazard, NetId).updateEach(([hz], e) => {
+      if (hz.kind === HazardKind.Bounce) kill.push(e);
+    });
+    for (const e of kill) {
+      destroyBody(view.sim.ecs, e);
+      e.destroy();
+    }
+    restoreWorld(view.sim.ecs, snap);
+    const rim = playerOf(view.sim);
+    pin(view.sim, rim, 15.2, 3.2);
+    const rimCtrl = rim.get(Controller);
+    if (rimCtrl) rim.set(Controller, { ...rimCtrl, grounded: true });
+    view.sim.step([hold({}), hold({}), hold({}), hold({})]);
+    expect((view.sim.ctx.bodies.get(rim)?.getLinearVelocity().y ?? 0)).toBeGreaterThan(4);
+
+    const pastSnap = serializeWorld(host.ecs);
+    const pastView = createClientView(pastSnap, 120, level);
+    const pastKill: Entity[] = [];
+    pastView.sim.ecs.query(Hazard, NetId).updateEach(([hz], e) => {
+      if (hz.kind === HazardKind.Bounce) pastKill.push(e);
+    });
+    for (const e of pastKill) {
+      destroyBody(pastView.sim.ecs, e);
+      e.destroy();
+    }
+    restoreWorld(pastView.sim.ecs, pastSnap);
+    const p = playerOf(pastView.sim);
+    pin(pastView.sim, p, 16.3, 3.2);
+    const ctrl = p.get(Controller);
+    if (ctrl) p.set(Controller, { ...ctrl, grounded: true });
+    pastView.sim.step([hold({}), hold({}), hold({}), hold({})]);
+    expect((pastView.sim.ctx.bodies.get(p)?.getLinearVelocity().y ?? 0)).toBeLessThan(4);
+  });
+
+  it('BodyShape-stripped bounce / ice / collapsing keep authored height (not 0.5 / 0.25 slabs)', () => {
+    const level = {
+      ...getLevel('test-bounce'),
+      id: 'strip-shape',
+      objects: [
+        { type: 'solid' as const, x: 16, y: 1, w: 32, h: 2 },
+        { type: 'bounce' as const, x: 10, y: 2.3, w: 2, h: 0.4 },
+        { type: 'ice' as const, x: 18, y: 2.2 },
+        { type: 'platform.collapsing' as const, x: 24, y: 5, w: 3 },
+      ],
+    };
+    const host = makeSim({ level, seed: 469, settings: { playerCount: 1 } });
+    const ids = { bounce: 0, ice: 0, collapse: 0 };
+    const hostExt = { bounce: { hx: 0, hy: 0 }, ice: { hx: 0, hy: 0 }, collapse: { hx: 0, hy: 0 } };
+    host.ecs.query(Hazard, NetId).updateEach(([hz, n], e) => {
+      const ext = boxExtents(host, e);
+      if (hz.kind === HazardKind.Bounce) {
+        ids.bounce = n.id;
+        hostExt.bounce = ext;
+      }
+      if (hz.kind === HazardKind.Ice) {
+        ids.ice = n.id;
+        hostExt.ice = ext;
+      }
+      if (hz.kind === HazardKind.Collapsing) {
+        ids.collapse = n.id;
+        hostExt.collapse = ext;
+      }
+    });
+    expect(hostExt.bounce.hy).toBeCloseTo(0.2, 5);
+    expect(hostExt.ice.hy).toBeCloseTo(0.5, 5);
+    expect(hostExt.collapse.hy).toBeCloseTo(0.5, 5);
+    const snap = serializeWorld(host.ecs);
+    for (const rec of snap.entities) delete rec.traits.BodyShape;
+    const view = createClientView(snap, 120, level);
+    const kill: Entity[] = [];
+    view.sim.ecs.query(Hazard, NetId).updateEach(([_hz, n], e) => {
+      if (n.id === ids.bounce || n.id === ids.ice || n.id === ids.collapse) kill.push(e);
+    });
+    for (const e of kill) {
+      destroyBody(view.sim.ecs, e);
+      e.destroy();
+    }
+    restoreWorld(view.sim.ecs, snap);
+    view.sim.ecs.query(Hazard, NetId).updateEach(([_hz, n], e) => {
+      const ext = boxExtents(view.sim, e);
+      if (n.id === ids.bounce) {
+        expect(ext.hy).toBeCloseTo(0.2, 5);
+        expect(ext.hy).not.toBeCloseTo(0.5, 5);
+      }
+      if (n.id === ids.ice) {
+        expect(ext.hy).toBeCloseTo(0.5, 5);
+        expect(ext.hy).not.toBeCloseTo(0.25, 5);
+      }
+      if (n.id === ids.collapse) {
+        expect(ext.hy).toBeCloseTo(0.5, 5);
+        expect(ext.hy).not.toBeCloseTo(0.25, 5);
+      }
+    });
   });
 
   it('destructible / ice stay static with host friction after spawnMissing', () => {

@@ -41,6 +41,7 @@ import {
   ProjectileKind,
   RagdollPart,
   Snake,
+  Static,
   Status,
   Transform,
   Weapon,
@@ -398,6 +399,33 @@ describe('M8 snapshot', () => {
       if (path.points.length >= 2) pathOk = true;
     });
     expect(pathOk).toBe(true);
+  });
+
+  it('JSON "0" tags stay off on restore (Boolean("0") is the false-green)', () => {
+    const host = makeSim({
+      level: getLevel('test-bounce'),
+      seed: 99,
+      settings: { playerCount: 1 },
+    });
+    const snap = serializeWorld(host.ecs);
+    const playerRec = snap.entities.find((e) => e.traits.Player);
+    expect(playerRec).toBeTruthy();
+    playerRec!.traits.Controller = { ...playerRec!.traits.Controller, ducking: '0', wallSliding: '0' };
+    playerRec!.traits.Crown = { on: '0' };
+    playerRec!.traits.Dead = { on: '0' };
+    const bounceRec = snap.entities.find((e) => Number(e.traits.Hazard?.kind) === HazardKind.Bounce);
+    expect(bounceRec?.traits.Static).toBeTruthy();
+    bounceRec!.traits.Static = { on: '0' };
+    restoreWorld(host.ecs, snap);
+    expect(playerOf(host, 0).get(Controller)?.ducking).toBe(false);
+    expect(playerOf(host, 0).get(Controller)?.wallSliding).toBe(false);
+    expect(playerOf(host, 0).has(Crown)).toBe(false);
+    expect(playerOf(host, 0).has(Dead)).toBe(false);
+    let bounceStatic = true;
+    host.ecs.query(Hazard, NetId).updateEach(([hz, n], e) => {
+      if (n.id === bounceRec?.netId && hz.kind === HazardKind.Bounce) bounceStatic = e.has(Static);
+    });
+    expect(bounceStatic).toBe(false);
   });
 
   it('late-join restores loose-weapon and ragdoll BodyVel (PLAN 4.13)', () => {
