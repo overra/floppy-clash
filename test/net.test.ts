@@ -29,6 +29,8 @@ import {
   Loose,
   MatchState,
   NetId,
+  RoundPhase,
+  RoundState,
   Weapon,
 } from '../src/sim/traits';
 import { createClientView } from '../src/net/clientView';
@@ -160,6 +162,7 @@ describe('M8 netcode', () => {
     const q: ReturnType<typeof blankInputs>[] = [];
     let bytes = 0;
     let kills = 0;
+    let scoreboardSamples = 0;
     let view: ReturnType<typeof createClientView> | null = null;
     let lastLevelId = host.ctx.level.id;
     for (let i = 0; i < 36_000; i++) {
@@ -169,6 +172,7 @@ describe('M8 netcode', () => {
       const dropped = rng.next() < 0.02;
       const delayed = q[Math.max(0, q.length - 1 - delay)] ?? raw;
       const ev = host.step(dropped ? (q[Math.max(0, q.length - 2 - delay)] ?? raw) : delayed);
+      if (host.ecs.get(RoundState)?.phase === RoundPhase.Scoreboard) scoreboardSamples += 1;
       const fists = ev.some((e) => e.type === 'shot' && e.weaponId === 'fists');
       const tickKills = ev.filter((e) => e.type === 'kill').length;
       if (tickKills > 0) expect(fists).toBe(true);
@@ -196,6 +200,8 @@ describe('M8 netcode', () => {
     const kBps = bytes / seconds / 1024;
     expect(kills).toBeGreaterThanOrEqual(10);
     expect(host.ecs.get(MatchState)?.round ?? 0).toBeGreaterThanOrEqual(10);
+    expect(scoreboardSamples).toBeGreaterThanOrEqual(10 * 88);
+    expect(host.ctx.tick).toBeGreaterThanOrEqual(10 * 88);
     expect(kBps).toBeLessThan(30);
     expect(link.sent()).toBeGreaterThan(0);
     expect(view).toBeTruthy();

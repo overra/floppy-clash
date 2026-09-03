@@ -15,7 +15,7 @@ import {
   RoundState,
   Transform,
 } from '../src/sim/traits';
-import { hold, makeSim, place, playerOf, speedRounds } from './helpers';
+import { freezeHazardKinematics, hold, makeSim, place, playerOf, speedRounds } from './helpers';
 
 function countKind(sim: ReturnType<typeof makeSim>, kind: number): number {
   let n = 0;
@@ -128,21 +128,76 @@ describe('honest PLAN stand-ins (no pin/pred OR, no scoreboard shrink)', () => {
     sim.ctx.holdHazards = true;
     sim.step([hold({}), hold({}), hold({}), hold({})]);
     sim.ctx.holdHazards = false;
-    const span = { prev: 8, now: 8, ok: false };
-    sim.ecs.query(Hazard, Transform, PrevTransform).updateEach(([hz, t, prev], e) => {
+    const span = { prev: 8, now: 8, y: 5, ok: false };
+    sim.ecs.query(Hazard, Transform, PrevTransform).updateEach(([hz, t, prev]) => {
       if (hz.kind !== HazardKind.Saw) return;
       span.prev = prev.x;
       span.now = t.x;
+      span.y = t.y;
       span.ok = true;
-      sim.ctx.bodies.get(e)?.setLinearVelocity({ x: 0, y: 0 });
     });
     expect(span.ok).toBe(true);
     expect(Math.min(span.prev, span.now)).toBeLessThan(14);
     expect(Math.max(span.prev, span.now)).toBeGreaterThan(14);
-    place(sim, p, 14, 5);
+    // Kill tick must not re-drive the path (that is a this-tick teleport / vel*dt substitute).
+    freezeHazardKinematics(sim, HazardKind.Saw);
+    const mid = (span.prev + span.now) / 2;
+    place(sim, p, mid, span.y);
     sim.step([hold({}), hold({}), hold({}), hold({})]);
+    const after = { now: span.now };
+    sim.ecs.query(Hazard, Transform).updateEach(([hz, t]) => {
+      if (hz.kind === HazardKind.Saw) after.now = t.x;
+    });
+    expect(Math.abs(after.now - span.now)).toBeLessThan(0.08);
     expect(p.has(Dead)).toBe(true);
     expect(p.get(Health)?.hp ?? 1).toBeLessThanOrEqual(0);
+  });
+
+  it('saw does not kill at the old midpoint once the last-tick span is collapsed', () => {
+    const level = {
+      ...getLevel('test-saw-path'),
+      id: 'sweep-saw-collapsed',
+      objects: [
+        { type: 'solid' as const, x: 12, y: 1, w: 24, h: 2 },
+        {
+          type: 'saw' as const,
+          x: 8,
+          y: 5,
+          r: 0.45,
+          speed: 720,
+          mode: 'pingpong' as const,
+          path: [
+            { x: 8, y: 5 },
+            { x: 20, y: 5 },
+          ],
+        },
+      ],
+    };
+    const sim = makeSim({ level, seed: 141, settings: { playerCount: 1 } });
+    const p = playerOf(sim);
+    place(sim, p, 4, 10);
+    sim.ctx.holdHazards = true;
+    sim.step([hold({}), hold({}), hold({}), hold({})]);
+    sim.ctx.holdHazards = false;
+    const span = { prev: 8, now: 8, y: 5, ok: false };
+    sim.ecs.query(Hazard, Transform, PrevTransform).updateEach(([hz, t, prev]) => {
+      if (hz.kind !== HazardKind.Saw) return;
+      span.prev = prev.x;
+      span.now = t.x;
+      span.y = t.y;
+      span.ok = true;
+    });
+    expect(span.ok).toBe(true);
+    freezeHazardKinematics(sim, HazardKind.Saw);
+    sim.ecs.query(Hazard, Transform, PrevTransform).updateEach(([hz, t, prev]) => {
+      if (hz.kind !== HazardKind.Saw) return;
+      prev.x = t.x;
+      prev.y = t.y;
+    });
+    place(sim, p, (span.prev + span.now) / 2, span.y);
+    sim.step([hold({}), hold({}), hold({}), hold({})]);
+    expect(p.has(Dead)).toBe(false);
+    expect(p.get(Health)?.hp ?? 1).toBeGreaterThan(0);
   });
 
   it('laser last-tick PrevTransform kills after a live skip with velocity zeroed', () => {
@@ -166,6 +221,10 @@ describe('honest PLAN stand-ins (no pin/pred OR, no scoreboard shrink)', () => {
     const now = p.get(Transform);
     expect(prev?.y ?? 7).toBeLessThan(7);
     expect(now?.y ?? 3).toBeGreaterThan(7);
+    // Current capsule must miss the beam (halfH 0.9). Only last-tick Prev→now may kill.
+    place(sim, p, 8, 12);
+    expect(p.get(PrevTransform)?.y ?? 7).toBeLessThan(7);
+    expect(p.get(Transform)?.y ?? 0).toBeGreaterThan(10);
     sim.ctx.bodies.get(p)?.setLinearVelocity({ x: 0, y: 0 });
     sim.step([hold({}), hold({}), hold({}), hold({})]);
     expect(p.has(Dead)).toBe(true);
@@ -216,20 +275,26 @@ describe('honest PLAN stand-ins (no pin/pred OR, no scoreboard shrink)', () => {
     sim.ctx.holdHazards = true;
     sim.step([hold({}), hold({}), hold({}), hold({})]);
     sim.step([hold({}), hold({}), hold({}), hold({})]);
-    const span = { prev: 8, now: 8, ok: false };
-    sim.ecs.query(Hazard, Transform, PrevTransform).updateEach(([hz, t, prev], e) => {
+    const span = { prev: 8, now: 8, y: 5, ok: false };
+    sim.ecs.query(Hazard, Transform, PrevTransform).updateEach(([hz, t, prev]) => {
       if (hz.kind !== HazardKind.Crusher) return;
       span.prev = prev.x;
       span.now = t.x;
+      span.y = t.y;
       span.ok = true;
-      sim.ctx.bodies.get(e)?.setLinearVelocity({ x: 0, y: 0 });
     });
     expect(span.ok).toBe(true);
     expect(Math.abs(span.now - span.prev)).toBeGreaterThan(0.4);
     const mid = (span.prev + span.now) / 2;
     sim.ctx.holdHazards = false;
-    place(sim, p, mid, 5);
+    freezeHazardKinematics(sim, HazardKind.Crusher);
+    place(sim, p, mid, span.y);
     sim.step([hold({}), hold({}), hold({}), hold({})]);
+    const after = { now: span.now };
+    sim.ecs.query(Hazard, Transform).updateEach(([hz, t]) => {
+      if (hz.kind === HazardKind.Crusher) after.now = t.x;
+    });
+    expect(Math.abs(after.now - span.now)).toBeLessThan(0.08);
     expect(p.has(Dead)).toBe(true);
     expect(p.get(Health)?.hp ?? 1).toBeLessThanOrEqual(0);
   });
@@ -249,20 +314,25 @@ describe('honest PLAN stand-ins (no pin/pred OR, no scoreboard shrink)', () => {
     sim.ctx.holdHazards = true;
     sim.step([hold({}), hold({}), hold({}), hold({})]);
     const span = { prev: 10, now: 10, y: 3.2, ok: false };
-    sim.ecs.query(Hazard, Transform, PrevTransform).updateEach(([hz, t, prev], e) => {
+    sim.ecs.query(Hazard, Transform, PrevTransform).updateEach(([hz, t, prev]) => {
       if (hz.kind !== HazardKind.Spikeball) return;
       span.prev = prev.x;
       span.now = t.x;
       span.y = t.y;
       span.ok = true;
-      sim.ctx.bodies.get(e)?.setLinearVelocity({ x: 0, y: 0 });
     });
     expect(span.ok).toBe(true);
     expect(Math.abs(span.now - span.prev)).toBeGreaterThan(0.4);
     const mid = (span.prev + span.now) / 2;
     sim.ctx.holdHazards = false;
+    freezeHazardKinematics(sim, HazardKind.Spikeball);
     place(sim, p, mid, span.y);
     sim.step([hold({}), hold({}), hold({}), hold({})]);
+    const after = { now: span.now };
+    sim.ecs.query(Hazard, Transform).updateEach(([hz, t]) => {
+      if (hz.kind === HazardKind.Spikeball) after.now = t.x;
+    });
+    expect(Math.abs(after.now - span.now)).toBeLessThan(0.08);
     expect(p.has(Dead)).toBe(true);
     expect(p.get(Health)?.hp ?? 1).toBeLessThanOrEqual(0);
   });
@@ -281,32 +351,59 @@ describe('honest PLAN stand-ins (no pin/pred OR, no scoreboard shrink)', () => {
     const sim = makeSim({ level, seed: 44, settings: { playerCount: 1 } });
     expect(countKind(sim, HazardKind.Crate)).toBe(3);
     for (let i = 0; i < 20; i++) sim.step([hold({}), hold({}), hold({}), hold({})]);
-    const top = { x: 0, y: -99, angle: 0 };
+    const crates: { e: ReturnType<typeof playerOf>; x: number; y: number; angle: number }[] = [];
+    sim.ecs.query(Hazard, Transform).updateEach(([hz, t], e) => {
+      if (hz.kind !== HazardKind.Crate) return;
+      crates.push({ e, x: t.x, y: t.y, angle: t.angle });
+    });
+    expect(crates).toHaveLength(3);
+    const top = crates.reduce((a, b) => (b.y > a.y ? b : a));
+    expect(top.y).toBeGreaterThan(4);
+    const bases = crates.filter((c) => c.y < 3.2);
+    expect(bases.length).toBeGreaterThan(0);
+    for (const c of bases) {
+      const body = sim.ctx.bodies.get(c.e);
+      body?.applyLinearImpulse({ x: 6.5, y: 0.35 }, body.getWorldCenter());
+    }
+    for (let i = 0; i < 90; i++) sim.step([hold({}), hold({}), hold({}), hold({})]);
+    const after = top.e.get(Transform);
+    expect(after).toBeTruthy();
+    // Topple: the same top crate leaves the stack column and falls or tips.
+    expect(Math.abs((after?.x ?? top.x) - top.x)).toBeGreaterThan(0.45);
+    expect((after?.y ?? top.y) < top.y - 0.2 || Math.abs((after?.angle ?? 0) - top.angle) > 0.35).toBe(
+      true,
+    );
+  });
+
+  it('a walking player topples a settled three-crate stack', () => {
+    const level = {
+      ...getLevel('desert-01'),
+      id: 'crate-walk-topple',
+      objects: [
+        { type: 'solid' as const, x: 16, y: 1, w: 32, h: 2 },
+        { type: 'crate' as const, x: 12, y: 2.55, w: 1.1, h: 1.1 },
+        { type: 'crate' as const, x: 12, y: 3.65, w: 1.1, h: 1.1 },
+        { type: 'crate' as const, x: 12, y: 4.75, w: 1.1, h: 1.1 },
+      ],
+    };
+    const sim = makeSim({ level, seed: 144, settings: { playerCount: 1 } });
+    for (let i = 0; i < 24; i++) sim.step([hold({}), hold({}), hold({}), hold({})]);
+    const top = { e: playerOf(sim), x: 12, y: -99 };
     sim.ecs.query(Hazard, Transform).updateEach(([hz, t], e) => {
       if (hz.kind !== HazardKind.Crate) return;
       if (t.y > top.y) {
+        top.e = e;
         top.x = t.x;
         top.y = t.y;
-        top.angle = t.angle;
-      }
-      if (t.y < 3.2) {
-        const body = sim.ctx.bodies.get(e);
-        body?.applyLinearImpulse({ x: 8, y: 2.2 }, body.getWorldCenter());
       }
     });
     expect(top.y).toBeGreaterThan(4);
-    for (let i = 0; i < 90; i++) sim.step([hold({}), hold({}), hold({}), hold({})]);
-    const after = { x: top.x, y: top.y, angle: top.angle, maxY: -99 };
-    sim.ecs.query(Hazard, Transform).updateEach(([hz, t]) => {
-      if (hz.kind !== HazardKind.Crate) return;
-      if (t.y > after.maxY) {
-        after.maxY = t.y;
-        after.x = t.x;
-        after.y = t.y;
-        after.angle = t.angle;
-      }
-    });
-    expect(after.maxY < top.y - 0.2 || Math.abs(after.angle - top.angle) > 0.15).toBe(true);
+    const p = playerOf(sim);
+    place(sim, p, 10.4, 3.2);
+    for (let i = 0; i < 200; i++) sim.step([hold({ moveX: 1 }), hold({}), hold({}), hold({})]);
+    const after = top.e.get(Transform);
+    expect(Math.abs((after?.x ?? top.x) - top.x)).toBeGreaterThan(0.35);
+    expect((after?.y ?? top.y) < top.y - 0.15 || Math.abs(after?.angle ?? 0) > 0.3).toBe(true);
   });
 
   it('level reload respawns authored crates and drops M0 test boxes', () => {

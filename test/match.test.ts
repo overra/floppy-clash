@@ -44,6 +44,7 @@ describe('fists-only match', () => {
     let disconnected = false;
     let reconnected = false;
     let kills = 0;
+    let scoreboardSamples = 0;
     for (let i = 0; i < 36_000; i++) {
       const fighting = host.ecs.get(RoundState)?.phase === RoundPhase.Fighting;
       if (fighting && !disconnected && i > 80) {
@@ -57,6 +58,7 @@ describe('fists-only match', () => {
         reconnected = true;
       }
       const ev = host.step();
+      if (host.ecs.get(RoundState)?.phase === RoundPhase.Scoreboard) scoreboardSamples += 1;
       const fists = ev.some((e) => e.type === 'shot' && e.weaponId === 'fists');
       const tickKills = ev.filter((e) => e.type === 'kill').length;
       if (tickKills > 0) expect(fists).toBe(true);
@@ -67,6 +69,8 @@ describe('fists-only match', () => {
     expect(reconnected).toBe(true);
     expect(kills).toBeGreaterThanOrEqual(10);
     expect(host.ecs.get(MatchState)?.round ?? 0).toBeGreaterThanOrEqual(10);
+    expect(scoreboardSamples).toBeGreaterThanOrEqual(10 * 88);
+    expect(host.ctx.tick).toBeGreaterThanOrEqual(10 * 88);
     expect(host.hash()).toMatch(/^[0-9a-f]{8}$/);
     expect(playerOf(host, 0).get(Health)?.maxHp).toBe(1);
   }, 60_000);

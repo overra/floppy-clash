@@ -58,6 +58,9 @@ export const desertStack: LevelDef = {
   drops: { enabled: true, xMin: 4, xMax: 24, intervalScale: 1 },
   objects: [
     { type: 'solid', x: 14, y: 1, w: 28, h: 2 },
+    { type: 'crate', x: 8, y: 2.6, w: 1.2, h: 1.2 },
+    { type: 'crate', x: 8, y: 3.8, w: 1.2, h: 1.2 },
+    { type: 'crate', x: 8, y: 5.0, w: 1.2, h: 1.2 },
     { type: 'crate', x: 12, y: 3, w: 1.2, h: 1.2 },
     { type: 'crate', x: 13.3, y: 3, w: 1.2, h: 1.2 },
     { type: 'crate', x: 12.6, y: 4.3, w: 1.2, h: 1.2 },

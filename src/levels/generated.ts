@@ -1,4 +1,16 @@
-import type { LevelDef } from '../sim/level/schema';
+import type { LevelDef, LevelObject } from '../sim/level/schema';
+
+/** PLAN 2.5 / Appendix D: Desert box stacks that can topple. */
+export function crateStack(x: number, count = 3, size = 1.1, floorTop = 2): LevelObject[] {
+  const baseY = floorTop + size / 2;
+  return Array.from({ length: count }, (_, i) => ({
+    type: 'crate',
+    x,
+    y: baseY + i * size,
+    w: size,
+    h: size,
+  }));
+}
 
 export const woods_01: LevelDef = {
   id: 'woods-01',
@@ -143,7 +155,7 @@ export const desert_01: LevelDef = {
   drops: { enabled: true, xMin: 4, xMax: 24, intervalScale: 1 },
   objects: [
     { type: 'solid', x: 14, y: 1, w: 28, h: 2 },
-    { type: 'crate', x: 12, y: 3, w: 1.1, h: 1.1 },
+    ...crateStack(6),
     { type: 'bounce', x: 13, y: 2.3, w: 2, h: 0.4 },
     { type: 'crusher', x: 14, y: 8, w: 1.5, h: 6, period: 60 },
     { type: 'spikeball', x: 22, y: 8, r: 0.4 },
@@ -201,6 +213,7 @@ export const desert_04: LevelDef = {
   drops: { enabled: true, xMin: 4, xMax: 24, intervalScale: 1 },
   objects: [
     { type: 'solid', x: 14, y: 1, w: 28, h: 2 },
+    ...crateStack(7),
     { type: 'bounce', x: 23, y: 2.3, w: 2, h: 0.4 },
     { type: 'crusher', x: 14, y: 8, w: 1.5, h: 6, period: 60 },
     { type: 'spikeball', x: 17, y: 8, r: 0.4 },
@@ -243,7 +256,7 @@ export const desert_06: LevelDef = {
     { type: 'platform.momentum', x: 16, y: 6, w: 4, h: 0.6 },
     { type: 'lava', x: 16, y: 1.6, w: 8, h: 1.2, rate: 0 },
     { type: 'platform.rotating', x: 14, y: 8, w: 4, h: 0.6, omega: 1 },
-    { type: 'crate', x: 8, y: 3, w: 1.1, h: 1.1 },
+    ...crateStack(8),
   ],
 };
 
@@ -257,6 +270,7 @@ export const desert_07: LevelDef = {
   drops: { enabled: true, xMin: 4, xMax: 24, intervalScale: 1 },
   objects: [
     { type: 'solid', x: 14, y: 1, w: 28, h: 2 },
+    ...crateStack(6),
     { type: 'crusher', x: 14, y: 8, w: 1.5, h: 6, period: 60 },
     { type: 'spikeball', x: 12, y: 8, r: 0.4 },
     { type: 'solid', x: 10, y: 4, w: 4, h: 1 },

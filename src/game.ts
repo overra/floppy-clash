@@ -118,6 +118,8 @@ type FloppyDebug = {
   liveFists: boolean;
   speedRounds: () => void;
   matchRound: number;
+  scoreboardTicksSeen: number;
+  scoreboardWindow: number;
   debugDraw: boolean;
   debugHud: boolean;
   freezeCam: boolean;
@@ -227,6 +229,7 @@ export function createGame(root: HTMLElement): Game {
   let liveFists = false;
   let liveFistsApplied = false;
   let fistKills = 0;
+  let scoreboardTicksSeen = 0;
   let rendererSwitches = 0;
   let netName = 'guest';
   let netSlot = 0;
@@ -651,6 +654,7 @@ export function createGame(root: HTMLElement): Game {
     const seed = (Math.random() * 1e9) | 0;
     recorder = createRecorder(seed, level.id);
     liveFistsApplied = false;
+    scoreboardTicksSeen = 0;
     routeByJoinSeats = Boolean(opts.seats?.length);
     sim = createSimWorld({
       level,
@@ -946,6 +950,7 @@ export function createGame(root: HTMLElement): Game {
         }
         recorder.push(sampled);
         const events = viewSim.step(sampled);
+        if (viewSim.ecs.get(RoundState)?.phase === RoundPhase.Scoreboard) scoreboardTicksSeen += 1;
         const fists = events.some((e) => e.type === 'shot' && e.weaponId === 'fists');
         if (fists) fistKills += events.filter((e) => e.type === 'kill').length;
         mixer.handle(events);
@@ -1161,6 +1166,8 @@ export function createGame(root: HTMLElement): Game {
         sim.ctx.tuning.scoreboardTicks = 90;
       },
       matchRound: handle?.ecs.get(MatchState)?.round ?? 0,
+      scoreboardTicksSeen,
+      scoreboardWindow: handle?.ctx.tuning.scoreboardTicks ?? 90,
       clientViewTick: clientView?.appliedTick ?? 0,
       clientAppliedX: clientView?.appliedX ?? 0,
       clientRestored: clientView?.restored ?? false,

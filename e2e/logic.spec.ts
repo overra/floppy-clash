@@ -394,11 +394,16 @@ test('local 10-round fists-only match (PLAN M2 stand-in)', async ({ page }) => {
     window.__floppy?.armLiveFists();
   });
   await expect
+    .poll(async () => page.evaluate(() => window.__floppy?.scoreboardWindow ?? 0), { timeout: 15_000 })
+    .toBe(90);
+  await expect
     .poll(async () => page.evaluate(() => window.__floppy?.matchRound ?? 0), { timeout: 160_000 })
     .toBeGreaterThanOrEqual(10);
   await expect
     .poll(async () => page.evaluate(() => window.__floppy?.fistKills ?? 0), { timeout: 10_000 })
     .toBeGreaterThanOrEqual(10);
+  const board = await page.evaluate(() => window.__floppy?.scoreboardTicksSeen ?? 0);
+  expect(board).toBeGreaterThanOrEqual(10 * 80);
   await page.evaluate(() => window.__floppy?.disarmLiveFists());
 });
 
@@ -418,9 +423,12 @@ test('scoreboard overlay appears after last stand', async ({ page }) => {
   });
   await expect(page.locator('[data-round-over]')).toBeVisible({ timeout: 30_000 });
   await expect(page.getByRole('heading', { name: /Round over|Last standing/ })).toBeVisible();
-  // Appendix A scoreboard is 90 ticks (~1.5s). A 2-tick cheat would already be gone.
-  await page.waitForTimeout(400);
+  // Appendix A scoreboard is 90 ticks (~1.5s). Still up after 1s; a 24-tick cheat would be gone.
+  await page.waitForTimeout(1100);
   await expect(page.locator('[data-round-over]')).toBeVisible();
+  await expect
+    .poll(async () => page.evaluate(() => window.__floppy?.scoreboardTicksSeen ?? 0), { timeout: 5_000 })
+    .toBeGreaterThanOrEqual(50);
   await expect
     .poll(async () => page.evaluate(() => window.__floppy?.fistKills ?? 0), { timeout: 5_000 })
     .toBeGreaterThan(0);

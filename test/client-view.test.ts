@@ -208,8 +208,10 @@ describe('client interpolation view', () => {
     const view = createClientView(first);
     expect(view.sim.ctx.level.id).toBe(first.levelId);
     let kills = 0;
+    let scoreboardSamples = 0;
     for (let i = 0; i < 4000; i++) {
       const ev = host.step();
+      if (host.ecs.get(RoundState)?.phase === RoundPhase.Scoreboard) scoreboardSamples += 1;
       const fists = ev.some((e) => e.type === 'shot' && e.weaponId === 'fists');
       const tickKills = ev.filter((e) => e.type === 'kill').length;
       if (tickKills > 0) expect(fists).toBe(true);
@@ -217,6 +219,7 @@ describe('client interpolation view', () => {
       if (host.ctx.level.id !== first.levelId) break;
     }
     expect(kills).toBeGreaterThan(0);
+    expect(scoreboardSamples).toBeGreaterThanOrEqual(88);
     expect(host.ctx.level.id).not.toBe(first.levelId);
     const snap = host.snapshot();
     expect(snap.levelId).toBe(host.ctx.level.id);

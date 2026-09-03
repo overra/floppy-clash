@@ -30,6 +30,21 @@ describe('levels catalog', () => {
     expect(builtInOnly.some((l) => l.id === 'user-arena')).toBe(true);
   });
 
+  it('desert arenas ship crate stacks that can topple (PLAN 2.5)', () => {
+    const desert = builtInMatchLevels().filter((l) => l.theme === 'desert');
+    const stacked = desert.filter((l) => {
+      const byX = new Map<string, number>();
+      for (const o of l.objects) {
+        if (o.type !== 'crate') continue;
+        const key = o.x.toFixed(1);
+        byX.set(key, (byX.get(key) ?? 0) + 1);
+      }
+      return [...byX.values()].some((n) => n >= 3);
+    });
+    expect(desert.length).toBeGreaterThanOrEqual(6);
+    expect(stacked.length).toBeGreaterThanOrEqual(4);
+  });
+
   it('ships a per-hazard test level', () => {
     const tests = hazardTestLevels();
     expect(tests.length).toBeGreaterThanOrEqual(17);
