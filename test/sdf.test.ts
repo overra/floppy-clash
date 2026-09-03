@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
+import { createCamera } from '../src/render/camera';
+import { buildFrame } from '../src/render/buildFrame';
 import { poseToPrimitives } from '../src/render/figure';
+import { Controller, Transform } from '../src/sim/traits';
+import { hold, makeSim, playerOf } from './helpers';
 import {
   coverage,
   opSmoothUnion,
@@ -199,6 +203,33 @@ describe('figure pose', () => {
     const hipBase = base[1];
     const hipSlide = slide[1];
     expect(hipSlide?.bx).toBeLessThan(hipBase?.bx ?? 0);
+  });
+
+  it('buildFrame uses live Controller.vy for jump vs fall (PLAN 4.11)', () => {
+    const sim = makeSim({ seed: 77, settings: { playerCount: 1 } });
+    const p = playerOf(sim);
+    for (let i = 0; i < 30; i++) sim.step([hold({}), hold({}), hold({}), hold({})]);
+    sim.step([hold({ jump: true }), hold({}), hold({}), hold({})]);
+    expect(p.get(Controller)?.vy ?? 0).toBeGreaterThan(0.2);
+    const jumpBodyY = p.get(Transform)?.y ?? 0;
+    const jumpFrame = buildFrame(sim, createCamera(sim.ctx.level.bounds), 1, 1280, 720, [], {
+      freezeCamera: true,
+    });
+    for (let i = 0; i < 40; i++) {
+      sim.step([hold({}), hold({}), hold({}), hold({})]);
+      if ((p.get(Controller)?.vy ?? 0) < -0.2) break;
+    }
+    expect(p.get(Controller)?.vy ?? 0).toBeLessThan(-0.2);
+    const fallBodyY = p.get(Transform)?.y ?? 0;
+    const fallFrame = buildFrame(sim, createCamera(sim.ctx.level.bounds), 1, 1280, 720, [], {
+      freezeCamera: true,
+    });
+    const footRel = (frame: ReturnType<typeof buildFrame>, bodyY: number) => {
+      const g = frame.groups.find((gr) => gr.layer === 5);
+      const prims = g?.primitives ?? [];
+      return Math.max((prims[5]?.by ?? 0) - bodyY, (prims[7]?.by ?? 0) - bodyY);
+    };
+    expect(footRel(jumpFrame, jumpBodyY)).toBeGreaterThan(footRel(fallFrame, fallBodyY) + 0.08);
   });
 
   it('jump and fall poses place legs differently (PLAN 4.11)', () => {

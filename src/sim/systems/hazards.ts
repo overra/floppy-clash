@@ -37,12 +37,17 @@ export function hazardsStep(world: World): void {
       const hung = hz.kind === HazardKind.Chain && hz.param3 === 1;
       const reach = hung ? Math.max(2.2, (hz.param0 || 2.8) / 2 + 0.5) : 1.6;
       const prev = hazard.get(PrevTransform);
+      const body = ctx.bodies.get(hazard);
+      const vel = body?.getLinearVelocity();
+      const pos = body?.getPosition();
+      const predX = (pos?.x ?? ht.x) + (vel?.x ?? 0) * dt;
+      const predY = (pos?.y ?? ht.y) + (vel?.y ?? 0) * dt;
       const sweep =
-        (hz.kind === HazardKind.Saw || hz.kind === HazardKind.Crusher) && prev
-          ? pt.x >= Math.min(prev.x, ht.x) - reach &&
-            pt.x <= Math.max(prev.x, ht.x) + reach &&
-            pt.y >= Math.min(prev.y, ht.y) - 1.6 &&
-            pt.y <= Math.max(prev.y, ht.y) + 1.6
+        hz.kind === HazardKind.Saw || hz.kind === HazardKind.Crusher
+          ? pt.x >= Math.min(prev?.x ?? ht.x, ht.x, pos?.x ?? ht.x, predX) - reach &&
+            pt.x <= Math.max(prev?.x ?? ht.x, ht.x, pos?.x ?? ht.x, predX) + reach &&
+            pt.y >= Math.min(prev?.y ?? ht.y, ht.y, pos?.y ?? ht.y, predY) - 1.6 &&
+            pt.y <= Math.max(prev?.y ?? ht.y, ht.y, pos?.y ?? ht.y, predY) + 1.6
           : false;
       const near = sweep || (dx < reach && dy < 1.6);
       const mod = moduleForKind(hz.kind);

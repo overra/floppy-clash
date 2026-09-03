@@ -595,15 +595,30 @@ describe('PLAN accept stand-ins', () => {
   });
 
   it('saw follows an optional path', () => {
-    const sim = makeSim({ level: getLevel('test-saw'), seed: 90, settings: { playerCount: 1 } });
-    const xs: number[] = [];
+    const wobble = makeSim({ level: getLevel('test-saw'), seed: 90, settings: { playerCount: 1 } });
+    const wobbleXs: number[] = [];
     for (let i = 0; i < 80; i++) {
-      sim.step();
-      sim.ecs.query(Hazard, Transform).updateEach(([hz, t]) => {
-        if (hz.kind === HazardKind.Saw) xs.push(t.x);
+      wobble.step();
+      wobble.ecs.query(Hazard, Transform).updateEach(([hz, t]) => {
+        if (hz.kind === HazardKind.Saw) wobbleXs.push(t.x);
       });
     }
-    expect(Math.max(...xs) - Math.min(...xs)).toBeGreaterThan(0.4);
+    expect(Math.max(...wobbleXs) - Math.min(...wobbleXs)).toBeGreaterThan(0.4);
+    expect(Math.max(...wobbleXs)).toBeLessThan(18.7);
+
+    const path = makeSim({
+      level: getLevel('test-saw-path'),
+      seed: 91,
+      settings: { playerCount: 1 },
+    });
+    const pathXs: number[] = [];
+    for (let i = 0; i < 160; i++) {
+      path.step();
+      path.ecs.query(Hazard, Transform).updateEach(([hz, t]) => {
+        if (hz.kind === HazardKind.Saw) pathXs.push(t.x);
+      });
+    }
+    expect(Math.max(...pathXs) - Math.min(...pathXs)).toBeGreaterThan(8);
   });
 
   it('held-weapon near-hand hit disarms (PLAN 4.9)', () => {

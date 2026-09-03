@@ -6,6 +6,7 @@ import { Vec2 } from 'planck';
 import {
   Destructible,
   Hazard,
+  HazardPath,
   Kinematic,
   PrevTransform,
   Solid,
@@ -49,7 +50,8 @@ export function paramsFromObject(obj: LevelObject): {
     case 'bounce':
       return { param0: obj.w ?? 2, param1: obj.speed ?? 16, param2: 0, param3: 0 };
     case 'saw':
-      return { param0: obj.omega ?? 6, param1: obj.speed ?? 0, param2: 0, param3: 0 };
+      // param2/param3 remember the spawn so a speed wobble stays centered (not a random walk).
+      return { param0: obj.omega ?? 6, param1: obj.speed ?? 0, param2: obj.x, param3: obj.y };
     case 'spikeball':
       return {
         param0: obj.r ?? 0.4,
@@ -214,6 +216,39 @@ export function createKinematicCircle(world: World, obj: LevelObject, kind: numb
   registerBody(world, entity, body);
   entity.add(Kinematic());
   return entity;
+}
+
+/** PLAN 4.10: kinematic waypoint follow (moving platforms, optional saw path). */
+export function stepHazardPath(world: World, entity: Entity, dt: number): void {
+  const path = entity.get(HazardPath);
+  const body = getContext(world).bodies.get(entity);
+  if (!path || !body || path.points.length < 2) return;
+  const n = path.points.length;
+  const i = ((path.index % n) + n) % n;
+  const next = path.mode === 0 ? (i + 1) % n : i + path.dir;
+  const clamped = path.mode === 0 ? next : Math.max(0, Math.min(n - 1, next));
+  const a = path.points[i]!;
+  const b = path.points[clamped]!;
+  const dx = b.x - a.x;
+  const dy = b.y - a.y;
+  const dist = Math.hypot(dx, dy) || 1;
+  path.accum += path.speed * dt;
+  if (path.accum >= dist) {
+    path.accum = 0;
+    if (path.mode === 0) {
+      path.index = (i + 1) % n;
+    } else {
+      path.index = clamped;
+      if (clamped === 0 || clamped === n - 1) path.dir *= -1;
+    }
+    body.setTransform(new Vec2(b.x, b.y), body.getAngle());
+    body.setLinearVelocity(new Vec2(0, 0));
+    return;
+  }
+  const p = body.getPosition();
+  const tx = a.x + (dx / dist) * path.accum;
+  const ty = a.y + (dy / dist) * path.accum;
+  body.setLinearVelocity(new Vec2((tx - p.x) / dt, (ty - p.y) / dt));
 }
 
 export function kill(world: World, player: Entity, x: number, y: number): void {

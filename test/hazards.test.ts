@@ -17,7 +17,7 @@ import {
 } from '../src/sim/traits';
 import { crusherOverlaps } from '../src/sim/hazards/crusher';
 import { sawOverlaps } from '../src/sim/hazards/saw';
-import { hold, makeSim, playerOf } from './helpers';
+import { hold, makeSim, pin, playerOf } from './helpers';
 
 describe('M4 hazards', () => {
   it('spikes kill on contact that tick', () => {
@@ -94,6 +94,68 @@ describe('M4 hazards', () => {
     expect(sawOverlaps(16, 5, 16, 5, 0.7)).toBe(true);
     expect(sawOverlaps(10, 5, 18, 5, 0.7, 8, 5)).toBe(true);
     expect(sawOverlaps(4, 2, 18, 5, 0.7, 16, 5)).toBe(false);
+
+    // Live: player sits on the segment the blade travels this tick, not on the current disk.
+    const level = {
+      ...getLevel('test-saw'),
+      id: 'sweep-saw-live',
+      objects: [
+        { type: 'solid' as const, x: 12, y: 1, w: 24, h: 2 },
+        {
+          type: 'saw' as const,
+          x: 8,
+          y: 5,
+          r: 0.45,
+          speed: 720,
+          mode: 'pingpong' as const,
+          path: [
+            { x: 8, y: 5 },
+            { x: 20, y: 5 },
+          ],
+        },
+      ],
+    };
+    const sim = makeSim({ level, seed: 24, settings: { playerCount: 1 } });
+    const p = playerOf(sim);
+    pin(sim, p, 14, 5);
+    const sawX = { n: 8 };
+    sim.ecs.query(Hazard, Transform).updateEach(([hz, t]) => {
+      if (hz.kind === HazardKind.Saw) sawX.n = t.x;
+    });
+    expect(Math.abs(sawX.n - 14)).toBeGreaterThan(2);
+    sim.step([hold({}), hold({}), hold({}), hold({})]);
+    expect(p.has(Dead) || (p.get(Health)?.hp ?? 1) <= 0).toBe(true);
+  });
+
+  it('spawn-centered saw wobble stays bounded (does not random-walk)', () => {
+    const sim = makeSim({ level: getLevel('test-saw'), seed: 25, settings: { playerCount: 1 } });
+    const xs: number[] = [];
+    for (let i = 0; i < 200; i++) {
+      sim.step();
+      sim.ecs.query(Hazard, Transform).updateEach(([hz, t]) => {
+        if (hz.kind === HazardKind.Saw) xs.push(t.x);
+      });
+    }
+    expect(Math.max(...xs) - Math.min(...xs)).toBeGreaterThan(0.4);
+    expect(Math.max(...xs)).toBeLessThan(16 + 2.6);
+    expect(Math.min(...xs)).toBeGreaterThan(16 - 2.6);
+  });
+
+  it('a saw with an authored path follows the waypoints (PLAN Appendix D)', () => {
+    const sim = makeSim({
+      level: getLevel('test-saw-path'),
+      seed: 26,
+      settings: { playerCount: 1 },
+    });
+    const xs: number[] = [];
+    for (let i = 0; i < 160; i++) {
+      sim.step();
+      sim.ecs.query(Hazard, Transform).updateEach(([hz, t]) => {
+        if (hz.kind === HazardKind.Saw) xs.push(t.x);
+      });
+    }
+    expect(Math.min(...xs)).toBeLessThan(9);
+    expect(Math.max(...xs)).toBeGreaterThan(19);
   });
 
   it('lava damages then respects cooldown', () => {

@@ -1419,6 +1419,32 @@ export const test_saw: LevelDef = {
   ],
 };
 
+/** PLAN Appendix D: saw with an explicit waypoint path (not the spawn-centered wobble). */
+export const test_saw_path: LevelDef = {
+  id: 'test-saw-path',
+  name: 'Test saw path',
+  theme: 'arena',
+  bounds: { x: 0, y: 0, w: 24, h: 14 },
+  killMargin: 6,
+  spawns: [{ x: 4, y: 4 }, { x: 20, y: 4 }, { x: 8, y: 8 }, { x: 16, y: 8 }],
+  drops: { enabled: false, xMin: 4, xMax: 20, intervalScale: 1 },
+  objects: [
+    { type: 'solid', x: 12, y: 1, w: 24, h: 2 },
+    {
+      type: 'saw',
+      x: 8,
+      y: 5,
+      r: 0.45,
+      speed: 6,
+      mode: 'pingpong',
+      path: [
+        { x: 8, y: 5 },
+        { x: 20, y: 5 },
+      ],
+    },
+  ],
+};
+
 export const test_platform_moving: LevelDef = {
   id: 'test-platform.moving',
   name: 'Test platform.moving',
@@ -1758,6 +1784,7 @@ export const GENERATED_LEVELS: LevelDef[] = [
   test_spikes,
   test_lava,
   test_saw,
+  test_saw_path,
   test_platform_moving,
   test_platform_rotating,
   test_platform_disappearing,

@@ -5,6 +5,7 @@ import { buildFrame, PLAYER_COLORS, PLAYER_COLORS_CB } from '../src/render/build
 import { groupBounds } from '../src/render/frame';
 import {
   PRIM_BEZIER,
+  PRIM_CAPSULE,
   PRIM_PIE,
   PRIM_ROUNDED_BOX,
   PRIM_TRIANGLE,
@@ -144,6 +145,26 @@ describe('PLAN §4.11 theme pass', () => {
     expect(box.bx).toBeCloseTo(3, 1);
     expect(box.by).toBeCloseTo(0.5, 1);
     expect(box.cx).toBeCloseTo(Math.PI / 4, 2);
+  });
+
+  it('sniper laser sight is a world-space capsule (PLAN M3)', () => {
+    const sim = makeSim({ level: woodsClearing, seed: 11, settings: { playerCount: 1 } });
+    const p = playerOf(sim);
+    const gun = spawnWeapon(sim.ecs, 'sniper', 10, 5);
+    gun.add(Held(), HeldBy(p));
+    gun.remove(Loose);
+    p.set(Transform, { x: 10, y: 4, angle: 0 });
+    sim.step([hold({ aimX: 1, aimY: 0 }), hold({}), hold({}), hold({})]);
+    const frame = buildFrame(sim, createCamera(sim.ctx.level.bounds), 0, 1280, 720, [], {
+      freezeCamera: true,
+    });
+    const sight = frame.groups.find(
+      (g) =>
+        g.layer === 7 &&
+        g.color === '#ff4d6d' &&
+        g.primitives.some((pr) => pr.kind === PRIM_CAPSULE && Math.hypot(pr.bx - pr.ax, pr.by - pr.ay) > 6),
+    );
+    expect(sight).toBeTruthy();
   });
 
   it('colorblind palette swaps player group colors', () => {

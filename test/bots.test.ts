@@ -4,7 +4,9 @@ import { getLevel } from '../src/levels/catalog';
 import { spawnWeapon } from '../src/sim/systems/weapons';
 import {
   Bot,
+  Combat,
   Controller,
+  Dead,
   Health,
   Held,
   HeldBy,
@@ -244,6 +246,63 @@ describe('M9 bots', () => {
     const slot = bot.get(Bot)?.slot ?? 1;
     expect(sim.ctx.inputs[slot]?.jump).toBe(true);
     expect(sim.ctx.inputs[slot]?.moveX ?? 0).toBeGreaterThan(0.2);
+  });
+
+  it('a bot in the gym shaft actually gains height via wall-jumps (PLAN 4.14)', () => {
+    const sim = makeSim({
+      level: gymLevel,
+      seed: 101,
+      settings: { playerCount: 1, bots: 1 },
+    });
+    const human = playerOf(sim, 0);
+    const bot = playerOf(sim, 1);
+    pin(sim, bot, 4.7, 3.2);
+    const y0 = bot.get(Transform)?.y ?? 3.2;
+    let apex = y0;
+    for (let i = 0; i < 240; i++) {
+      pin(sim, human, 4.9, 12);
+      sim.step();
+      apex = Math.max(apex, bot.get(Transform)?.y ?? apex);
+    }
+    expect(apex).toBeGreaterThan(y0 + 2);
+  });
+
+  it('a bot actually blocks a live incoming bullet (PLAN 4.14)', () => {
+    const sim = makeSim({ seed: 102, settings: { playerCount: 1, bots: 1 } });
+    const human = playerOf(sim, 0);
+    const bot = playerOf(sim, 1);
+    pin(sim, human, 2, 4);
+    pin(sim, bot, 14, 4);
+    const trait = bot.get(Bot);
+    if (trait) bot.set(Bot, { ...trait, think: 20 });
+    sim.ecs.spawn(
+      Projectile({
+        kind: 0,
+        damage: 40,
+        speed: 40,
+        bounces: 0,
+        fuse: 0,
+        x: 8,
+        y: 4,
+        vx: 40,
+        vy: 0,
+        gravity: 0,
+        ownerGrace: 0,
+        defId: 0,
+      }),
+    );
+    const hp0 = bot.get(Health)?.hp ?? 100;
+    let blocked = false;
+    for (let i = 0; i < 20; i++) {
+      pin(sim, human, 2, 4);
+      pin(sim, bot, 14, 4);
+      const ev = sim.step();
+      if (ev.some((e) => e.type === 'block')) blocked = true;
+    }
+    expect(bot.get(Combat)?.blocking || blocked).toBe(true);
+    expect(blocked).toBe(true);
+    expect(bot.get(Health)?.hp ?? 100).toBe(hp0);
+    expect(bot.has(Dead)).toBe(false);
   });
 
   it('bot soak of 2000 ticks stays finite', { timeout: 30_000 }, () => {

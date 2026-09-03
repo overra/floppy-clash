@@ -1,7 +1,7 @@
 import { Vec2 } from 'planck';
 import { getContext } from '../context';
-import { HazardKind, PrevTransform, Transform } from '../traits';
-import { createKinematicCircle, kill } from './common';
+import { HazardKind, HazardPath, PrevTransform, Transform } from '../traits';
+import { createKinematicCircle, kill, stepHazardPath } from './common';
 import type { HazardModule } from './types';
 
 /**
@@ -34,24 +34,66 @@ export function sawOverlaps(
 export const saw: HazardModule = {
   typeId: 'saw',
   kind: HazardKind.Saw,
-  create: (world, obj) => createKinematicCircle(world, obj, HazardKind.Saw),
-  step(world, entity, hz, tr) {
+  create(world, obj) {
+    const entity = createKinematicCircle(world, obj, HazardKind.Saw);
+    if (obj.path && obj.path.length >= 2) {
+      entity.add(
+        HazardPath({
+          points: obj.path.map((p) => ({ x: p.x, y: p.y })),
+          index: 0,
+          accum: 0,
+          mode: obj.mode === 'loop' ? 0 : 1,
+          dir: 1,
+          speed: obj.speed ?? 3,
+        }),
+      );
+    }
+    return entity;
+  },
+  step(world, entity, hz, _tr) {
     const ctx = getContext(world);
     const body = ctx.bodies.get(entity);
     if (!body) return;
     body.setAngularVelocity(hz.param0 || 6);
+    const dt = 1 / ctx.tuning.tickRate;
+    if (entity.has(HazardPath)) {
+      stepHazardPath(world, entity, dt);
+      return;
+    }
     if (hz.param1 > 0) {
-      const dt = 1 / ctx.tuning.tickRate;
+      const homeX = hz.param2;
       const ox = Math.sin(ctx.tick / 40) * hz.param1;
-      body.setLinearVelocity(new Vec2((tr.x + ox - body.getPosition().x) / dt, 0));
+      body.setLinearVelocity(new Vec2((homeX + ox - body.getPosition().x) / dt, 0));
     }
   },
-  contact(world, player, _hz, ht, _ctrl, _dt, hazard) {
+  contact(world, player, _hz, ht, _ctrl, dt, hazard) {
     const pt = player.get(Transform);
     if (!pt) return;
+    const ctx = getContext(world);
     const prev = hazard.get(PrevTransform);
-    if (sawOverlaps(pt.x, pt.y, ht.x, ht.y, 0.7, prev?.x ?? ht.x, prev?.y ?? ht.y)) {
-      kill(world, player, pt.x, pt.y);
+    const pprev = player.get(PrevTransform);
+    const body = ctx.bodies.get(hazard);
+    const pos = body?.getPosition();
+    const vel = body?.getLinearVelocity();
+    const lastX = prev?.x ?? ht.x;
+    const lastY = prev?.y ?? ht.y;
+    const bodyX = pos?.x ?? ht.x;
+    const bodyY = pos?.y ?? ht.y;
+    const predX = bodyX + (vel?.x ?? 0) * dt;
+    const predY = bodyY + (vel?.y ?? 0) * dt;
+    const samples = [
+      [pt.x, pt.y],
+      [pprev?.x ?? pt.x, pprev?.y ?? pt.y],
+    ] as const;
+    for (const [px, py] of samples) {
+      if (
+        sawOverlaps(px, py, ht.x, ht.y, 0.7, lastX, lastY) ||
+        sawOverlaps(px, py, bodyX, bodyY, 0.7, ht.x, ht.y) ||
+        sawOverlaps(px, py, predX, predY, 0.7, bodyX, bodyY)
+      ) {
+        kill(world, player, pt.x, pt.y);
+        return;
+      }
     }
   },
 };
