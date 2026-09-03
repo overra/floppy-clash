@@ -173,13 +173,29 @@ export async function createWebRtcSession(
   };
 
   let markOpen: (() => void) | undefined;
-  const opened = new Promise<void>((resolve, reject) => {
-    const t = setTimeout(() => reject(new Error('datachannel timeout')), 12_000);
-    markOpen = () => {
-      clearTimeout(t);
-      resolve();
-    };
-  });
+  let markRoomAcked: (() => void) | undefined;
+  /** Host is ready once signaling has the room — peers may late-join later. */
+  const roomAcked =
+    role === 'host'
+      ? new Promise<void>((resolve, reject) => {
+          const t = setTimeout(() => reject(new Error('signaling timeout')), 12_000);
+          markRoomAcked = () => {
+            clearTimeout(t);
+            resolve();
+          };
+        })
+      : Promise.resolve();
+  /** Client still waits for the host DataChannel (PLAN 4.13 late join is host-first). */
+  const opened =
+    role === 'client'
+      ? new Promise<void>((resolve, reject) => {
+          const t = setTimeout(() => reject(new Error('datachannel timeout')), 12_000);
+          markOpen = () => {
+            clearTimeout(t);
+            resolve();
+          };
+        })
+      : Promise.resolve();
 
   const bindChannel = (ch: RTCDataChannel, peerId: string) => {
     ch.binaryType = 'arraybuffer';
@@ -238,7 +254,11 @@ export async function createWebRtcSession(
     } catch {
       return;
     }
-    if (msg.t === 'you') selfId = msg.id;
+    if (msg.t === 'you') {
+      selfId = msg.id;
+      if (role === 'host') markRoomAcked?.();
+    }
+    if (msg.t === 'peers' && role === 'host') markRoomAcked?.();
     if (msg.t === 'peer-join' && role === 'host') void addPeer(msg.id);
     if (msg.t === 'sdp') {
       const desc = msg.desc;
@@ -271,7 +291,8 @@ export async function createWebRtcSession(
 
   ws.send(encode({ t: 'room', code, role }));
 
-  await opened;
+  if (role === 'host') await roomAcked;
+  else await opened;
   session.ready = true;
   session.peerCount = role === 'host' ? peers.size : 1;
   return session;

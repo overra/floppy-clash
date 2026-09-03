@@ -7,6 +7,7 @@ Floppy Clash is host-authoritative. The host runs `src/sim`; clients send `Playe
 - WebRTC DataChannels (`src/net/transport.ts`): unreliable/unordered for inputs and 20 Hz snapshots, reliable/ordered for events (round phase, chat, settings, custom level JSON, late-join full snap).
 - Snapshot frames are **quantized `Uint8Array`** (`encodeWire` / `decodeWire`). The session layer accepts `ArrayBuffer` / `ArrayBufferView` as well as JSON strings (fallback).
 - Signaling (`server/signaling.ts`) only exchanges SDP/ICE for a room code. Public STUN is configured; TURN is optional and not bundled.
+- The host session is **ready after the room ack**, so a host can start (or wait) alone; each later `peer-join` opens DataChannels and gets a late-join full snap. Clients still wait for the host DataChannel.
 - `createLocalLoopback()` and `createSimulatedLink()` cover CI without a live WAN path; both run snapshots through encode→decode so CI hits the same codec as WebRTC.
 
 ## Snapshots

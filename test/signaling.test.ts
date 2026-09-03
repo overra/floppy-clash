@@ -34,6 +34,25 @@ describe('signaling rooms', () => {
     await handle.close();
   });
 
+  it('acks a host-only room so the host can wait for late joiners', async () => {
+    const handle = await startSignaling(0);
+    const url = `ws://127.0.0.1:${handle.port}`;
+    const host = new WebSocket(url);
+    await new Promise<void>((res) => {
+      host.on('open', () => res());
+    });
+    const you = new Promise<string>((res) => {
+      host.on('message', (raw) => {
+        const msg = decode(String(raw));
+        if (msg.t === 'you') res(msg.id);
+      });
+    });
+    host.send(encode({ t: 'room', code: 'SOLO', role: 'host' }));
+    expect((await you).length).toBeGreaterThan(0);
+    host.close();
+    await handle.close();
+  });
+
   it('notifies the host of two joining peers for a 4-player star', async () => {
     const handle = await startSignaling(0);
     const url = `ws://127.0.0.1:${handle.port}`;
