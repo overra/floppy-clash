@@ -594,7 +594,7 @@ describe('spawnMissing restores host hazard density/type', () => {
     view.sim.ecs.query(Hazard, NetId).updateEach(([_hz, n], e) => {
       if (n.id !== netId) return;
       const edge = view.sim.ctx.bodies.get(e)?.getJointList();
-      const a = edge?.joint.getAnchorA();
+      const a = edge?.joint?.getAnchorA();
       hangX = a?.x ?? 99;
     });
     expect(Math.abs(hangX)).toBeLessThan(0.08);
@@ -638,8 +638,8 @@ describe('spawnMissing restores host hazard density/type', () => {
       const body = view.sim.ctx.bodies.get(e);
       joints = jointCount(body);
       for (let edge = body?.getJointList(); edge; edge = edge.next) {
-        const a = edge.joint.getAnchorA();
-        if (Math.abs(a.x) < Math.abs(anchorX)) anchorX = a.x;
+        const a = edge.joint?.getAnchorA();
+        if (a && Math.abs(a.x) < Math.abs(anchorX)) anchorX = a.x;
       }
     });
     expect(joints).toBeGreaterThanOrEqual(1);
