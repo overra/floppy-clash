@@ -355,7 +355,7 @@ function renderSettings(
   const lastMap = (state.remapPadId && maps[state.remapPadId]) || Object.entries(maps)[0]?.[1] || DEFAULT_MAP;
   const lastId = state.remapPadId || Object.keys(maps)[0] || '';
   if (state.remapPadId) card.dataset.remapPad = state.remapPadId;
-  card.innerHTML = `<h2>Settings</h2>`
+  card.innerHTML = `<h2>Settings</h2>
       <label>HP <select id="hp">${hpSelectOptions(state.maxHp)}</select></label><br/>
       <label>First to <input id="ft" type="number" value="${state.firstTo}"></label><br/>
       <label>Bots <input id="bots" type="number" value="${state.bots}"></label><br/>
