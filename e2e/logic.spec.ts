@@ -47,6 +47,21 @@ test('boots, joins with keyboard, starts a local match vs bots', async ({ page }
   await expect(page.locator('[data-round-over]')).toBeVisible({ timeout: 15_000 });
 });
 
+test('local play joins on first Space and readies on the second', async ({ page }) => {
+  await page.goto('/');
+  await expect(page.locator('#localstats')).toContainText('matches');
+  await page.getByRole('button', { name: 'Local Play' }).click();
+  await expect(page.getByRole('heading', { name: 'Join' })).toBeVisible();
+  await page.keyboard.press('Space');
+  await expect(page.locator('[data-seat="0"]')).toContainText(/joined/i);
+  await expect(page.locator('[data-seat="0"]')).not.toHaveAttribute('data-ready', '1');
+  await page.keyboard.press('Space');
+  await expect(page.locator('[data-seat="0"]')).toHaveAttribute('data-ready', '1');
+  await page.keyboard.press('Enter');
+  await expect(page.locator('canvas#game')).toBeVisible();
+  await expect(page.locator('[data-countdown]')).toBeVisible({ timeout: 8_000 });
+});
+
 test('settings persist toggles and editor property panel opens', async ({ page }) => {
   await page.goto('/');
   await page.getByRole('button', { name: 'Settings' }).click();
