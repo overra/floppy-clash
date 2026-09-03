@@ -10,7 +10,6 @@ import { getLevel } from '../src/levels/catalog';
 import { spawnWeapon } from '../src/sim/systems/weapons';
 import {
   Bot,
-  Combat,
   Controller,
   Dead,
   Health,

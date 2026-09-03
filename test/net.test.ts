@@ -35,7 +35,7 @@ import { createClientView } from '../src/net/clientView';
 import { parseLevel } from '../src/sim/level/schema';
 import { SeededRng } from '../src/core/rng';
 import { blankInputs } from '../src/sim/input';
-import { fistArena, hold, makeSim, playerOf, pos, speedRounds, woodsClearing } from './helpers';
+import { fistArena, hold, makeSim, playerOf, pos, speedRounds } from './helpers';
 
 describe('M8 netcode', () => {
   it('configures public STUN (PLAN 4.13)', () => {
