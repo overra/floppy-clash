@@ -172,6 +172,7 @@ type FloppyDebug = {
   readFramebuffer: () => Promise<FramebufferReadback>;
   lightingKind: 'cascades' | 'glow' | 'off' | 'none';
   jfaBound: boolean;
+  jfaError: string;
   readJfaIdentity: () => Promise<JfaIdentityReport>;
   playerColors: number[];
   pausedBy: string | null;
@@ -1291,6 +1292,7 @@ export function createGame(root: HTMLElement): Game {
         renderer?.readFramebuffer() ?? Promise.resolve(emptyReadback('unavailable', 'no-renderer')),
       lightingKind: renderer?.lightingKind ?? 'none',
       jfaBound: renderer?.jfaBound ?? false,
+      jfaError: renderer?.jfaError ?? '',
       readJfaIdentity: () =>
         renderer?.readJfaIdentity?.() ??
         Promise.resolve(emptyJfaIdentityReport('none', 'no-renderer')),

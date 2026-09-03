@@ -51,6 +51,9 @@ export const IDENTITY_CAM: LightingCamera = {
 
 export const IDENTITY_LEFT_WALL: SolidRect = { minX: 0, minY: 0, maxX: 8, maxY: 18 };
 
+/** Tiny seed so GPU JFA is defined; all identity probes stay outside (not a disk at 0.5). */
+export const IDENTITY_CORNER: SolidRect = { minX: 0, minY: 0, maxX: 1, maxY: 1 };
+
 /** Texels used by classify / `textureLoad` (UV = (coord + 0.5) / size). */
 export const IDENTITY_PROBES = [
   { name: 'left', ux: 38, uy: 72 },
@@ -214,7 +217,7 @@ export function cascadeSdfFromJfa(
 
 export type JfaIdentitySample = {
   name: string;
-  scene: 'wall' | 'empty';
+  scene: 'wall' | 'open';
   ux: number;
   uy: number;
   gpuJfa: number;
@@ -430,6 +433,8 @@ export type LightingPass = {
   destroy: () => void;
   kind: 'cascades' | 'glow' | 'off';
   jfaBound: boolean;
+  /** Why JFA create/bind/`with` failed. Empty when `jfaBound`. */
+  jfaError: string;
   readIdentity: () => Promise<JfaIdentityReport>;
 };
 
@@ -476,7 +481,8 @@ export const giSceneLayout = tgpu
     solids: { uniform: SceneSolids },
     lights: { uniform: GlowLights },
   })
-  .$idx(1);
+  .$idx(1)
+  .$name('giScene');
 
 /**
  * Jump Flood `rgba16float` SDF. `unfilterable-float` + `textureLoad` so
@@ -486,7 +492,8 @@ export const jfaSdfLayout = tgpu
   .bindGroupLayout({
     jfaSdf: { texture: d.texture2d(d.f32), sampleType: 'unfilterable-float' },
   })
-  .$idx(2);
+  .$idx(2)
+  .$name('jfaSdf');
 
 const IdentityProbeGpu = d.struct({
   ux: d.u32,
@@ -500,7 +507,8 @@ export const identityLayout = tgpu
   .bindGroupLayout({
     probes: { storage: d.arrayOf(IdentityProbeGpu, IDENTITY_PROBE_COUNT), access: 'mutable' },
   })
-  .$idx(3);
+  .$idx(0)
+  .$name('jfaIdentity');
 
 export const glowLayout = tgpu
   .bindGroupLayout({
@@ -905,7 +913,7 @@ function tryCreateGlow(root: TgpuRoot, format: GPUTextureFormat) {
   }
 }
 
-function tryCreateJfa(root: TgpuRoot) {
+function tryCreateJfa(root: TgpuRoot): { exec: ReturnType<typeof createJumpFlood> | null; error: string } {
   try {
     const exec = createJumpFlood({
       root,
@@ -919,21 +927,27 @@ function tryCreateJfa(root: TgpuRoot) {
         const maxDim = std.max(d.f32(size.x), d.f32(size.y));
         return signedDist / std.max(maxDim, d.f32(1));
       },
-      getColor: () => d.vec4f(1, 0.8, 0.4, 1),
+      getColor: () => {
+        'use gpu';
+        return d.vec4f(1, 0.8, 0.4, 1);
+      },
     });
     exec.initSync();
-    return exec;
-  } catch {
-    return null;
+    return { exec, error: '' };
+  } catch (err) {
+    return { exec: null, error: err instanceof Error ? err.message : String(err) };
   }
 }
 
-function tryBindJfaSdf(root: TgpuRoot, sdfOutput: unknown) {
-  if (!sdfOutput) return null;
+function tryBindJfaSdf(
+  root: TgpuRoot,
+  sdfOutput: unknown,
+): { bind: ReturnType<TgpuRoot['createBindGroup']> | null; error: string } {
+  if (!sdfOutput) return { bind: null, error: 'jfa-sdf-output-missing' };
   try {
-    return root.createBindGroup(jfaSdfLayout, { jfaSdf: sdfOutput as never });
-  } catch {
-    return null;
+    return { bind: root.createBindGroup(jfaSdfLayout, { jfaSdf: sdfOutput as never }), error: '' };
+  } catch (err) {
+    return { bind: null, error: err instanceof Error ? err.message : String(err) };
   }
 }
 
@@ -1044,20 +1058,29 @@ export function createLightingPass(
         })
       : null;
 
-  let jfa = root ? tryCreateJfa(root) : null;
-  let jfaBind = root && jfa ? tryBindJfaSdf(root, jfa.sdfOutput) : null;
-  if (jfa && !jfaBind) jfa = null;
+  let jfaError = root ? '' : 'no-typegpu-root';
+  const created = root ? tryCreateJfa(root) : { exec: null, error: jfaError };
+  let jfa = created.exec;
+  if (!jfa && created.error) jfaError = `jfa-create: ${created.error}`;
+  const bound = root && jfa ? tryBindJfaSdf(root, jfa.sdfOutput) : { bind: null, error: jfa ? '' : jfaError };
+  let jfaBind = bound.bind;
+  if (jfa && !jfaBind) {
+    jfaError = `jfa-bind: ${bound.error}`;
+    jfa = null;
+  }
   // Cascades only exist when the JFA texture can be bound — no AABB-only GI.
   let cascades = root && jfa && jfaBind ? tryCreateCascades(root) : null;
   if (jfa && sceneBind) {
     try {
       jfa = jfa.with(sceneBind);
-    } catch {
+    } catch (err) {
+      jfaError = `jfa-with-scene: ${err instanceof Error ? err.message : String(err)}`;
       jfa = null;
       jfaBind = null;
       cascades = null;
     }
   } else if (jfa && !sceneBind) {
+    jfaError = 'jfa-no-scene-bind';
     jfa = null;
     jfaBind = null;
     cascades = null;
@@ -1085,21 +1108,23 @@ export function createLightingPass(
   const identity = root && jfa && jfaBind && sceneBind ? tryCreateIdentity(root) : null;
   const kind: LightingPass['kind'] = cascades ? 'cascades' : glow ? 'glow' : 'off';
   const jfaBound = !!(jfa && jfaBind && sceneBind);
+  if (jfaBound) jfaError = '';
 
   return {
     kind,
     jfaBound,
+    jfaError,
     async readIdentity() {
       if (!root || !jfa || !jfaBind || !sceneBind || !sceneCam || !sceneSolids || !sceneLights) {
-        return emptyJfaIdentityReport(kind === 'off' ? 'off' : kind, 'jfa-not-bound');
+        return emptyJfaIdentityReport(kind === 'off' ? 'off' : kind, jfaError || 'jfa-not-bound');
       }
       if (!identity) {
         return { lightingKind: kind, jfaBound: true, error: 'identity-compute-failed', samples: [] };
       }
       const samples: JfaIdentitySample[] = [];
-      const scenes: { name: 'wall' | 'empty'; solids: SolidRect[] }[] = [
+      const scenes: { name: 'wall' | 'open'; solids: SolidRect[] }[] = [
         { name: 'wall', solids: [IDENTITY_LEFT_WALL] },
-        { name: 'empty', solids: [] },
+        { name: 'open', solids: [IDENTITY_CORNER] },
       ];
       try {
         for (const scene of scenes) {

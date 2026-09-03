@@ -133,13 +133,8 @@ test('GPU JFA textureLoad signs match CPU Jump Flood (no 4 ms claim)', async ({ 
     }
     return fn();
   });
-  expect(['cascades', 'glow', 'off', 'none']).toContain(report.lightingKind);
-  if (!report.jfaBound) {
-    expect(report.lightingKind === 'cascades').toBe(false);
-    expect(report.error.length).toBeGreaterThan(0);
-    expect(report.samples).toHaveLength(0);
-    return;
-  }
+  expect(report.jfaBound, report.error || 'jfa-not-bound').toBe(true);
+  expect(report.lightingKind, report.error).toBe('cascades');
   expect(report.error, JSON.stringify(report)).toBe('');
   expect(report.samples.length).toBeGreaterThanOrEqual(6);
   for (const s of report.samples) {
@@ -156,7 +151,7 @@ test('GPU JFA textureLoad signs match CPU Jump Flood (no 4 ms claim)', async ({ 
       expect(s.gpuJfa, `${s.scene}/${s.name} outside`).toBeGreaterThan(0);
       expect(s.cpuJfa).toBeGreaterThan(0);
     }
-    if (s.scene === 'empty') {
+    if (s.scene === 'open') {
       expect(s.cpuInside).toBe(false);
       expect(s.gpuJfa).toBeGreaterThan(0);
     }

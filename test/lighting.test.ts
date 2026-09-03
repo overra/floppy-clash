@@ -11,6 +11,7 @@ import {
   classifyLiveSolidAt,
   emitterContribution,
   IDENTITY_CAM,
+  IDENTITY_CORNER,
   IDENTITY_LEFT_WALL,
   IDENTITY_PROBES,
   identityCpuAt,
@@ -184,6 +185,11 @@ describe('2D lighting', () => {
     expect(emptyMid.inside).toBe(false);
     expect(emptyMid.jfa).toBeGreaterThan(0);
     expect(emptyMid.cascade).toBeGreaterThan(0);
+    const openLeft = identityCpuAt([IDENTITY_CORNER], IDENTITY_PROBES[0]!.ux, IDENTITY_PROBES[0]!.uy);
+    const openMid = identityCpuAt([IDENTITY_CORNER], IDENTITY_PROBES[1]!.ux, IDENTITY_PROBES[1]!.uy);
+    expect(openLeft.inside).toBe(false);
+    expect(openMid.inside).toBe(false);
+    expect(openMid.jfa).toBeGreaterThan(0);
     const uv = identityUv(38, 72);
     expect(classifyLiveSolidAt([IDENTITY_LEFT_WALL], IDENTITY_CAM, 38, 72, 256, 144)).toBe(true);
     expect(uv.uvx).toBeCloseTo(38.5 / 256, 5);
@@ -198,6 +204,7 @@ describe('2D lighting', () => {
     const src = readFileSync(resolve(process.cwd(), 'src/render/gpu/lighting.ts'), 'utf8');
     expect(src).toContain('readIdentity');
     expect(src).toContain('jfaIdentityCompute');
+    expect(src).toMatch(/getColor:[\s\S]{0,80}'use gpu'/);
     const applyIdx = src.indexOf('apply(frame, lastGpuMs, enabled)');
     const identIdx = src.indexOf('async readIdentity');
     expect(identIdx).toBeGreaterThan(-1);

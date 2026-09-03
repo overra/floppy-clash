@@ -33,6 +33,7 @@ export type Renderer = {
   readFramebuffer(): Promise<FramebufferReadback>;
   lightingKind?: 'cascades' | 'glow' | 'off' | 'none';
   jfaBound?: boolean;
+  jfaError?: string;
   readJfaIdentity?: () => Promise<JfaIdentityReport>;
 };
 
@@ -55,6 +56,7 @@ export function createCanvasRenderer(canvas: HTMLCanvasElement): Renderer {
     decalUploads: 0,
     lightingKind: 'none',
     jfaBound: false,
+    jfaError: 'canvas-renderer',
     readJfaIdentity: async () => emptyJfaIdentityReport('none', 'canvas-renderer'),
     async readFramebuffer() {
       const w = Math.min(READBACK_W, canvas.width);

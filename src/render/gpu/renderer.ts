@@ -319,6 +319,7 @@ async function createGpuRenderer(
     decalUploads: 0,
     lightingKind: lighting?.kind ?? 'none',
     jfaBound: lighting?.jfaBound ?? false,
+    jfaError: lighting?.jfaError ?? (opts.lighting ? 'lighting-pass-not-created' : 'lighting-off'),
     readJfaIdentity: () =>
       lighting?.readIdentity() ??
       Promise.resolve({

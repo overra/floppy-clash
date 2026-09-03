@@ -36,5 +36,7 @@ claim a 4 ms GPU time.
 
 `readIdentity` (GPU e2e via `window.__floppy.readJfaIdentity`) runs JFA and
 `textureLoad`s the field without the budget gate. It compares signs with the
-CPU Jump Flood / classify stand-in. If JFA cannot be bound, the report is
-`jfaBound: false` — not a fake cascade pass.
+CPU Jump Flood / classify stand-in. `getColor` must be a `'use gpu'` DualFn
+or `createJumpFlood` never initialises. The identity compute bind group is
+group 0 so TypeGPU does not leave a hole. An all-outside field has no JFA
+seeds (NaN); the open scene uses a 1 m corner so probes stay outside.
