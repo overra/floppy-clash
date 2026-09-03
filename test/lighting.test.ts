@@ -1,15 +1,19 @@
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { createRadianceCascades, getCascadeDim } from '@typegpu/radiance-cascades';
 import { createJumpFlood } from '@typegpu/sdf';
 import { emptyFrame } from '../src/render/frame';
 import {
   boxSdf,
+  cascadeSdfFromJfa,
   cascadeSceneSdf,
   classifyLiveSolidAt,
   emitterContribution,
   jumpFloodSdf,
   lightingCameraFromFrame,
   lightingEnabled,
+  lightingViewBounds,
   lightingWorldFromUv,
   occludedEmitterContribution,
   resolveCascadeSdfWgsl,
@@ -121,15 +125,42 @@ describe('2D lighting', () => {
     expect(lightingCameraFromFrame(frame, 1280, 720).viewX).toBe(1280);
   });
 
-  it('resolves live-solid classify and cascade DualFns (no slab / disk)', () => {
+  it('resolves live-solid classify and JFA-sampling cascade DualFns (no slab / disk)', () => {
     const classify = resolveClassifyWgsl();
     expect(classify).toMatch(/classifyLiveSolidGpu|fn classifyLiveSolidGpu/);
     expect(classify).not.toMatch(/size\.x\s*\/\s*4/);
     expect(classify).not.toMatch(/size\.x \* 3/);
     const sdf = resolveCascadeSdfWgsl();
-    expect(sdf).toMatch(/cascadeSceneSdfGpu|fn cascadeSceneSdfGpu/);
-    // Old stand-in was `hypot(uv - 0.5) - 0.15`. Live path is box SDF of packed solids.
+    expect(sdf).toMatch(/cascadeJfaSdfGpu|fn cascadeJfaSdfGpu/);
+    expect(sdf).toMatch(/textureLoad/);
+    expect(sdf).toMatch(/jfaSdf/);
+    // Old stand-in was `hypot(uv - 0.5) - 0.15` or a live AABB walk in sdf:.
     expect(sdf).not.toMatch(/0\.15/);
-    expect(sdf).toMatch(/minX|solids/);
+    expect(sdf).not.toMatch(/cascadeSceneSdfGpu/);
+  });
+
+  it('cascade SDF samples the Jump Flood field, not a disk at uv 0.5', () => {
+    const cam = { x: 16, y: 9, zoom: 40, viewX: 1280, viewY: 720 };
+    const wall = { minX: 2, minY: 0, maxX: 6, maxY: 18 };
+    const field = jumpFloodSdf([wall], lightingViewBounds(cam), 64, 36);
+    const onWall = cascadeSdfFromJfa(field, [], 0.15, 0.5, cam);
+    const center = cascadeSdfFromJfa(field, [], 0.5, 0.5, cam);
+    const empty = jumpFloodSdf([], lightingViewBounds(cam), 32, 18);
+    const emptyCenter = cascadeSdfFromJfa(empty, [], 0.5, 0.5, cam);
+    expect(onWall).toBeLessThan(0);
+    expect(center).toBeGreaterThan(0);
+    expect(emptyCenter).toBeGreaterThan(center * 0.5);
+    const aabb = cascadeSceneSdf([wall], [], 0.15, 0.5, cam);
+    expect(Math.sign(onWall)).toBe(Math.sign(aabb));
+  });
+
+  it('does not run cascades unless this frame’s JFA texture exists', () => {
+    const src = readFileSync(resolve(process.cwd(), 'src/render/gpu/lighting.ts'), 'utf8');
+    expect(src).toContain('cascadeJfaSdfGpu');
+    expect(src).toContain('textureLoad');
+    expect(src).toContain('jfaReady');
+    expect(src).toMatch(/if \(jfaReady && cascades\)/);
+    expect(src).toMatch(/let cascades = root && jfa && jfaBind \? tryCreateCascades/);
+    expect(src).not.toMatch(/return cascadeSceneSdfGpu\(uv\)/);
   });
 });

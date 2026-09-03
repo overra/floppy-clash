@@ -17,7 +17,7 @@ Levels are JSON validated by zod (`src/sim/level/schema.ts`). The in-browser edi
 
 `solid`, `block.destructible`, `crate`, `spikes`, `lava`, `saw`, `platform.moving`, `platform.rotating`, `platform.disappearing`, `platform.collapsing`, `platform.momentum`, `chain`, `barrel.explosive`, `laser`, `conveyor`, `ice`, `bounce`, `spikeball`, `crusher`, `trigger.drop`.
 
-Optional props (`w`, `h`, `dir`, `path`, `speed`, `mode`, `style`, `period`, `onTicks`, …) are generated into the editor property panel from the zod object. Level-wide fields (`id`, `name`, `theme`, `killMargin`, `bounds`) sit above that panel. Extra tools place `startingWeapons` and `decor` (Appendix B); Delete removes the current selection (spawns stay at the schema minimum of 4).
+Optional props (`w`, `h`, `dir`, `path`, `speed`, `mode`, `style`, `period`, `onTicks`, …) are generated into the editor property panel from the zod object. `type` is a palette dropdown; `weapon` (trigger.drop) and starting-weapon rows are roster dropdowns; decor `kind` is `tree` / `vine` / `rope` / `trail`. Level-wide fields (`id`, `name`, `theme`, `killMargin`, `bounds`) sit above that panel. Extra tools place `startingWeapons` and `decor` (Appendix B); Delete removes the current selection (spawns stay at the schema minimum of 4).
 
 `spikeball.style` is `swing` (default hang joint), `roll` (free dynamic circle), or `drop` (falls from spawn height). `platform.disappearing` sets `armed=2` during the last 18 ticks of the solid phase (warning blink). A `chain` hangs a rideable **dynamic** platform from its last link on a revolute joint (`w`/`h`, default 2.8×0.4). Breaking the links drops the deck. `block.destructible` death spawns short-lived debris chunks.
 

@@ -2,10 +2,12 @@
  * Optional 2D lighting (M5 stretch).
  *
  * PLAN 4.11: `createJumpFlood` classifies **live layer-1 solids** (not a fixed
- * slab). Cascades evaluate the same live solids plus lava / muzzle / explosion
- * emitters — not a compiled disk SDF. CPU Jump Flood remains the automated
- * stand-in for occlusion tests. Real iGPU 4 ms / 500-group sign-off is
- * hardware-only and is not asserted here.
+ * slab) into an `rgba16float` SDF texture. Cascades **sample that texture**
+ * (`textureLoad`) and min with lava / muzzle / explosion cores — they do not
+ * re-walk live AABBs as a substitute for the JFA field. If JFA create/bind/run
+ * fails (SwiftShader, missing features), cascades are skipped and glow may
+ * still run. CPU Jump Flood remains the automated stand-in. The 4 ms iGPU
+ * budget is a settings gate on CPU `performance.now()`, not a claimed GPU time.
  */
 import { createJumpFlood } from '@typegpu/sdf';
 import { createRadianceCascades, getCascadeDim } from '@typegpu/radiance-cascades';
@@ -130,7 +132,7 @@ export function classifyLiveSolidAt(
   return sceneSolidSdf(solids, world.x, world.y) < 0;
 }
 
-/** UV-space scene SDF (solids + small emitter cores) — CPU stand-in for cascades. */
+/** UV-space AABB scene SDF — reference only. Live cascades sample the JFA texture. */
 export function cascadeSceneSdf(
   solids: SolidRect[],
   emitters: LightEmitter[],
@@ -147,6 +149,45 @@ export function cascadeSceneSdf(
   const ppm = Math.max(cam.zoom, 1);
   const span = Math.max(cam.viewX, cam.viewY, 1);
   return best * (ppm / span);
+}
+
+/** World AABB covered by the JFA / cascade UV mapping (`lightingWorldFromUv`). */
+export function lightingViewBounds(cam: LightingCamera): {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+} {
+  const ppm = Math.max(cam.zoom, 1);
+  const w = cam.viewX / ppm;
+  const h = cam.viewY / ppm;
+  return { x: cam.x - w * 0.5, y: cam.y - h * 0.5, w, h };
+}
+
+/**
+ * CPU stand-in for cascade `sdf:` — sample a Jump Flood field, then min
+ * emitter cores. Matches `cascadeJfaSdfGpu` (textureLoad + emitters), not
+ * a live AABB walk.
+ */
+export function cascadeSdfFromJfa(
+  field: JumpFloodField,
+  emitters: readonly LightEmitter[],
+  uvx: number,
+  uvy: number,
+  cam: LightingCamera,
+): number {
+  const world = lightingWorldFromUv(uvx, uvy, cam);
+  const worldSdf = sampleJumpFlood(field, world.x, world.y);
+  const ppm = Math.max(cam.zoom, 1);
+  const span = Math.max(cam.viewX, cam.viewY, 1);
+  const toUv = ppm / span;
+  let best = worldSdf * toUv;
+  for (const e of emitters) {
+    const er = Math.max(e.radius * 0.12, 0.08);
+    const ed = Math.hypot(world.x - e.x, world.y - e.y) - er;
+    best = Math.min(best, ed * toUv);
+  }
+  return best;
 }
 
 function pixelInside(solids: SolidRect[], wx: number, wy: number): boolean {
@@ -357,7 +398,7 @@ const GiBlit = d.struct({
   pad: d.vec2f,
 });
 
-/** Shared by JFA classify + cascade SDF/color. Group 1 so JFA/cascade group 0 stays free. */
+/** Shared by JFA classify + cascade color / emitter cores. Group 1 so JFA/cascade group 0 stays free. */
 export const giSceneLayout = tgpu
   .bindGroupLayout({
     camera: { uniform: GpuCamera },
@@ -365,6 +406,16 @@ export const giSceneLayout = tgpu
     lights: { uniform: GlowLights },
   })
   .$idx(1);
+
+/**
+ * Jump Flood `rgba16float` SDF. `unfilterable-float` + `textureLoad` so
+ * SwiftShader can bind the texture without `float32-filterable`.
+ */
+export const jfaSdfLayout = tgpu
+  .bindGroupLayout({
+    jfaSdf: { texture: d.texture2d(d.f32), sampleType: 'unfilterable-float' },
+  })
+  .$idx(2);
 
 export const glowLayout = tgpu
   .bindGroupLayout({
@@ -469,6 +520,49 @@ export const cascadeSceneSdfGpu = tgpu
     return best * (ppm / std.max(span, d.f32(1)));
   })
   .$name('cascadeSceneSdfGpu');
+
+/** Sample the JFA SDF texture; min lava / muzzle / explosion cores in the same UV units. */
+export const cascadeJfaSdfGpu = tgpu
+  .fn(
+    [d.vec2f],
+    d.f32,
+  )((uv) => {
+    'use gpu';
+    const cam = giSceneLayout.$.camera;
+    const lights = giSceneLayout.$.lights;
+    const sizeX = d.f32(GI_SDF_WIDTH);
+    const sizeY = d.f32(GI_SDF_HEIGHT);
+    let ix = d.i32(uv.x * sizeX);
+    let iy = d.i32(uv.y * sizeY);
+    if (ix < d.i32(0)) {
+      ix = d.i32(0);
+    }
+    if (iy < d.i32(0)) {
+      iy = d.i32(0);
+    }
+    if (ix > d.i32(GI_SDF_WIDTH - 1)) {
+      ix = d.i32(GI_SDF_WIDTH - 1);
+    }
+    if (iy > d.i32(GI_SDF_HEIGHT - 1)) {
+      iy = d.i32(GI_SDF_HEIGHT - 1);
+    }
+    const sample = std.textureLoad(jfaSdfLayout.$.jfaSdf, d.vec2i(ix, iy), 0);
+    let sdf = sample.x;
+    const world = lightingWorldFromUvGpu(uv, cam);
+    const ppm = std.max(cam.zoom, d.f32(1));
+    const span = std.max(std.max(cam.view.x, cam.view.y), d.f32(1));
+    const toUv = ppm / span;
+    for (const i of tgpu.unroll(std.range(MAX_GI_LIGHTS))) {
+      if (lights.count > d.u32(i)) {
+        const e = lights.items[i]!;
+        const er = std.max(e.radius * d.f32(0.12), d.f32(0.08));
+        const ed = std.length(d.vec2f(world.x - e.pos.x, world.y - e.pos.y)) - er;
+        sdf = std.min(sdf, ed * toUv);
+      }
+    }
+    return sdf;
+  })
+  .$name('cascadeJfaSdfGpu');
 
 export const cascadeSceneColorGpu = tgpu
   .fn(
@@ -597,7 +691,7 @@ export function resolveClassifyWgsl(): string {
 }
 
 export function resolveCascadeSdfWgsl(): string {
-  return tgpu.resolve([cascadeSceneSdfGpu, cascadeSceneColorGpu]);
+  return tgpu.resolve([cascadeJfaSdfGpu, cascadeSceneColorGpu]);
 }
 
 export function resolveCascadeBlitWgsl(): string {
@@ -700,7 +794,7 @@ function tryCreateGlow(root: TgpuRoot, format: GPUTextureFormat) {
 
 function tryCreateJfa(root: TgpuRoot) {
   try {
-    return createJumpFlood({
+    const exec = createJumpFlood({
       root,
       size: { width: GI_SDF_WIDTH, height: GI_SDF_HEIGHT },
       classify: (coord, size) => {
@@ -714,6 +808,17 @@ function tryCreateJfa(root: TgpuRoot) {
       },
       getColor: () => d.vec4f(1, 0.8, 0.4, 1),
     });
+    exec.initSync();
+    return exec;
+  } catch {
+    return null;
+  }
+}
+
+function tryBindJfaSdf(root: TgpuRoot, sdfOutput: unknown) {
+  if (!sdfOutput) return null;
+  try {
+    return root.createBindGroup(jfaSdfLayout, { jfaSdf: sdfOutput as never });
   } catch {
     return null;
   }
@@ -723,19 +828,21 @@ function tryCreateCascades(root: TgpuRoot) {
   try {
     const dim = getCascadeDim(GI_SDF_WIDTH, GI_SDF_HEIGHT);
     void dim;
-    return createRadianceCascades({
+    const exec = createRadianceCascades({
       root,
       size: { width: GI_SDF_WIDTH, height: GI_SDF_HEIGHT },
       sdfResolution: { width: GI_SDF_WIDTH, height: GI_SDF_HEIGHT },
       sdf: (uv) => {
         'use gpu';
-        return cascadeSceneSdfGpu(uv);
+        return cascadeJfaSdfGpu(uv);
       },
       color: (uv) => {
         'use gpu';
         return cascadeSceneColorGpu(uv);
       },
     });
+    exec.initSync();
+    return exec;
   } catch {
     return null;
   }
@@ -794,13 +901,22 @@ export function createLightingPass(
       : null;
 
   let jfa = root ? tryCreateJfa(root) : null;
-  let cascades = root ? tryCreateCascades(root) : null;
+  let jfaBind = root && jfa ? tryBindJfaSdf(root, jfa.sdfOutput) : null;
+  if (jfa && !jfaBind) jfa = null;
+  // Cascades only exist when the JFA texture can be bound — no AABB-only GI.
+  let cascades = root && jfa && jfaBind ? tryCreateCascades(root) : null;
   if (jfa && sceneBind) {
     try {
       jfa = jfa.with(sceneBind);
     } catch {
       jfa = null;
+      jfaBind = null;
+      cascades = null;
     }
+  } else if (jfa && !sceneBind) {
+    jfa = null;
+    jfaBind = null;
+    cascades = null;
   }
   if (cascades && sceneBind) {
     try {
@@ -808,6 +924,15 @@ export function createLightingPass(
     } catch {
       cascades = null;
     }
+  }
+  if (cascades && jfaBind) {
+    try {
+      cascades = cascades.with(jfaBind);
+    } catch {
+      cascades = null;
+    }
+  } else if (cascades) {
+    cascades = null;
   }
   const blit =
     root && cascades
@@ -828,17 +953,24 @@ export function createLightingPass(
         sceneSolids.write(solidsPayload(solids));
         sceneLights.write(lightsPayload(emitters));
       }
-      try {
-        jfa?.run();
-      } catch {
-        /* JFA may reject on SwiftShader — cascades / glow still apply */
+      let jfaReady = false;
+      if (jfa) {
+        try {
+          jfa.run();
+          jfaReady = true;
+        } catch {
+          // Empty / stale JFA must not feed cascades this frame.
+          jfaReady = false;
+        }
       }
       let cascaded = false;
-      try {
-        cascades?.run();
-        cascaded = !!cascades;
-      } catch {
-        cascaded = false;
+      if (jfaReady && cascades) {
+        try {
+          cascades.run();
+          cascaded = true;
+        } catch {
+          cascaded = false;
+        }
       }
       if (cascaded && blit) {
         try {

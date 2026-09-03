@@ -1,5 +1,7 @@
 import { THEMES, type ThemeId } from '../sim/level/themes';
 import { LevelObjectSchema, type LevelDef, type LevelObject } from '../sim/level/schema';
+import { WEAPON_DEFS, weaponDisplayName } from '../sim/weapons/defs';
+import { PALETTE } from './editor';
 
 export type FieldKind = 'number' | 'string' | 'enum' | 'json';
 
@@ -16,6 +18,36 @@ const ENUMS: Record<string, string[]> = {
 };
 
 const THEME_IDS = Object.keys(THEMES) as ThemeId[];
+
+/** Level-decor kinds the renderer understands (bezier vine/rope/trail, else capsule). */
+export const DECOR_KINDS = ['tree', 'vine', 'rope', 'trail'] as const;
+
+export function weaponRosterIds(): string[] {
+  return WEAPON_DEFS.map((d) => d.id);
+}
+
+export function fieldOptionLabel(field: SchemaField, opt: string): string {
+  if (field.key === 'weapon') return weaponDisplayName(opt);
+  return opt;
+}
+
+export function startingWeaponFields(): SchemaField[] {
+  return [{ key: 'weapon', kind: 'enum', options: weaponRosterIds() }];
+}
+
+export function decorKindFields(): SchemaField[] {
+  return [{ key: 'kind', kind: 'enum', options: [...DECOR_KINDS] }];
+}
+
+export function applyStartingWeaponField(level: LevelDef, index: number, weapon: string): void {
+  const sw = level.startingWeapons?.[index];
+  if (sw && weapon) sw.weapon = weapon;
+}
+
+export function applyDecorKindField(level: LevelDef, index: number, kind: string): void {
+  const dec = level.decor?.[index];
+  if (dec && kind) dec.kind = kind;
+}
 
 /** Level-wide fields (PLAN 4.15 / Appendix B) — not hazard props. */
 export function levelSchemaFields(): SchemaField[] {
@@ -55,7 +87,8 @@ export function objectSchemaFields(): SchemaField[] {
   return Object.keys(shape).map((key) => {
     if (key === 'path') return { key, kind: 'json' as const };
     if (ENUMS[key]) return { key, kind: 'enum' as const, options: ENUMS[key] };
-    if (key === 'type' || key === 'weapon') return { key, kind: 'string' as const };
+    if (key === 'type') return { key, kind: 'enum' as const, options: [...PALETTE] };
+    if (key === 'weapon') return { key, kind: 'enum' as const, options: weaponRosterIds() };
     return { key, kind: 'number' as const };
   });
 }

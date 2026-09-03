@@ -203,13 +203,15 @@ describe('TypeGPU glow pass', () => {
 });
 
 describe('TypeGPU GI classify / cascades (PLAN 4.11)', () => {
-  it('resolves live-solid classify and scene-geometry cascade DualFns', () => {
+  it('resolves live-solid classify and JFA-texture cascade DualFns', () => {
     const classify = resolveClassifyWgsl();
     expect(classify).toMatch(/classifyLiveSolidGpu|fn classifyLiveSolidGpu/);
     expect(classify).not.toMatch(/size\.x\s*\/\s*4/);
     const sdf = resolveCascadeSdfWgsl();
-    expect(sdf).toMatch(/cascadeSceneSdfGpu|fn cascadeSceneSdfGpu/);
+    expect(sdf).toMatch(/cascadeJfaSdfGpu|fn cascadeJfaSdfGpu/);
+    expect(sdf).toMatch(/textureLoad/);
     expect(sdf).not.toMatch(/hypot\(uv\.x - 0\.5/);
+    expect(sdf).not.toMatch(/cascadeSceneSdfGpu/);
     const blit = resolveCascadeBlitWgsl();
     expect(blit).toMatch(/@vertex/);
     expect(blit).toMatch(/@fragment/);

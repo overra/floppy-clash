@@ -23,7 +23,20 @@ import {
   shareHash,
   undo,
 } from '../src/editor/editor';
-import { applyLevelField, levelSchemaFields } from '../src/editor/properties';
+import {
+  applyDecorKindField,
+  applyLevelField,
+  applyStartingWeaponField,
+  decorKindFields,
+  DECOR_KINDS,
+  fieldOptionLabel,
+  levelSchemaFields,
+  objectSchemaFields,
+  startingWeaponFields,
+  weaponRosterIds,
+} from '../src/editor/properties';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { joinStartIndex } from '../src/input/remap';
 import { parseLevel } from '../src/sim/level/schema';
 import { hold, makeSim } from './helpers';
@@ -166,11 +179,32 @@ describe('M7 editor', () => {
     expect(
       levelSchemaFields().some((f) => f.key === 'theme' && f.options?.includes('western')),
     ).toBe(true);
+    applyStartingWeaponField(state.level, state.selectedStart, 'revolver');
+    expect(state.level.startingWeapons?.[state.selectedStart]?.weapon).toBe('revolver');
+    applyDecorKindField(state.level, state.selectedDecor, 'vine');
+    expect(state.level.decor?.[state.selectedDecor]?.kind).toBe('vine');
+    expect(weaponRosterIds()).toContain('pistol');
+    expect(weaponRosterIds()).toContain('revolver');
+    expect(startingWeaponFields()[0]?.kind).toBe('enum');
+    expect(startingWeaponFields()[0]?.options).toEqual(weaponRosterIds());
+    expect(decorKindFields()[0]?.kind).toBe('enum');
+    expect(DECOR_KINDS).toContain('vine');
+    const typeField = objectSchemaFields().find((f) => f.key === 'type');
+    const weaponField = objectSchemaFields().find((f) => f.key === 'weapon');
+    expect(typeField?.kind).toBe('enum');
+    expect(typeField?.options).toContain('laser');
+    expect(weaponField?.kind).toBe('enum');
+    expect(weaponField?.options).toContain('pistol');
+    expect(fieldOptionLabel(weaponField!, 'god-pistol')).toBe('Oracle Pistol');
+    const viewSrc = readFileSync(resolve(process.cwd(), 'src/editor/view.ts'), 'utf8');
+    expect(viewSrc).toContain('startingWeaponFields');
+    expect(viewSrc).toContain('decorKindFields');
+    expect(viewSrc).toContain('paintEnumRow');
     const json = exportLevel(state);
     const copy = createEditorState();
     importLevel(copy, json);
-    expect(copy.level.startingWeapons?.some((s) => s.weapon === 'pistol')).toBe(true);
-    expect(copy.level.decor?.some((d) => d.kind === 'tree')).toBe(true);
+    expect(copy.level.startingWeapons?.some((s) => s.weapon === 'revolver')).toBe(true);
+    expect(copy.level.decor?.some((d) => d.kind === 'vine')).toBe(true);
     expect(copy.level.theme).toBe('western');
     const sim = makeSim({
       level: parseLevel(JSON.parse(json)),

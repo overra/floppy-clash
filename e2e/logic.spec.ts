@@ -1012,6 +1012,27 @@ test('editor Rotate writes angle into the draft JSON', async ({ page }) => {
   await expect(page.locator('#edjson')).not.toContainText('"angle":');
 });
 
+test('editor starting-weapon and decor use roster/kind dropdowns', async ({ page }) => {
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Level Editor' }).click();
+  await expect(page.locator('text=Level Editor')).toBeVisible();
+  await page.getByRole('button', { name: 'starting-weapon' }).click();
+  await page.getByRole('button', { name: 'Add at 12,6' }).click();
+  const weaponSel = page.locator('#edfields select[name="weapon"]');
+  await expect(weaponSel).toBeVisible();
+  await expect(weaponSel).toContainText('Pistol');
+  await expect(weaponSel).toContainText('Revolver');
+  await weaponSel.selectOption('revolver');
+  await expect(page.locator('#edjson')).toContainText('"weapon": "revolver"');
+  await page.getByRole('button', { name: 'decor' }).click();
+  await page.getByRole('button', { name: 'Add at 12,6' }).click();
+  const kindSel = page.locator('#edfields select[name="kind"]');
+  await expect(kindSel).toBeVisible();
+  await expect(kindSel).toContainText('vine');
+  await kindSel.selectOption('vine');
+  await expect(page.locator('#edjson')).toContainText('"kind": "vine"');
+});
+
 test('editor property panel edits laser.reach into the draft JSON', async ({ page }) => {
   await page.goto('/');
   await page.getByRole('button', { name: 'Level Editor' }).click();

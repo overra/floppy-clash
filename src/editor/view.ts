@@ -27,12 +27,18 @@ import {
   type EditorState,
 } from './editor';
 import {
+  applyDecorKindField,
   applyField,
   applyLevelField,
+  applyStartingWeaponField,
+  decorKindFields,
+  fieldOptionLabel,
   fieldValue,
   levelFieldValue,
   levelSchemaFields,
   objectSchemaFields,
+  startingWeaponFields,
+  type SchemaField,
 } from './properties';
 import type { LevelDef } from '../sim/level/schema';
 import { joinStartIndex, loadMaps } from '../input/remap';
@@ -42,6 +48,34 @@ export type EditorViewFns = {
   playtest: (level: LevelDef) => void;
   back: () => void;
 };
+
+function fillSelect(sel: HTMLSelectElement, field: SchemaField, current: string): void {
+  const options = field.options ?? [];
+  const list = current && !options.includes(current) ? [current, ...options] : options;
+  for (const opt of list) {
+    const o = document.createElement('option');
+    o.value = opt;
+    o.textContent = fieldOptionLabel(field, opt);
+    if (current === opt) o.selected = true;
+    sel.append(o);
+  }
+}
+
+function paintEnumRow(
+  field: SchemaField,
+  current: string,
+  onChange: (value: string) => void,
+): HTMLLabelElement {
+  const row = document.createElement('label');
+  row.style.cssText = 'display:block;font-size:12px;margin:4px 0';
+  row.textContent = `${field.key} `;
+  const sel = document.createElement('select');
+  sel.name = field.key;
+  fillSelect(sel, field, current);
+  sel.onchange = () => onChange(sel.value);
+  row.append(sel);
+  return row;
+}
 
 export function mountEditor(root: HTMLElement, state: EditorState, fns: EditorViewFns): void {
   root.innerHTML = '';
@@ -345,32 +379,26 @@ export function mountEditor(root: HTMLElement, state: EditorState, fns: EditorVi
 
     if (state.tool === 'starting-weapon') {
       const sw = state.level.startingWeapons?.[state.selectedStart];
-      const row = document.createElement('label');
-      row.style.cssText = 'display:block;font-size:12px;margin:4px 0';
-      row.textContent = 'weapon ';
-      const input = document.createElement('input');
-      input.value = sw?.weapon ?? '';
-      input.onchange = () => {
-        if (sw && input.value) sw.weapon = input.value;
-        draw();
-      };
-      row.append(input);
-      fields.append(row);
+      for (const field of startingWeaponFields()) {
+        fields.append(
+          paintEnumRow(field, sw?.weapon ?? '', (value) => {
+            applyStartingWeaponField(state.level, state.selectedStart, value);
+            draw();
+          }),
+        );
+      }
       return;
     }
     if (state.tool === 'decor') {
       const dec = state.level.decor?.[state.selectedDecor];
-      const row = document.createElement('label');
-      row.style.cssText = 'display:block;font-size:12px;margin:4px 0';
-      row.textContent = 'kind ';
-      const input = document.createElement('input');
-      input.value = dec?.kind ?? '';
-      input.onchange = () => {
-        if (dec && input.value) dec.kind = input.value;
-        draw();
-      };
-      row.append(input);
-      fields.append(row);
+      for (const field of decorKindFields()) {
+        fields.append(
+          paintEnumRow(field, dec?.kind ?? '', (value) => {
+            applyDecorKindField(state.level, state.selectedDecor, value);
+            draw();
+          }),
+        );
+      }
       return;
     }
 
@@ -390,13 +418,7 @@ export function mountEditor(root: HTMLElement, state: EditorState, fns: EditorVi
         const sel = document.createElement('select');
         sel.name = field.key;
         sel.dataset.field = field.key;
-        for (const opt of field.options) {
-          const o = document.createElement('option');
-          o.value = opt;
-          o.textContent = opt;
-          if (fieldValue(obj, field.key) === opt) o.selected = true;
-          sel.append(o);
-        }
+        fillSelect(sel, field, fieldValue(obj, field.key));
         sel.onchange = () => {
           applyField(obj, field.key, sel.value);
           draw();
