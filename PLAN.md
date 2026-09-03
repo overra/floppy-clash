@@ -27,12 +27,15 @@
 - **What we are building**: a browser clone of Landfall's *Stick Fight: The Game* (2017) — a 2–4 player
   physics brawler. Stick figures punch, block, wall-jump, grab weapons that fall from the sky, and try to
   be the last one standing on small, deadly, ever-changing levels. Rounds are short; matches are endless.
-- **Stack**: TypeScript + Vite, Canvas 2D renderer, **Planck.js** (a Box2D port — the same engine family
-  Unity 2D, and therefore the original, is built on), Web Audio synthesized SFX, plain DOM menus,
-  Vitest + Playwright. **No binary assets**: stick figures, levels, and sounds are all procedural.
-- **Core architectural rule**: a DOM-free `sim/` package runs identically in the browser and in Node
-  (headless tests, bots, and later an authoritative server). `render/` only reads from it. Every player
-  — keyboard, gamepad, remote peer, or bot — is driven through one `PlayerInput` struct per tick.
+- **Stack**: TypeScript + Vite; **Koota** ECS for all game state; **Planck.js** (a Box2D port — the same
+  engine family Unity 2D, and therefore the original, is built on) for physics; **TypeGPU** (WebGPU) with
+  `@typegpu/sdf` for a signed-distance-field renderer, plus a small Canvas 2D fallback/debug renderer;
+  Web Audio synthesized SFX; plain DOM menus; Vitest + Playwright. **No binary assets**: stick figures,
+  levels, and sounds are all procedural — every visible shape is an SDF.
+- **Core architectural rule**: a DOM-free `sim/` package (a Koota world + systems) runs identically in the
+  browser and in Node (headless tests, bots, and later an authoritative server). `render/` only reads
+  from it. Every player — keyboard, gamepad, remote peer, or bot — is driven through one `PlayerInput`
+  struct per tick.
 - **Order of work** (each milestone is playable on its own):
   scaffold → movement feel → local versus with fists → weapons → hazards & levels → feel/polish →
   online → full arsenal → level editor → bots & release.
@@ -47,7 +50,8 @@
    instant-death hazards, and 20–60 second rounds that end in chaos.
 2. Couch multiplayer first (1 keyboard/mouse + up to 3 gamepads), online multiplayer second.
 3. Data-driven content: weapons and levels are tables/JSON so that adding content never touches engine code.
-4. Zero-install: runs from a static URL in any modern desktop browser at 60 fps on integrated graphics.
+4. Zero-install: runs from a static URL at 60 fps on integrated graphics in current desktop browsers
+   with WebGPU; stays playable (plain look) through the Canvas 2D fallback where WebGPU is missing.
 5. Agent/CI friendly: text-only assets, headless simulation, deterministic tests, one-command checks.
 
 ### Non-goals (v1)
@@ -55,13 +59,15 @@
 - Steam features (Workshop, lobbies, achievements), consoles, native builds.
 - Mobile/touch controls (the input model should not preclude them, but they are not designed for).
 - Pixel-exact recreation of the original's levels, art, or audio (see [Legal / IP](#9-legal--ip)).
-- Rollback/lockstep netcode. Online play is host-authoritative with interpolation (section 4.12).
+- Rollback/lockstep netcode. Online play is host-authoritative with interpolation (section 4.13).
 
 ### Principles
 
 - **Feel over features.** Movement and hit reactions get tuned before more weapons are added.
 - **Playable at the end of every milestone.** No milestone leaves the game unlaunchable.
 - **Simulation is a library.** No `window`, `document`, or timers inside `src/sim`.
+- **Data in traits, behavior in systems.** Game state is Koota traits; systems are plain functions run in
+  a fixed order each tick. No gameplay logic in classes that own state.
 - **Everything random goes through the seeded sim RNG** so a seed + inputs reproduces a round.
 - **Tunables live in one place** (`src/sim/tuning.ts`) and are editable live from the debug panel.
 
@@ -156,6 +162,7 @@ decals that persist for the round, small screen shakes, a short slow-mo on the w
 | Hazards | spikes, lava, saws, lasers, platforms, chains, crates, barrels, conveyors, ice, crushers, disappearing | same catalog | M4 |
 | Levels | ≈120 across 10 themes | 30 built-in across 6 themes at M4, 60+ by release | M4 / M9 |
 | Camera | dynamic framing, shake | same | M1 / M5 |
+| Look | flat colors, thick-lined stick figures, blood decals | SDF-rendered figures with smooth joints, outlines/glow, persistent decal texture; optional 2D lighting | M0 / M5 |
 | Audio | SFX + music | synthesized SFX, optional music | M5 |
 | Settings | HP, weapon toggles, level toggles/order, win counter | same + input remapping, accessibility | M5 |
 | Level editor | in-game + Workshop | in-browser editor, JSON import/export, share by URL | M8 |
@@ -170,18 +177,44 @@ decals that persist for the round, small screen shakes, a short slow-mo on the w
 
 ### 4.1 Stack decision
 
+**Platform and physics**
+
 | Option | Pros | Cons | Verdict |
 | --- | --- | --- | --- |
-| **TypeScript + Vite + Canvas 2D + Planck.js** | Runs anywhere from a URL; no asset pipeline; sim runs headless in Node; Box2D-quality joints/raycasts/CCD; tiny bundle; easy CI | Must build our own scene/camera/particles (small for this art style); determinism only within one JS engine | **Chosen** |
-| Phaser 3 (+ Matter.js) | Batteries included (input, scenes, tweens) | Matter's constraint solver is soft and jittery for ragdolls; fighting the framework once we bring our own physics | Rejected |
-| Rapier 2D (WASM) | Very fast, cross-platform deterministic | Async WASM init, larger bundle, less mature JS docs; determinism only matters for lockstep, which we are not doing | Fallback if we ever need lockstep |
+| **TypeScript + Vite + Planck.js** | Runs from a URL; no asset pipeline; sim runs headless in Node; Box2D-quality joints/raycasts/CCD; small bundle; easy CI | Determinism only within one JS engine | **Chosen** |
+| Phaser 3 (+ Matter.js) | Batteries included (input, scenes, tweens) | Matter's constraint solver is soft and jittery for ragdolls; fighting the framework once we bring our own physics and renderer | Rejected |
+| Rapier 2D (WASM) | Very fast, cross-platform deterministic | Async WASM init, larger bundle; determinism only matters for lockstep, which we are not doing | Fallback if we ever need lockstep |
 | Godot 4 | Great 2D physics, free, text scenes | Harder to test headless in this environment; export pipeline; not URL-shareable without extra work | Rejected for v1 |
 | Unity | Closest to original | Binary assets and scenes, proprietary, unusable in headless agent/CI workflows | Rejected |
 
+**Entity model**
+
+| Option | Pros | Cons | Verdict |
+| --- | --- | --- | --- |
+| **Koota** (pmndrs) | SoA trait stores; cached queries; tag traits; relations (`HeldBy`, `OwnedBy`, `PartOf`); `Added`/`Removed`/`Changed` modifiers that drive render-object lifecycle and network deltas; framework-agnostic core runs in Node | Pre-1.0 (0.6.x), README-level docs; iteration-order determinism must be verified; stores are plain arrays (pack to typed arrays for GPU upload) | **Chosen** |
+| Plain classes + system functions | Zero dependencies, obvious | Hand-rolled queries, change tracking and serialization; every new entity type touches render and net code | Rejected |
+| bitECS / miniplex | Fast (bitECS) or ergonomic (miniplex) | bitECS is numeric-only and awkward for object references; miniplex lacks relations and change tracking | Rejected |
+
+**Renderer**
+
+| Option | Pros | Cons | Verdict |
+| --- | --- | --- | --- |
+| **TypeGPU + `@typegpu/sdf` (WebGPU)** | Every shape in this game is a union of SDF primitives (disks, capsules, rounded boxes): resolution-independent anti-aliased lines, smooth-union joints, cheap glow/outline/soft shadow, thousands of particles for free; shaders are TypeScript (`'use gpu'`) with type-checked buffers; SDF functions are also callable on the CPU (unit-testable); `@typegpu/noise` for lava, `@typegpu/radiance-cascades` for optional 2D lighting | WebGPU gaps (Linux Firefox, macOS before Tahoe); pre-1.0 with breaking changes between minors (0.12 removed the old pipeline builder; encoders still under `~unstable`); headless CI needs SwiftShader flags and screenshots need a headed Xvfb run; harder to debug than Canvas | **Chosen, gated by the M0 spike** |
+| Canvas 2D | Trivial, runs everywhere, easy to debug | Line-joint artifacts at thick widths, no cheap glow/lighting, particles and decals get CPU-bound | **Kept as fallback + debug renderer** |
+| PixiJS / WebGL2 sprites | Mature, fast batching | Sprite-oriented; SDF look would need custom shaders anyway | Rejected |
+
+The renderer sits behind one interface (`Renderer.render(frame: RenderFrame)`), where `RenderFrame` is a
+plain description of shapes for this frame. The SDF renderer and the Canvas renderer both consume it; the
+sim never knows which is active. WebGPU availability is probed at boot (`navigator.gpu?.requestAdapter()`
+can return `null` even where `navigator.gpu` exists) and the fallback is chosen with a visible notice.
+
 Supporting libraries (latest stable at scaffold time; versions pinned in `package.json`, not here):
-`planck`, `zod` (level/weapon schema validation), `tweakpane` (debug tuning panel), `zzfx`-style
-synth (or hand-written Web Audio), `vitest`, `@playwright/test`, `eslint` + `typescript-eslint`,
-`prettier`. Menus are plain DOM/TS; adopt Preact only if the UI grows beyond a few screens.
+`koota`, `planck`, `typegpu`, `@typegpu/sdf`, `@typegpu/noise`, `unplugin-typegpu` (Vite plugin that
+compiles `'use gpu'` functions), optional `@typegpu/radiance-cascades`, `zod` (level/weapon schema
+validation), `tweakpane` (debug tuning panel), `zzfx`-style synth (or hand-written Web Audio), `vitest`,
+`@playwright/test`, `eslint` + `typescript-eslint`, `prettier`. Menus are plain DOM/TS; adopt Preact only
+if the UI grows beyond a few screens. TypeGPU and Koota are pinned to exact versions and upgraded
+deliberately with a changelog read; the `render/gpu/` adapter is the only place that touches TypeGPU APIs.
 
 ### 4.2 Units, coordinates, time
 
@@ -197,26 +230,34 @@ synth (or hand-written Web Audio), `vitest`, `@playwright/test`, `eslint` + `typ
 ```text
 .
 ├── index.html
-├── package.json, vite.config.ts, tsconfig.json, eslint.config.js, .prettierrc
+├── package.json, vite.config.ts (with unplugin-typegpu), tsconfig.json, eslint.config.js, .prettierrc
 ├── PLAN.md                    # this document
 ├── docs/                      # deep dives added as milestones land (netcode, level schema, ADRs)
 ├── public/                    # favicon, PWA manifest (no game assets)
 ├── src/
-│   ├── main.ts                # bootstrap: canvas, loop, UI, input → Game
-│   ├── core/                  # fixed-step loop, seeded RNG, math/vec, events, id allocator
+│   ├── main.ts                # bootstrap: renderer probe, loop, UI, input → Game
+│   ├── core/                  # fixed-step loop, seeded RNG, math/vec, id allocator
 │   ├── sim/                   # DOM-free simulation (browser + Node)
-│   │   ├── world.ts           # World: owns planck world, entities, rules; step(inputs)
+│   │   ├── world.ts           # createSimWorld(): Koota world + planck world; step(inputs) runs systems in order
+│   │   ├── traits.ts          # every trait and relation (section 4.5)
+│   │   ├── systems/           # one file per system, pure functions (world) => void
 │   │   ├── tuning.ts          # every gameplay constant (Appendix A)
 │   │   ├── input.ts           # PlayerInput type + helpers
-│   │   ├── physics/           # collision categories, contact router, raycast helpers
-│   │   ├── player/            # controller, combat (punch/block), health, ragdoll
-│   │   ├── weapons/           # defs table, Weapon entity, firing, projectiles, explosions
+│   │   ├── physics/           # collision categories, contact router, raycast helpers, body↔entity map
+│   │   ├── player/            # controller, combat (punch/block), health, ragdoll construction
+│   │   ├── weapons/           # defs table, weapon systems, projectiles, explosions
 │   │   ├── hazards/           # one module per hazard type (Appendix D)
-│   │   ├── level/             # zod schema, loader (JSON → bodies), themes
+│   │   ├── level/             # zod schema, loader (JSON → entities + bodies), themes
 │   │   ├── rules/             # round/match state machine, spawner, scoring
 │   │   ├── ai/                # (M9) bots, snakes (M7)
-│   │   └── snapshot.ts        # serialize/restore for net + late join
-│   ├── render/                # Canvas 2D renderer, camera, stick-figure animation, particles, decals, debug draw
+│   │   └── snapshot.ts        # serialize/restore traits for net + late join
+│   ├── render/
+│   │   ├── frame.ts           # RenderFrame: plain shape lists built from sim traits (+ interpolation)
+│   │   ├── figure.ts          # stick-figure pose → SDF primitives (procedural animation, secondary motion)
+│   │   ├── camera.ts          # framing, zoom, shake
+│   │   ├── fx/                # particles, decals, slow-mo/shake state (render-side Koota world)
+│   │   ├── gpu/               # TypeGPU renderer: shaders ('use gpu'), buffers, passes, post FX
+│   │   └── canvas/            # Canvas 2D fallback + debug draw (wireframes, hit zones, rays)
 │   ├── input/                 # keyboard/mouse/gamepad → PlayerInput; remapping; device→player assignment
 │   ├── audio/                 # synth SFX, mixer, music (optional)
 │   ├── ui/                    # DOM: main menu, join screen, settings, pause, scoreboard, lobby
@@ -231,21 +272,76 @@ synth (or hand-written Web Audio), `vitest`, `@playwright/test`, `eslint` + `typ
 ### 4.4 Game loop and data flow
 
 ```text
-input devices ─┐                          ┌─ render/ (interpolated draw, particles, HUD)
-gamepads ──────┼─▶ PlayerInput[4] ─▶ sim.step() ─▶ SimEvents ─┼─ audio/ (play SFX for events)
-network peers ─┤        ▲                          └─ net/ (host broadcasts snapshots)
+input devices ─┐                                   ┌─ render/ (RenderFrame → GPU SDF or Canvas)
+gamepads ──────┼─▶ PlayerInput[4] ─▶ sim.step() ──▶ SimEvents ─┼─ audio/ (play SFX for events)
+network peers ─┤        ▲          (Koota systems)              └─ net/ (host broadcasts snapshots)
 bots ──────────┘        └── same struct for everyone
 ```
 
 - `PlayerInput` (per player, per tick): `moveX ∈ [-1,1]`, `jump`, `down`, `attack`, `block`, `throw`
   (booleans, edge-detected inside the sim), `aimX/aimY` (unit vector in world space).
-- `sim.step(inputs)` advances exactly one tick and returns a list of `SimEvents`
-  (hit, kill, shot, explosion, pickup, round-phase-change …). Render/audio/net consume events; they
-  never reach into physics.
-- The renderer keeps the previous tick's transforms to interpolate. Cosmetic state (particles, limb
-  secondary motion, decals) lives entirely on the render side and is never replicated.
+- `sim.step(inputs)` advances exactly one tick by running the system list in a fixed order (section 4.5)
+  and returns the `SimEvents` emitted during the tick (hit, kill, shot, explosion, pickup,
+  round-phase-change …). Render/audio/net consume events; they never reach into physics.
+- The renderer builds a `RenderFrame` from sim traits (`Transform` + `PrevTransform` interpolated by the
+  accumulator alpha) plus its own cosmetic state. Cosmetic state (particles, limb secondary motion,
+  decals, shake) lives in a separate render-side Koota world keyed by sim entity id and is never
+  replicated.
 
-### 4.5 Physics design
+### 4.5 Entity model (Koota ECS)
+
+All sim state is a Koota world. Entities are players, weapons, projectiles, ragdoll parts, hazards, level
+solids, and a few singletons (world traits for the round/match state and the RNG). Systems are plain
+functions `(world: World) => void`; `sim.step` calls them in this fixed order every tick:
+
+```text
+applyInputs → controller → combat (punch/block) → weapons (fire/throw/pickup) → projectiles (sweeps)
+→ hazards (kinematics, sensors) → physics.step → syncTransforms (PhysBody → Transform, keep PrevTransform)
+→ damage/death (Health ≤ 0 → ragdoll) → rules (round/match) → spawner → cleanup (Removed → destroy bodies)
+→ collect events
+```
+
+**Traits** (representative, not exhaustive — `src/sim/traits.ts` is the source of truth):
+
+| Trait | Data | Notes |
+| --- | --- | --- |
+| `Transform`, `PrevTransform` | `x, y, angle` | SoA; written only by `syncTransforms`; read by render and net |
+| `PhysBody` | `{ body: planck.Body }` | Callback trait (object store); the only place physics handles live |
+| `NetId` | `id: u16` | Explicit, never recycled within a round; entity ids are not sent over the wire |
+| `Player` | `slot, color, inputIndex` | Tag-like identity |
+| `Controller` | `grounded, wallDir, coyote, jumpBuffer, lockTicks, ducking, facing` | Section 4.7 |
+| `Aim` | `x, y` | Unit vector |
+| `Health` | `hp, maxHp` | Section 4.8 |
+| `Combat` | `punchCooldown, blockMeter, blockStartTick, blocking` | Section 4.7 |
+| `Weapon` | `defId, ammo, pickupCooldown, thrown` | Section 4.9 |
+| `Projectile` | `kind, damage, speed, bounces, fuse` | Body-less bullets carry `x, y, vx, vy` here |
+| `Hazard*` | per hazard type | e.g. `MovingPlatform { pathIndex, t }`, `Lava { surfaceY, rate }` |
+| `RagdollPart` | `part` | Plus `PartOf(ragdollRoot)` relation |
+| `Lifetime` | `ticksLeft` | Generic despawn |
+| `Dead`, `Loose`, `Held`, `Static`, `Kinematic` | — | Tag traits used as query filters |
+
+**Relations**: `HeldBy(player)` on a weapon (exclusive), `OwnedBy(player)` on projectiles and thrown
+weapons (for kill credit and owner-collision grace), `PartOf(root)` for ragdoll parts and chain links
+(with `autoDestroy: 'orphan'` so destroying the root destroys the parts), `StandingOn(entity)` for
+platform carry.
+
+**Why this matters beyond tidiness**
+
+- Render-object lifecycle: `Added(PhysBody)` / `Removed(PhysBody)` queries create and destroy render-side
+  state without the sim knowing the renderer exists.
+- Networking: snapshots iterate SoA stores directly (`useStores`), and `Changed(Transform)` gives delta
+  compression for free; `Added`/`Removed` on `NetId` become spawn/despawn events (section 4.13).
+- Testing: a headless test is `createSimWorld({ level, seed })`, feed inputs, then query traits.
+
+**Rules of use**
+
+- Physics handles (`PhysBody`) never leave `sim/physics`; other systems read `Transform`/`Controller`.
+- No per-entity closures in hot systems: define the `updateEach` handler once at module scope.
+- Use `createQuery` once per system and reuse it (the README's recommended pattern).
+- Iteration order must be deterministic for a fixed operation sequence; the golden determinism test in
+  M0 pins this, and any Koota upgrade must keep it green.
+
+### 4.6 Physics design
 
 **Collision categories** (bit flags) and the intended matrix:
 
@@ -281,7 +377,7 @@ Upgrade path if playtests say alive characters feel too stiff: attach physics ar
 the capsule via motor-driven revolute joints, non-colliding, with PD motors tracking the procedural pose.
 This is isolated to `player/` + `render/` and does not change the controller.
 
-### 4.6 Character controller
+### 4.7 Character controller
 
 - **Ground movement**: each tick apply an impulse that moves `vx` toward `moveX * runSpeed` with
   `groundAccel`; in air use `airAccel`. Only correct velocity that is *below* run speed in the desired
@@ -301,7 +397,7 @@ This is isolated to `player/` + `render/` and does not change the controller.
   thrown weapons bounce. You cannot fire while blocking, but you can punch (block punch jump).
 - **Facing**: derived from aim, not movement, so players can run backwards while shooting.
 
-### 4.7 Combat, health, rounds
+### 4.8 Combat, health, rounds
 
 - `Health` component: `hp`, `maxHp` (match setting), `takeDamage(amount, zone, source)` applies
   multipliers (head ×2, neck ×1.5), emits blood events scaled by damage, and kills at `hp ≤ 0`.
@@ -312,7 +408,7 @@ This is isolated to `player/` + `render/` and does not change the controller.
   display; level rotation `random | ordered` with a no-immediate-repeat rule.
 - Spawning: levels define ≥ 4 spawn points; assignment is shuffled by the sim RNG each round.
 
-### 4.8 Weapons
+### 4.9 Weapons
 
 - **Definitions** are data (`src/sim/weapons/defs.ts`, validated by zod): id, category, ammo, damage,
   fire mode (semi/auto/burst), fire interval, spread, projectile kind, muzzle speed, gravity scale,
@@ -338,7 +434,7 @@ This is isolated to `player/` + `render/` and does not change the controller.
 - **Explosions**: AABB query → per body: impulse with falloff, player damage with falloff, destructible
   damage, `explosion` event (shake, particles, sound). Self-damage is on.
 
-### 4.9 Levels and hazards
+### 4.10 Levels and hazards
 
 - Levels are JSON (schema in [Appendix B](#appendix-b-data-formats)): bounds, kill bounds, spawn points,
   theme, drop settings, decorations (render-only), and a list of objects with `type` + typed props.
@@ -350,19 +446,55 @@ This is isolated to `player/` + `render/` and does not change the controller.
 - Themes define a palette (background, solids, accents, blood tint) and a decoration set; a level's look
   is `theme + geometry`, so theme changes are free.
 
-### 4.10 Camera and rendering
+### 4.11 Camera and rendering
 
-- Camera fits all alive players plus padding, clamped to level bounds, with smoothed position/zoom;
-  minimum zoom always shows the whole arena. Screen shake from explosion/hit events; slow-mo scales the
-  sim step multiplier, not the render rate.
-- Renderer draws in layers: background + decorations (parallax-lite) → decals (offscreen canvas that
-  accumulates blood for the round) → level solids → weapons/projectiles → players (stick figures) →
-  particles → world-space UI (crown, laser sights, block arc, sniper beam) → screen-space HUD.
-- Stick figure: filled head circle, torso line, two 2-segment arms and legs, round line caps, player
-  color; ~0.08 m line width. Weapons are simple rectangles/lines on a per-weapon descriptor.
-- Debug draw: physics wireframes, hit zones, raycasts, contact points, entity ids; toggled with a key.
+**Camera**: fits all alive players plus padding, clamped to level bounds, with smoothed position/zoom;
+minimum zoom always shows the whole arena. Screen shake from explosion/hit events; slow-mo scales the sim
+step multiplier, not the render rate. The camera produces one uniform (view offset, zoom, pixels-per-meter)
+shared by both renderers.
 
-### 4.11 Input
+**RenderFrame**: the render layer turns sim traits into a flat list of *shape groups*. A group is a
+bounding box plus 1–16 SDF primitives (`disk`, `capsule` = `sdLine` minus a radius, `roundedBox`,
+`pie`, `bezier` from `@typegpu/sdf`, plus our own `triangle` for spikes, ported from Inigo Quilez's list)
+with a color, a blend operator (`union` / `smoothUnion(k)`), and a layer.
+Examples: a stick figure is one group (head disk + 9 capsules smooth-unioned at the joints — this is what
+gives the blobby, hand-drawn look); a weapon is a group of 2–4 rounded boxes; each level solid is a group;
+a bullet is a capsule; a particle is a disk. `figure.ts` owns the pose → primitives mapping (run cycle,
+jump/fall/duck/wall-slide poses, aim arm, block arms, punch extension, spring/verlet secondary motion).
+
+**SDF renderer (`render/gpu/`, TypeGPU)**
+
+- **Instanced quads, not a full-screen scene SDF.** Groups are packed into two storage buffers per frame
+  (`Group[]` with bounds/color/primitive range; `Primitive[]` as a fixed-size struct). One draw call per
+  layer renders `groupCount` instances of a unit quad; the vertex stage expands the quad to the group's
+  bounds and the fragment stage evaluates only that group's primitives with `@typegpu/sdf` helpers, then
+  anti-aliases with a screen-space smoothstep (`fwidth`). Per-pixel cost is bounded by primitives per
+  group, so hundreds of groups and thousands of particles are cheap.
+- **Passes**: (1) background gradient + theme decorations (SDF groups with parallax offset);
+  (2) decals — blood and scorch marks are drawn *once* into a persistent world-space texture per round
+  and sampled thereafter, so decal count is unbounded at zero per-frame cost; (3) world layers in order:
+  solids → hazards → weapons/projectiles → ragdolls → players → particles → world-space UI (crown, laser
+  sights, block arc); (4) post: shake offset, slow-mo grade/vignette, hit-stop flash, black-hole UV
+  distortion. Screen-space HUD and menus stay in the DOM.
+- **Effects that come almost free from SDFs**: outlines (`|d| < w`), glow (`exp(-d)`), soft drop shadows
+  (offset SDF), lava surface (rounded box with `@typegpu/noise` displacement of the sample point),
+  saw teeth (`sdPie` repeated), destructible-block cracks (subtract capsules), smooth "merge" of a held
+  weapon into the hand. **Stretch (M5)**: 2D global illumination with `@typegpu/radiance-cascades`, fed
+  by a Jump Flood SDF texture of solids (`createJumpFlood`) with lava, muzzle flashes and explosions as
+  emitters.
+- **Shaders are TypeScript**: `'use gpu'` functions compiled by `unplugin-typegpu`, typed buffers via
+  `d.struct`/`d.arrayOf`, pipelines via `root.createRenderPipeline`. The same SDF functions run on the
+  CPU, so the primitive math has Vitest coverage and the Canvas fallback can reuse it for hit-testing.
+- **Boot**: probe `navigator.gpu?.requestAdapter()`; on `null`, or on device loss, switch to the Canvas
+  renderer and show a one-line notice. The player-facing feature set (gameplay, HUD) is identical; only
+  looks differ.
+
+**Canvas fallback + debug renderer (`render/canvas/`)**: consumes the same `RenderFrame`; draws groups as
+round-capped strokes and filled shapes; also provides debug draw (physics wireframes, hit zones, raycasts,
+contact points, entity ids) toggled with a key. Kept deliberately plain — polish work targets the SDF
+renderer only.
+
+### 4.12 Input
 
 - Device → player assignment on a join screen ("press jump to join"): keyboard+mouse is one device;
   each gamepad is another. A second keyboard-only player is supported with aim = facing/arrow keys.
@@ -371,7 +503,7 @@ This is isolated to `player/` + `render/` and does not change the controller.
 - Remappable bindings stored in `localStorage`; Gamepad API polling each frame; input is sampled into
   `PlayerInput` at each sim tick (edge detection happens in the sim so replays/netcode work).
 
-### 4.12 Networking (M6)
+### 4.13 Networking (M6)
 
 - **Model**: host-authoritative. The host runs the sim; clients send `PlayerInput` every tick over an
   unreliable/unordered channel with the last 3 inputs bundled for loss tolerance. The host broadcasts
@@ -382,14 +514,16 @@ This is isolated to `player/` + `render/` and does not change the controller.
   the same code can later run as a **dedicated authoritative server** over WebSockets for players without
   a good host.
 - **Replication**: players (position, velocity, aim, flags, hp, weapon id, ammo), dynamic bodies (loose
-  weapons, projectile bodies, dynamic props, ragdoll parts) as quantized transforms with stable net ids;
-  bullets replicate as spawn events (their paths are deterministic). Late joiners get a full snapshot.
-  Budget: < 30 KB/s per client with 4 players.
+  weapons, projectile bodies, dynamic props, ragdoll parts) as quantized transforms keyed by `NetId`;
+  bullets replicate as spawn events (their paths are deterministic). Snapshots are produced by iterating
+  Koota stores (`useStores`) for the replicated traits; `Changed(Transform)` selects what goes into a
+  delta snapshot and `Added`/`Removed` on `NetId` produce spawn/despawn events. Late joiners get a full
+  snapshot. Budget: < 30 KB/s per client with 4 players.
 - **Prediction**: none for v1 (matches the original's feel and avoids physics rollback). Local input
   latency mitigation later, if needed: predict only the local capsule's horizontal movement and jump.
 - Prepared from M0: seeded RNG, tick-based timing, `PlayerInput` indirection, stable ids, snapshot API.
 
-### 4.13 Bots (M9) and snakes (M7)
+### 4.14 Bots (M9) and snakes (M7)
 
 - Snakes: small AI bodies that pathfind trivially (move toward nearest player, hop), have HP scaled to
   the match HP, bite on contact, take head/neck multipliers.
@@ -397,17 +531,18 @@ This is isolated to `player/` + `render/` and does not change the controller.
   bullet approaches, avoid hazards using short raycasts and level kill zones, jump/wall-jump heuristics).
   Bots are also the engine of headless soak tests.
 
-### 4.14 Level editor (M8)
+### 4.15 Level editor (M8)
 
 In-browser: object palette, grid snapping, drag/rotate/resize, property panel generated from each
 hazard's zod schema, spawn points and drop range tools, one-click playtest, undo/redo, import/export
 JSON, share via compressed URL hash, local library in IndexedDB, user levels selectable in match settings.
 
-### 4.15 Debug tooling (from M1)
+### 4.16 Debug tooling (from M1)
 
-Tweakpane panel bound to `tuning.ts`; spawn-weapon/kill/slow-mo/free-camera cheats; physics overlay;
-frame/tick timing HUD; state hash display for determinism checks; input recorder that saves seed +
-inputs to a JSON replay.
+Tweakpane panel bound to `tuning.ts`; spawn-weapon/kill/slow-mo/free-camera cheats; physics overlay
+(Canvas debug renderer drawn over the SDF frame); renderer switch (GPU ↔ Canvas) at runtime; frame/tick
+timing HUD including GPU pass timings; entity/trait inspector for the sim world; state hash display for
+determinism checks; input recorder that saves seed + inputs to a JSON replay.
 
 ---
 
@@ -416,21 +551,35 @@ inputs to a JSON replay.
 Sizes are relative engineering effort (S < M < L < XL) by number of subsystems touched and how invasive
 the changes are. Each milestone lists its deliverables and acceptance criteria.
 
-### M0 — Scaffold (S)
+### M0 — Scaffold and renderer spike (M)
 
-- Vite + TypeScript (`strict`), ESLint + Prettier, Vitest, Playwright, `npm run check`
-  (lint + typecheck + unit tests + build) as the single CI entry point; static deploy of `dist/`.
-- `core/` fixed-step loop, seeded RNG, vec math; `sim/world.ts` wrapping Planck; canvas renderer with
-  camera and debug draw; a flat test level with a falling box.
-- **Accept**: `npm run dev` shows a box landing on the floor at 60 fps; `npm run check` passes; a Vitest
-  headless test steps the world 600 ticks and asserts the box is at rest.
+- Vite + TypeScript (`strict`) + `unplugin-typegpu`, ESLint + Prettier, Vitest, Playwright,
+  `npm run check` (lint + typecheck + unit tests + build) as the single CI entry point; static deploy of
+  `dist/`.
+- `core/` fixed-step loop, seeded RNG, vec math; `sim/world.ts` = Koota world + Planck world with the
+  system runner, `Transform`/`PrevTransform`/`PhysBody` traits and `syncTransforms`; a flat test level with
+  falling boxes.
+- `RenderFrame` + camera; Canvas renderer (debug draw included); **SDF renderer spike**: instanced SDF
+  quads via TypeGPU drawing boxes and one static stick figure (smooth-unioned capsules), AA, one post
+  pass. Measure frame time at 1080p with 500 groups on an integrated GPU and under SwiftShader in CI.
+- CI: WebGPU smoke job with Chromium SwiftShader flags (`--enable-unsafe-webgpu --enable-features=Vulkan
+  --use-angle=vulkan --use-vulkan=swiftshader --use-webgpu-adapter=swiftshader --disable-vulkan-surface`,
+  `libvulkan1` + `mesa-vulkan-drivers` installed); screenshot job runs headed under Xvfb because headless
+  Chromium captures WebGPU canvases as black.
+- **Accept**: `npm run dev` shows boxes landing at 60 fps in both renderers; `npm run check` passes;
+  a Vitest headless test steps the world 600 ticks and asserts rest; a golden state hash over 600 ticks
+  with scripted spawns/destroys is stable across runs (pins Koota iteration order).
+- **Go/no-go for the SDF renderer** (decided at the end of M0): go if the spike renders the stick figure
+  and 500 groups under 4 ms GPU time on an integrated GPU and the CI job is green. No-go means the
+  Canvas renderer becomes primary and the SDF renderer moves to an optional track; nothing else changes.
 
 ### M1 — Movement prototype (M)
 
-- Player capsule controller: run, jump (coyote/buffer), duck, wall slide + wall jump, punch self-impulse
-  (punch jump / slam), block pose (no combat effect yet), aim from mouse and gamepad.
-- Procedural stick-figure animation with secondary motion; dynamic camera; tuning panel; input replay
-  recorder.
+- Player capsule controller (`Controller`, `Aim` traits + systems): run, jump (coyote/buffer), duck,
+  wall slide + wall jump, punch self-impulse (punch jump / slam), block pose (no combat effect yet), aim
+  from mouse and gamepad.
+- `figure.ts`: procedural stick-figure pose → SDF primitives with secondary motion, rendered by both
+  renderers; dynamic camera; tuning panel; input replay recorder.
 - Test level "gym": shafts to wall-climb, gaps calibrated to normal / punch / block-punch jumps.
 - **Accept**: feel checklist signed off against reference footage — normal jump ≈ 1.1× player height,
   punch jump ≈ 1.5–2× (depends on punch timing), block punch jump ≈ 2.5–3×, climb a 6-tile shaft in
@@ -470,12 +619,15 @@ the changes are. Each milestone lists its deliverables and acceptance criteria.
 
 ### M5 — Feel and polish (M)
 
-- Blood particles + decals, sparks, smoke, muzzle flashes, hit-stop, screen shake, kill slow-mo polish,
-  camera tuning, crown/scoreboard art, theme decorations.
+- Blood particles + persistent decal texture, sparks, smoke, muzzle flashes, hit-stop, screen shake,
+  kill slow-mo polish, camera tuning, crown/scoreboard art, theme decorations; SDF effects pass
+  (outlines, glow, soft shadows, noise-displaced lava, black-hole distortion).
 - Full SFX set and optional procedural music; audio mixer settings.
 - Settings: HP, weapon/level toggles, win counter, first-to-N, input remapping, colorblind palette,
-  reduce-shake/blood toggles. PWA manifest for offline play.
-- Optional: physics arms on alive players if the feel review calls for it (see 4.5 upgrade path).
+  reduce-shake/blood toggles, renderer selection. PWA manifest for offline play.
+- Optional: physics arms on alive players if the feel review calls for it (see 4.6 upgrade path).
+- Stretch: 2D lighting with `@typegpu/radiance-cascades` (lava, muzzle flashes and explosions as
+  emitters), behind a settings toggle with a GPU-time budget check.
 - **Accept**: side-by-side feel review with the original passes the checklist in `docs/feel-checklist.md`
   (created in M1); 60 fps on an integrated-GPU laptop at 1080p with 4 players and 200 bodies.
 
@@ -502,7 +654,7 @@ the changes are. Each milestone lists its deliverables and acceptance criteria.
 
 ### M8 — Level editor (L)
 
-- Editor described in 4.14; user levels in IndexedDB; import/export/share; user levels in rotation.
+- Editor described in 4.15; user levels in IndexedDB; import/export/share; user levels in rotation.
 - **Accept**: build a level with every hazard type in the editor, export it, reload it, play it locally
   and online (host sends custom level JSON to clients).
 
@@ -520,18 +672,24 @@ the changes are. Each milestone lists its deliverables and acceptance criteria.
 ## 6. Testing and quality
 
 - **Unit (Vitest)**: RNG determinism, vec math, damage multipliers, weapon/level schema validation,
-  round/match state machine, input edge detection, snapshot round-trip.
-- **Headless sim tests (Vitest, Node)**: build a world from a test level with a seed, script
-  `PlayerInput` sequences, assert positions/events/tick counts (jump heights, wall-jump climb, bullet hit
-  point, parry window, hazard effects). A **golden determinism test** runs a fixed seed + scripted inputs
-  for 600 ticks and compares a state hash; updating the hash must be a deliberate commit.
+  round/match state machine, input edge detection, snapshot round-trip, SDF primitive math (the
+  `'use gpu'` functions are called on the CPU), `figure.ts` pose → primitives.
+- **Headless sim tests (Vitest, Node)**: `createSimWorld({ level, seed })`, script `PlayerInput`
+  sequences, assert trait values/events/tick counts (jump heights, wall-jump climb, bullet hit point,
+  parry window, hazard effects). A **golden determinism test** runs a fixed seed + scripted inputs for
+  600 ticks and compares a state hash; updating the hash must be a deliberate commit. This test also
+  guards Koota upgrades (iteration order) and Planck upgrades.
 - **Fuzz/soak**: random or bot inputs for tens of thousands of ticks; assert no exceptions, no NaN/Inf
   transforms, bounded entity counts, bounded physics step time.
-- **E2E (Playwright, Chromium)**: boot → join → start local match vs bot → round ends → screenshot;
-  gamepad emulation via injected `navigator.getGamepads`; used to produce walkthrough recordings.
-- **Performance budgets**: physics step ≤ 3 ms (4 alive + 3 ragdolls + 30 dynamic props), render
-  ≤ 4 ms at 1080p, initial bundle ≤ 600 KB gzip, particles capped (2 000) and decals rendered to an
-  offscreen canvas.
+- **E2E (Playwright, Chromium)**: two projects. *Logic* runs with the Canvas renderer in plain headless
+  mode: boot → join → start local match vs bot → round ends. *GPU* runs with the SwiftShader WebGPU flags
+  (section 5, M0) and asserts the SDF renderer initialised and drew frames (readback of a few pixels);
+  screenshots and walkthrough recordings run headed under Xvfb. Gamepad emulation via injected
+  `navigator.getGamepads`.
+- **Performance budgets**: physics step ≤ 3 ms (4 alive + 3 ragdolls + 30 dynamic props); CPU frame build
+  (`RenderFrame` + buffer packing) ≤ 1 ms; GPU time ≤ 4 ms at 1080p on an integrated GPU with 500 groups
+  and 2 000 particles; initial bundle ≤ 700 KB gzip; SwiftShader smoke test only asserts correctness,
+  never speed.
 - **Conventions**: TypeScript `strict`, no `any` in `sim/`, conventional commits, one PR per milestone
   task, ADRs in `docs/adr/` for decisions that change this plan.
 
@@ -547,7 +705,11 @@ the changes are. Each milestone lists its deliverables and acceptance criteria.
 | Networking complexity and desync | Online unplayable | Host-authoritative + interpolation (no rollback); sim/net boundary built from M0; simulated latency/loss tests; dedicated-server fallback |
 | Scope creep from the 45-weapon roster | Never finishing | 8 archetypes in M3 define all projectile kinds; the rest is data + a few new kinds in M7 |
 | Browser input limitations (keyboard ghosting, gamepad quirks, pointer lock) | Couch play frustration | Remappable bindings, per-browser gamepad mapping table, no reliance on pointer lock |
-| Canvas 2D performance with many decals/particles | Frame drops | Offscreen decal canvas, particle pool caps, dirty-region-free but layered drawing; WebGL renderer swap is isolated to `render/` |
+| WebGPU unavailable (Linux Firefox, macOS before Tahoe, blocklisted drivers, GPU-less VMs) | Game will not start for some players | Boot-time adapter probe; Canvas fallback renders the same `RenderFrame`; the fallback is exercised in CI on every PR |
+| TypeGPU pre-1.0 churn (breaking changes between minors, `~unstable` encoder APIs) | Renderer breaks on upgrade | Exact version pins; all TypeGPU calls inside `render/gpu/`; upgrade in a dedicated PR with the GPU smoke test; Canvas renderer keeps the game shippable meanwhile |
+| Koota pre-1.0 churn or non-deterministic iteration order | Sim refactors; replays and golden tests break | Exact version pin; systems only use `query`/`updateEach`/`useStores`/relations; golden determinism test in CI; thin `sim/world.ts` wrapper so a swap to another archetype ECS is contained |
+| SDF renderer cost grows with primitives per pixel (many overlapping groups, huge zoom-out) | GPU frame drops | Groups are bounded to ≤ 16 primitives; per-layer instancing; particles as single-primitive groups; GPU timing in the debug HUD with a budget alarm; lighting is opt-in |
+| Headless WebGPU in CI is flaky or slow | Red CI unrelated to code | SwiftShader job asserts correctness only, is allowed to retry once, and runs separately from the logic E2E which uses the Canvas renderer |
 | IP/trademark issues | Takedown | Original name, art, sounds, level designs; mechanics only (section 9) |
 
 ---
@@ -556,23 +718,31 @@ the changes are. Each milestone lists its deliverables and acceptance criteria.
 
 ### Decided (defaults this plan proceeds with)
 
-1. Web/TypeScript stack with Planck.js; Canvas 2D renderer. (4.1)
-2. Alive player = controlled capsule + cosmetic limbs; dead player = true ragdoll. (4.5)
-3. Bullets are swept rays; explosives are bodies. (4.5, 4.8)
-4. Local multiplayer before online; online is host-authoritative with interpolation, no rollback. (4.12)
-5. Endless matches by default with an optional first-to-N, as a quality-of-life addition. (4.7)
-6. Faithful quirks kept as tunables: ammo refills on pickup, empty weapon is flung. (4.8)
-7. No binary assets; synthesized audio. (1)
+1. Web/TypeScript stack with Planck.js physics. (4.1)
+2. Koota ECS for all sim state; systems are plain functions in a fixed order; render-side cosmetic state
+   lives in a separate Koota world. (4.5)
+3. TypeGPU + `@typegpu/sdf` instanced-SDF renderer as the primary look, behind a `RenderFrame` interface,
+   with a Canvas 2D fallback/debug renderer; the choice is confirmed by the M0 spike. (4.1, 4.11, M0)
+4. Alive player = controlled capsule + cosmetic limbs; dead player = true ragdoll. (4.6)
+5. Bullets are swept rays; explosives are bodies. (4.6, 4.9)
+6. Local multiplayer before online; online is host-authoritative with interpolation, no rollback. (4.13)
+7. Endless matches by default with an optional first-to-N, as a quality-of-life addition. (4.8)
+8. Faithful quirks kept as tunables: ammo refills on pickup, empty weapon is flung. (4.9)
+9. No binary assets; synthesized audio. (1)
 
 ### Open questions (answers change scope, defaults apply otherwise)
 
-1. Confirm the web stack vs. a Godot/Unity build. Default: web.
-2. Is online play required for the first public release, or can it ship after local play? Default: after.
-3. Faithful weapon roster and names vs. an original arsenal? Default: faithful mechanics, renamed where a
+1. Is online play required for the first public release, or can it ship after local play? Default: after.
+2. Faithful weapon roster and names vs. an original arsenal? Default: faithful mechanics, renamed where a
    name is distinctive (e.g. "God Pistol") before public release.
-4. Desktop browsers only? Default: yes; touch controls are out of scope.
-5. Level count target for release and whether the editor should come before online. Default: 60+, editor
+3. Desktop browsers only? Default: yes; touch controls are out of scope.
+4. Level count target for release and whether the editor should come before online. Default: 60+, editor
    after online.
+5. Is the Canvas fallback worth keeping past M0, or should the game be WebGPU-only with a clear "needs
+   WebGPU" screen? Default: keep it — it doubles as the debug renderer and the CI logic-test renderer, so
+   its marginal cost is small.
+6. Should 2D lighting (radiance cascades) be a release feature or a toggle-off stretch goal? Default:
+   stretch goal in M5.
 
 ---
 
@@ -667,6 +837,62 @@ const pistol: WeaponDef = {
   thrownDamage: 55, dropWeight: 1.0, twoHanded: false,
   shape: { kind: 'pistol', length: 0.45 }, sound: 'shot.small',
 };
+```
+
+Traits and a system (Koota; illustrative excerpt of `src/sim/traits.ts` and one system — exact option
+names follow the pinned version):
+
+```ts
+import { trait, relation, createQuery, type World } from 'koota';
+import type { Body } from 'planck';
+
+export const Transform = trait({ x: 0, y: 0, angle: 0 });
+export const PrevTransform = trait({ x: 0, y: 0, angle: 0 });
+export const PhysBody = trait(() => ({ body: null as Body | null }));   // object store
+export const Health = trait({ hp: 100, maxHp: 100 });
+export const Weapon = trait({ defId: 0, ammo: 0, pickupCooldown: 0, thrown: false });
+export const Dead = trait();                                            // tag
+export const HeldBy = relation({ exclusive: true });
+export const OwnedBy = relation();
+export const PartOf = relation({ autoDestroy: 'orphan' });   // destroying the root destroys the parts
+
+const bodies = createQuery(PhysBody, Transform, PrevTransform);        // created once, reused
+
+export function syncTransforms(world: World) {
+  world.query(bodies).updateEach(([phys, t, prev]) => {
+    prev.x = t.x; prev.y = t.y; prev.angle = t.angle;
+    const p = phys.body!.getPosition();
+    t.x = p.x; t.y = p.y; t.angle = phys.body!.getAngle();
+  });
+}
+```
+
+SDF shape group (TypeGPU; illustrative — helper signatures follow the pinned `@typegpu/sdf` version; the
+same function is unit-tested on the CPU):
+
+```ts
+import { tgpu, d, std } from 'typegpu';
+import { sdDisk, sdLine, opSmoothUnion } from '@typegpu/sdf';
+
+export const Primitive = d.struct({
+  kind: d.u32,            // 0 disk, 1 capsule, 2 roundedBox, 3 triangle, 4 pie
+  a: d.vec2f, b: d.vec2f, // endpoints / center+halfSize
+  r: d.f32,               // radius / corner radius
+});
+
+// Distance of point p to one primitive; a group folds its primitives with opSmoothUnion(k).
+export const primitiveSdf = tgpu.fn([Primitive, d.vec2f], d.f32)((prim, p) => {
+  'use gpu';
+  if (prim.kind === 0) return sdDisk(p - prim.a, prim.r);
+  if (prim.kind === 1) return sdLine(p, prim.a, prim.b) - prim.r;   // capsule
+  // ... other kinds
+  return 1e9;
+});
+
+export const coverage = tgpu.fn([d.f32], d.f32)((dist) => {
+  'use gpu';
+  return 1 - std.smoothstep(-0.5, 0.5, dist / std.fwidth(dist));   // screen-space anti-aliasing
+});
 ```
 
 ## Appendix C. Weapon roster
