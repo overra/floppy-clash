@@ -23,6 +23,8 @@ import {
 } from './editor';
 import { applyField, fieldValue, objectSchemaFields } from './properties';
 import type { LevelDef } from '../sim/level/schema';
+import { joinStartIndex, loadMaps } from '../input/remap';
+import { buttonOn } from '../input/gamepad';
 
 export type EditorViewFns = {
   playtest: (level: LevelDef) => void;
@@ -373,7 +375,7 @@ export function mountEditor(root: HTMLElement, state: EditorState, fns: EditorVi
         b: !!pad.buttons[1]?.pressed,
         lb: !!pad.buttons[4]?.pressed,
         rb: !!pad.buttons[5]?.pressed,
-        start: !!pad.buttons[9]?.pressed,
+        start: buttonOn(pad.buttons[joinStartIndex(loadMaps()[pad.id])]),
       };
       const result = applyEditorPad(state, padEdge, now);
       if (result.nudged || result.placed) draw();

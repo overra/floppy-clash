@@ -22,6 +22,7 @@ import {
   shareHash,
   undo,
 } from '../src/editor/editor';
+import { joinStartIndex } from '../src/input/remap';
 import { parseLevel } from '../src/sim/level/schema';
 import { hold, makeSim } from './helpers';
 import { installMemoryIndexedDB } from './idb-memory';
@@ -129,6 +130,11 @@ describe('M7 editor', () => {
     expect(state.tool).not.toBe('solid');
     expect(applyEditorPad(state, held, { ...IDLE_EDITOR_PAD, start: true }).playtest).toBe(true);
     expect(applyEditorPad(state, held, { ...IDLE_EDITOR_PAD, b: true }).back).toBe(true);
+  });
+
+  it('editor Start index follows the remapped pause button (PLAN 4.12 / 4.15)', () => {
+    expect(joinStartIndex()).toBe(9);
+    expect(joinStartIndex({ jump: 0, attack: 7, block: 6, throw: 3, pause: 1 })).toBe(1);
   });
 
   it('saveLibrary / loadLibrary persist through the IndexedDB object store', async () => {

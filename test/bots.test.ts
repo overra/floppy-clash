@@ -6,6 +6,21 @@ import { Bot, Held, HeldBy, Projectile, Transform, Weapon } from '../src/sim/tra
 import { makeSim, pin, playerOf } from './helpers';
 
 describe('M9 bots', () => {
+  it('a human seat past playerCount is not tagged as a bot', () => {
+    const sim = makeSim({
+      seed: 89,
+      settings: { playerCount: 1, bots: 3 },
+      seats: [
+        { slot: 0, color: 0, inputIndex: 0 },
+        { slot: 1, color: 1, inputIndex: 1 },
+      ],
+    });
+    expect(playerOf(sim, 0).has(Bot)).toBe(false);
+    expect(playerOf(sim, 1).has(Bot)).toBe(false);
+    expect(playerOf(sim, 2).has(Bot)).toBe(true);
+    expect(playerOf(sim, 3).has(Bot)).toBe(true);
+  });
+
   it('createSimWorld attaches Bot traits for settings.bots seats', () => {
     const sim = makeSim({ seed: 90, settings: { playerCount: 1, bots: 3 } });
     let bots = 0;

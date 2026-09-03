@@ -199,6 +199,26 @@ describe('join seats (PLAN 4.12)', () => {
     expect(joinStartIndex({ jump: 0, attack: 7, block: 6, throw: 3, pause: 8 })).toBe(8);
   });
 
+  it('solo vs bots: a pad claims the prefilled keyboard seat (PLAN M9)', () => {
+    const menus = createMenuState();
+    menus.seats[0] = { taken: true, ready: true, color: 0, padId: 'keyboard', name: 'You' };
+    const pad = takeSeat(menus.seats, 'pad-solo', menus.padMemory, { replaceKeyboard: true });
+    expect(pad?.padId).toBe('pad-solo');
+    expect(menus.seats[0]?.padId).toBe('pad-solo');
+    expect(menus.seats[0]?.ready).toBe(false);
+    expect(menus.seats[1]?.taken).toBe(false);
+    takeOrReadySeat(menus.seats, 'pad-solo', menus.padMemory, { replaceKeyboard: true });
+    expect(menus.seats[0]?.ready).toBe(true);
+  });
+
+  it('local play does not replace a keyboard P1 with a second pad', () => {
+    const menus = createMenuState();
+    takeSeat(menus.seats, 'keyboard');
+    takeSeat(menus.seats, 'pad-p2');
+    expect(menus.seats[0]?.padId).toBe('keyboard');
+    expect(menus.seats[1]?.padId).toBe('pad-p2');
+  });
+
   it('Start/Options pause is a rising edge (hold does not re-fire)', () => {
     expect(pauseRisingEdge(false, true)).toBe(true);
     expect(pauseRisingEdge(true, true)).toBe(false);

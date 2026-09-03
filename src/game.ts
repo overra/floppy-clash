@@ -1,5 +1,4 @@
 import { Pane } from 'tweakpane';
-import { attachBots } from './sim/ai/bots';
 import { createFixedStepLoop, interpolationAlpha } from './core/loop';
 import { createMixer } from './audio/mixer';
 import { createKeyboardFallback } from './input/keyboard';
@@ -629,13 +628,6 @@ export function createGame(root: HTMLElement): Game {
       },
       boxes: 8,
     });
-    if (opts.bots > 0) {
-      const botSlots: number[] = [];
-      sim.ecs.query(Player).updateEach(([p]) => {
-        if (p.slot >= opts.playerCount) botSlots.push(p.slot);
-      });
-      attachBots(sim.ecs, botSlots);
-    }
     cam = createCamera(level.bounds);
     clearFx(fx);
     decalLayer = createDecalLayer(level.bounds);
@@ -712,6 +704,12 @@ export function createGame(root: HTMLElement): Game {
 
   function handlePadStart(padId: string): void {
     if (menus.screen === 'join') {
+      if (padId && padId !== 'keyboard') {
+        const seat = takeOrReadySeat(menus.seats, padId, menus.padMemory, {
+          replaceKeyboard: menus.bots > 0,
+        });
+        if (seat) seat.ready = true;
+      }
       startIfReady();
       return;
     }
@@ -750,7 +748,9 @@ export function createGame(root: HTMLElement): Game {
         joinRightHeld[i] = rightDown;
         const aDown = !!(pad.buttons[0]?.pressed || pad.buttons[4]?.pressed);
         if (aDown && !joinAHeld[i]) {
-          takeOrReadySeat(menus.seats, pad.id, menus.padMemory);
+          takeOrReadySeat(menus.seats, pad.id, menus.padMemory, {
+            replaceKeyboard: menus.bots > 0,
+          });
           show();
         }
         joinAHeld[i] = aDown;
@@ -1386,7 +1386,7 @@ export function createGame(root: HTMLElement): Game {
           return;
         }
         if (menus.screen === 'join') {
-          takeSeat(menus.seats, pad.id, menus.padMemory);
+          takeSeat(menus.seats, pad.id, menus.padMemory, { replaceKeyboard: menus.bots > 0 });
           show();
         }
       });

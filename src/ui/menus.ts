@@ -168,11 +168,21 @@ export function cycleSeatColor(seat: Seat, dir: number, memory?: PadSeatMemory):
   }
 }
 
+export type TakeSeatOpts = {
+  /**
+   * Solo vs Bots pre-fills keyboard on seat 0. A real pad must claim that
+   * human seat (PLAN M9) instead of becoming a leftover P2 that `playerCount: 1`
+   * would then treat as a bot.
+   */
+  replaceKeyboard?: boolean;
+};
+
 /** First press takes the next free seat; the same pad/keyboard pressing again readies (PLAN 4.12). */
 export function takeOrReadySeat(
   seats: Seat[],
   padId: string,
   memory: PadSeatMemory = {},
+  opts: TakeSeatOpts = {},
 ): Seat | undefined {
   const existing = seats.find((s) => s.taken && s.padId === padId);
   if (existing) {
@@ -180,11 +190,27 @@ export function takeOrReadySeat(
     rememberPad(memory, padId, seats.indexOf(existing), existing.color);
     return existing;
   }
-  return takeSeat(seats, padId, memory);
+  return takeSeat(seats, padId, memory, opts);
+}
+
+function occupySeat(seat: Seat, seats: Seat[], padId: string, memory: PadSeatMemory, ready: boolean): Seat {
+  const mem = memory[padId];
+  seat.taken = true;
+  seat.padId = padId;
+  seat.ready = ready;
+  seat.color = mem?.color ?? seats.indexOf(seat);
+  seat.name = padId === 'keyboard' ? 'You' : '';
+  rememberPad(memory, padId, seats.indexOf(seat), seat.color);
+  return seat;
 }
 
 /** Connection / first sighting of a pad: occupy a seat, do not ready yet. */
-export function takeSeat(seats: Seat[], padId: string, memory: PadSeatMemory = {}): Seat | undefined {
+export function takeSeat(
+  seats: Seat[],
+  padId: string,
+  memory: PadSeatMemory = {},
+  opts: TakeSeatOpts = {},
+): Seat | undefined {
   const existing = seats.find((s) => s.padId === padId);
   if (existing) {
     existing.taken = true;
@@ -193,17 +219,15 @@ export function takeSeat(seats: Seat[], padId: string, memory: PadSeatMemory = {
     rememberPad(memory, padId, seats.indexOf(existing), existing.color);
     return existing;
   }
+  if (opts.replaceKeyboard && padId !== 'keyboard') {
+    const kb = seats.find((s) => s.taken && s.padId === 'keyboard');
+    if (kb) return occupySeat(kb, seats, padId, memory, false);
+  }
   const mem = memory[padId];
   const preferred = mem && seats[mem.slot] && !seats[mem.slot]!.taken ? seats[mem.slot] : undefined;
   const empty = preferred ?? seats.find((s) => !s.taken);
   if (!empty) return undefined;
-  empty.taken = true;
-  empty.padId = padId;
-  empty.ready = false;
-  empty.color = mem?.color ?? seats.indexOf(empty);
-  empty.name = padId === 'keyboard' ? 'You' : '';
-  rememberPad(memory, padId, seats.indexOf(empty), empty.color);
-  return empty;
+  return occupySeat(empty, seats, padId, memory, false);
 }
 
 export function canStartMatch(seats: Seat[]): boolean {

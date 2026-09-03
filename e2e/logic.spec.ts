@@ -931,6 +931,132 @@ test('editor Rotate writes angle into the draft JSON', async ({ page }) => {
   await expect(page.locator('#edjson')).not.toContainText('"angle":');
 });
 
+test('solo vs bots: a pad claims the keyboard seat instead of becoming P2', async ({ page }) => {
+  await page.addInitScript(() => {
+    const buttons = Array.from({ length: 17 }, () => ({ pressed: false, touched: false, value: 0 }));
+    const pad = {
+      id: 'e2e-solo-pad',
+      index: 0,
+      connected: true,
+      mapping: 'standard' as const,
+      axes: [0, 0, 0, 0],
+      buttons,
+      timestamp: 1,
+      hapticActuators: [],
+      vibrationActuator: null,
+    };
+    Object.defineProperty(navigator, 'getGamepads', { value: () => [pad], configurable: true });
+    (window as unknown as { __e2ePad: typeof pad }).__e2ePad = pad;
+  });
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Solo vs Bots' }).click();
+  await expect(page.locator('[data-seat="0"]')).toContainText(/keyboard|You/i);
+  await page.evaluate(() => {
+    const pad = (window as unknown as { __e2ePad: Gamepad }).__e2ePad;
+    window.dispatchEvent(Object.assign(new Event('gamepadconnected'), { gamepad: pad }));
+  });
+  await expect(page.locator('[data-seat="0"]')).toContainText(/e2e-solo-pad/);
+  await expect(page.locator('[data-seat="1"]')).toContainText(/empty/i);
+  await page.evaluate(() => {
+    const pad = (window as unknown as { __e2ePad: { buttons: { pressed: boolean }[] } }).__e2ePad;
+    pad.buttons[0]!.pressed = true;
+  });
+  await page.waitForTimeout(80);
+  await page.evaluate(() => {
+    const pad = (window as unknown as { __e2ePad: { buttons: { pressed: boolean }[] } }).__e2ePad;
+    pad.buttons[0]!.pressed = false;
+  });
+  await expect(page.locator('[data-seat="0"]')).toHaveAttribute('data-ready', '1');
+  await page.getByRole('button', { name: 'Start' }).click();
+  await expect(page.locator('canvas#game')).toBeVisible();
+  await expect.poll(async () => page.evaluate(() => window.__floppy?.playerColors?.[0])).toBe(0);
+});
+
+test('remapped pause Start begins the join match (PLAN 4.12)', async ({ page }) => {
+  await page.addInitScript(() => {
+    const buttons = Array.from({ length: 17 }, () => ({ pressed: false, touched: false, value: 0 }));
+    const pad = {
+      id: 'e2e-remap-start',
+      index: 0,
+      connected: true,
+      mapping: 'standard' as const,
+      axes: [0, 0, 0, 0],
+      buttons,
+      timestamp: 1,
+      hapticActuators: [],
+      vibrationActuator: null,
+    };
+    Object.defineProperty(navigator, 'getGamepads', { value: () => [pad], configurable: true });
+    (window as unknown as { __e2ePad: typeof pad }).__e2ePad = pad;
+  });
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Settings' }).click();
+  await page.locator('#padid').fill('e2e-remap-start');
+  await page.locator('#map-pause').fill('8');
+  await page.getByRole('button', { name: 'Save remap' }).click();
+  await page.getByRole('button', { name: 'Back' }).click();
+  await page.getByRole('button', { name: 'Local Play' }).click();
+  await page.evaluate(() => {
+    const pad = (window as unknown as { __e2ePad: Gamepad }).__e2ePad;
+    window.dispatchEvent(Object.assign(new Event('gamepadconnected'), { gamepad: pad }));
+  });
+  await page.evaluate(() => {
+    const pad = (window as unknown as { __e2ePad: { buttons: { pressed: boolean }[] } }).__e2ePad;
+    pad.buttons[0]!.pressed = true;
+  });
+  await page.waitForTimeout(80);
+  await page.evaluate(() => {
+    const pad = (window as unknown as { __e2ePad: { buttons: { pressed: boolean }[] } }).__e2ePad;
+    pad.buttons[0]!.pressed = false;
+  });
+  await expect(page.locator('[data-seat="0"]')).toHaveAttribute('data-ready', '1');
+  await page.evaluate(() => {
+    const pad = (window as unknown as { __e2ePad: { buttons: { pressed: boolean }[] } }).__e2ePad;
+    pad.buttons[9]!.pressed = true;
+  });
+  await page.waitForTimeout(200);
+  await expect(page.getByRole('heading', { name: 'Join' })).toBeVisible();
+  await page.evaluate(() => {
+    const pad = (window as unknown as { __e2ePad: { buttons: { pressed: boolean }[] } }).__e2ePad;
+    pad.buttons[9]!.pressed = false;
+    pad.buttons[8]!.pressed = true;
+  });
+  await expect(page.locator('canvas#game')).toBeVisible({ timeout: 8_000 });
+  await expect(page.locator('[data-countdown]')).toBeVisible({ timeout: 8_000 });
+});
+
+test('editor remapped Start playtests the draft', async ({ page }) => {
+  await page.addInitScript(() => {
+    const buttons = Array.from({ length: 17 }, () => ({ pressed: false, touched: false, value: 0 }));
+    const pad = {
+      id: 'e2e-editor-start',
+      index: 0,
+      connected: true,
+      mapping: 'standard' as const,
+      axes: [0, 0, 0, 0],
+      buttons,
+      timestamp: 1,
+      hapticActuators: [],
+      vibrationActuator: null,
+    };
+    Object.defineProperty(navigator, 'getGamepads', { value: () => [pad], configurable: true });
+    (window as unknown as { __e2ePad: typeof pad }).__e2ePad = pad;
+    localStorage.setItem(
+      'floppy-clash.padmaps',
+      JSON.stringify({ 'e2e-editor-start': { jump: 0, attack: 7, block: 6, throw: 3, pause: 8 } }),
+    );
+  });
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Level Editor' }).click();
+  await expect(page.locator('text=Level Editor')).toBeVisible();
+  await page.evaluate(() => {
+    const pad = (window as unknown as { __e2ePad: { buttons: { pressed: boolean }[] } }).__e2ePad;
+    pad.buttons[8]!.pressed = true;
+  });
+  await expect(page.locator('canvas#game')).toBeVisible({ timeout: 8_000 });
+  await expect(page.locator('[data-countdown]')).toBeVisible({ timeout: 8_000 });
+});
+
 test('online lobby has room code and chat', async ({ page }) => {
   await page.goto('/');
   await page.getByRole('button', { name: 'Online' }).click();
