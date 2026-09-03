@@ -43,7 +43,8 @@ export function poseToPrimitives(
     y: pose.y - h * 0.05,
   };
   const run = pose.grounded && Math.abs(pose.vx) > 0.4 ? Math.sin(pose.phase * 10) : 0;
-  const air = pose.grounded ? 0 : Math.sign(pose.vy);
+  const jumping = !pose.grounded && pose.vy > 0.2;
+  const falling = !pose.grounded && pose.vy < -0.2;
   const shoulder = { x: pose.x + secondary.shoulderSway, y: torsoTop };
   const aim = { x: pose.aimX, y: pose.aimY };
   const punch = pose.punching ? 0.55 : 0.28;
@@ -54,8 +55,15 @@ export function poseToPrimitives(
   const armR =
     pose.physicsArmR ??
     end(shoulder, { x: aim.x * punch + block * aim.x, y: aim.y * punch + block * 0.2 }, 0.55);
-  const legL = end(hip, { x: -0.15 + run * 0.25, y: -1 + air * 0.08 }, 0.7);
-  const legR = end(hip, { x: 0.15 - run * 0.25, y: -1 - air * 0.04 }, 0.7);
+  const jumpTuck = jumping ? 0.38 : 0;
+  const fallSplit = falling ? 0.2 : 0;
+  const legLen = jumping ? 0.5 : 0.7;
+  const legL = end(hip, { x: -0.15 + run * 0.25 - fallSplit, y: -1 + jumpTuck }, legLen);
+  const legR = end(
+    hip,
+    { x: 0.15 - run * 0.25 + fallSplit, y: -1 + (jumping ? 0.22 : falling ? -0.16 : 0) },
+    legLen,
+  );
 
   /** PLAN §4.11: one head disk + 9 capsules (neck, torso, arms, legs, aim hand). */
   const prims: Primitive[] = [

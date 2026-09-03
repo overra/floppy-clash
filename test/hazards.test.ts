@@ -16,6 +16,7 @@ import {
   Transform,
 } from '../src/sim/traits';
 import { crusherOverlaps } from '../src/sim/hazards/crusher';
+import { sawOverlaps } from '../src/sim/hazards/saw';
 import { hold, makeSim, playerOf } from './helpers';
 
 describe('M4 hazards', () => {
@@ -87,6 +88,12 @@ describe('M4 hazards', () => {
     }
     expect(p.has(Dead) || (p.get(Health)?.hp ?? 1) <= 0).toBe(true);
     expect(Number.isFinite(p.get(Transform)?.x)).toBe(true);
+  });
+
+  it('does not tunnel a player through a translating saw (PLAN M4 sweep)', () => {
+    expect(sawOverlaps(16, 5, 16, 5, 0.7)).toBe(true);
+    expect(sawOverlaps(10, 5, 18, 5, 0.7, 8, 5)).toBe(true);
+    expect(sawOverlaps(4, 2, 18, 5, 0.7, 16, 5)).toBe(false);
   });
 
   it('lava damages then respects cooldown', () => {

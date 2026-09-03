@@ -922,6 +922,46 @@ test('editor Rotate writes angle into the draft JSON', async ({ page }) => {
   await expect(page.locator('#edjson')).not.toContainText('"angle":');
 });
 
+test('local play: an already-connected pad claims a seat without a new connect event', async ({
+  page,
+}) => {
+  await page.addInitScript(() => {
+    const buttons = Array.from({ length: 17 }, () => ({ pressed: false, touched: false, value: 0 }));
+    const pad = {
+      id: 'e2e-local-already',
+      index: 0,
+      connected: true,
+      mapping: 'standard' as const,
+      axes: [0, 0, 0, 0],
+      buttons,
+      timestamp: 1,
+      hapticActuators: [],
+      vibrationActuator: null,
+    };
+    Object.defineProperty(navigator, 'getGamepads', { value: () => [pad], configurable: true });
+    (window as unknown as { __e2ePad: typeof pad }).__e2ePad = pad;
+  });
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Local Play' }).click();
+  await expect(page.getByRole('heading', { name: 'Join' })).toBeVisible();
+  await expect(page.locator('[data-seat="0"]')).toContainText(/e2e-local-already/);
+  await expect(page.locator('[data-seat="0"]')).toContainText(/joined/i);
+  await expect(page.locator('[data-seat="0"]')).not.toHaveAttribute('data-ready', '1');
+  await expect(page.locator('[data-seat="1"]')).toContainText(/empty/i);
+  await page.evaluate(() => {
+    const pad = (window as unknown as { __e2ePad: { buttons: { pressed: boolean }[] } }).__e2ePad;
+    pad.buttons[0]!.pressed = true;
+  });
+  await expect(page.locator('[data-seat="0"]')).toHaveAttribute('data-ready', '1');
+  await page.evaluate(() => {
+    const pad = (window as unknown as { __e2ePad: { buttons: { pressed: boolean }[] } }).__e2ePad;
+    pad.buttons[0]!.pressed = false;
+  });
+  await page.getByRole('button', { name: 'Start' }).click();
+  await expect(page.locator('canvas#game')).toBeVisible();
+  await expect(page.locator('[data-countdown]')).toBeVisible({ timeout: 8_000 });
+});
+
 test('solo vs bots: an already-connected pad claims the human seat without a new connect event', async ({
   page,
 }) => {

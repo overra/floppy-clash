@@ -1,9 +1,19 @@
 import { describe, expect, it } from 'vitest';
-import { bulletApproaching, hazardAhead } from '../src/sim/ai/bots';
+import { bulletApproaching, hazardAhead, shouldClimb, wallToward } from '../src/sim/ai/bots';
 import { getLevel } from '../src/levels/catalog';
 import { spawnWeapon } from '../src/sim/systems/weapons';
-import { Bot, Health, Held, HeldBy, Loose, Projectile, Transform, Weapon } from '../src/sim/traits';
-import { gymLevel, makeSim, pin, playerOf } from './helpers';
+import {
+  Bot,
+  Controller,
+  Health,
+  Held,
+  HeldBy,
+  Loose,
+  Projectile,
+  Transform,
+  Weapon,
+} from '../src/sim/traits';
+import { gymLevel, makeSim, pin, playerOf, woodsClearing } from './helpers';
 
 describe('M9 bots', () => {
   it('a human seat past playerCount is not tagged as a bot', () => {
@@ -59,31 +69,46 @@ describe('M9 bots', () => {
     expect(gun.targetFor(HeldBy) === bot).toBe(true);
   });
 
-  it('thinkBots raises block when a bullet is approaching, not on a periodic tick', () => {
+  it('thinkBots does not raise block on an attack tick without a closing bullet', () => {
     const sim = makeSim({ seed: 96, settings: { playerCount: 1, bots: 1 } });
     const bot = playerOf(sim, 1);
     pin(sim, bot, 14, 4);
     const trait = bot.get(Bot);
     if (trait) bot.set(Bot, { ...trait, think: 20 });
-    sim.ecs.spawn(
-      Projectile({
-        kind: 0,
-        damage: 10,
-        speed: 40,
-        bounces: 0,
-        fuse: 0,
-        x: 8,
-        y: 4,
-        vx: 40,
-        vy: 0,
-        gravity: 0,
-        ownerGrace: 0,
-        defId: 0,
-      }),
-    );
     sim.step();
     const slot = bot.get(Bot)?.slot ?? 1;
-    expect(sim.ctx.inputs[slot]?.block).toBe(true);
+    // think becomes 21; 21 % 18 < 6 would also fire attack — block must stay off.
+    expect(sim.ctx.inputs[slot]?.block).toBe(false);
+  });
+
+  it('thinkBots raises block only for a closing bullet, not a receding one', () => {
+    const run = (vx: number) => {
+      const sim = makeSim({ seed: 96, settings: { playerCount: 1, bots: 1 } });
+      const bot = playerOf(sim, 1);
+      pin(sim, bot, 14, 4);
+      const trait = bot.get(Bot);
+      if (trait) bot.set(Bot, { ...trait, think: 20 });
+      sim.ecs.spawn(
+        Projectile({
+          kind: 0,
+          damage: 10,
+          speed: 40,
+          bounces: 0,
+          fuse: 0,
+          x: 8,
+          y: 4,
+          vx,
+          vy: 0,
+          gravity: 0,
+          ownerGrace: 0,
+          defId: 0,
+        }),
+      );
+      sim.step();
+      return sim.ctx.inputs[bot.get(Bot)?.slot ?? 1]?.block;
+    };
+    expect(run(-40)).toBe(false);
+    expect(run(40)).toBe(true);
   });
 
   it('blocks when a bullet is approaching (PLAN 4.14)', () => {
@@ -106,6 +131,7 @@ describe('M9 bots', () => {
     );
     expect(bulletApproaching(sim.ecs, 14, 4)).toBe(true);
     expect(bulletApproaching(sim.ecs, 8, 10)).toBe(false);
+    expect(bulletApproaching(sim.ecs, 2, 4)).toBe(false);
   });
 
   it('avoids lava / pits in the look-ahead (PLAN 4.14)', () => {
@@ -133,6 +159,7 @@ describe('M9 bots', () => {
     sim.step();
     const slot = bot.get(Bot)?.slot ?? 1;
     expect(sim.ctx.inputs[slot]?.moveX).toBeGreaterThan(0);
+    expect(sim.ctx.inputs[slot]?.attack).toBe(false);
   });
 
   it('retreats when HP is low even at mid range (PLAN 4.14)', () => {
@@ -145,9 +172,17 @@ describe('M9 bots', () => {
     sim.step();
     const slot = bot.get(Bot)?.slot ?? 1;
     expect(sim.ctx.inputs[slot]?.moveX).toBeGreaterThan(0);
+    expect(sim.ctx.inputs[slot]?.attack).toBe(false);
   });
 
-  it('wall-jumps when a wall is toward a higher target (PLAN 4.14)', () => {
+  it('shouldClimb requires a wall and either air or dy > 1', () => {
+    expect(shouldClimb({ grounded: true, dy: 1.15, wall: true })).toBe(true);
+    expect(shouldClimb({ grounded: true, dy: 0.4, wall: true })).toBe(false);
+    expect(shouldClimb({ grounded: false, dy: 0.2, wall: true })).toBe(true);
+    expect(shouldClimb({ grounded: true, dy: 1.15, wall: false })).toBe(false);
+  });
+
+  it('wall-jumps into a shaft wall when generic jump would not fire (PLAN 4.14)', () => {
     const sim = makeSim({
       level: gymLevel,
       seed: 98,
@@ -155,14 +190,60 @@ describe('M9 bots', () => {
     });
     const human = playerOf(sim, 0);
     const bot = playerOf(sim, 1);
-    pin(sim, human, 16, 10);
-    pin(sim, bot, 4.7, 7);
+    // 1 < dy ≤ 1.2 and |dx| ≤ 3 so the generic jump heuristic stays off.
+    pin(sim, human, 5.0, 4.35);
+    pin(sim, bot, 4.7, 3.2);
+    const ctrl = bot.get(Controller);
+    if (ctrl) bot.set(Controller, { ...ctrl, grounded: true, facing: 1 });
     const trait = bot.get(Bot);
     if (trait) bot.set(Bot, { ...trait, think: 20 });
+    expect(wallToward(sim.ecs, 4.7, 3.2, 1)).toBe(true);
     sim.step();
     const slot = bot.get(Bot)?.slot ?? 1;
     expect(sim.ctx.inputs[slot]?.jump).toBe(true);
-    expect(Math.abs(sim.ctx.inputs[slot]?.moveX ?? 0)).toBeGreaterThan(0.2);
+    expect(sim.ctx.inputs[slot]?.moveX ?? 0).toBeGreaterThan(0.2);
+  });
+
+  it('does not climb-jump the same pose when no wall is toward the target', () => {
+    const sim = makeSim({
+      level: woodsClearing,
+      seed: 98,
+      settings: { playerCount: 1, bots: 1 },
+    });
+    const human = playerOf(sim, 0);
+    const bot = playerOf(sim, 1);
+    pin(sim, human, 16.3, 4.35);
+    pin(sim, bot, 16, 3.2);
+    const ctrl = bot.get(Controller);
+    if (ctrl) bot.set(Controller, { ...ctrl, grounded: true, facing: 1 });
+    const trait = bot.get(Bot);
+    if (trait) bot.set(Bot, { ...trait, think: 20 });
+    expect(wallToward(sim.ecs, 16, 3.2, 1)).toBe(false);
+    sim.step();
+    const slot = bot.get(Bot)?.slot ?? 1;
+    expect(sim.ctx.inputs[slot]?.jump).toBe(false);
+  });
+
+  it('mid-shaft climb is not reversed by a false pit miss (PLAN 4.14)', () => {
+    const sim = makeSim({
+      level: gymLevel,
+      seed: 98,
+      settings: { playerCount: 1, bots: 1 },
+    });
+    const human = playerOf(sim, 0);
+    const bot = playerOf(sim, 1);
+    pin(sim, human, 4.9, 10);
+    pin(sim, bot, 4.7, 7);
+    const ctrl = bot.get(Controller);
+    if (ctrl) bot.set(Controller, { ...ctrl, grounded: false, facing: 1 });
+    const trait = bot.get(Bot);
+    if (trait) bot.set(Bot, { ...trait, think: 20 });
+    expect(hazardAhead(sim.ecs, 4.7, 7, 1)).toBe(true);
+    expect(hazardAhead(sim.ecs, 4.7, 7, 1, { checkPit: false })).toBe(false);
+    sim.step();
+    const slot = bot.get(Bot)?.slot ?? 1;
+    expect(sim.ctx.inputs[slot]?.jump).toBe(true);
+    expect(sim.ctx.inputs[slot]?.moveX ?? 0).toBeGreaterThan(0.2);
   });
 
   it('bot soak of 2000 ticks stays finite', { timeout: 30_000 }, () => {

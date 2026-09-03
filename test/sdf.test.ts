@@ -200,4 +200,32 @@ describe('figure pose', () => {
     const hipSlide = slide[1];
     expect(hipSlide?.bx).toBeLessThan(hipBase?.bx ?? 0);
   });
+
+  it('jump and fall poses place legs differently (PLAN 4.11)', () => {
+    const shared = {
+      x: 0,
+      y: 0,
+      facing: 1,
+      ducking: false,
+      grounded: false,
+      wallSliding: false,
+      vx: 0,
+      aimX: 1,
+      aimY: 0,
+      punching: false,
+      blocking: false,
+      dead: false,
+      phase: 0,
+    };
+    const jump = poseToPrimitives({ ...shared, vy: 8 });
+    const fall = poseToPrimitives({ ...shared, vy: -8 });
+    const stand = poseToPrimitives({ ...shared, grounded: true, vy: 0 });
+    const tipY = (prims: ReturnType<typeof poseToPrimitives>) =>
+      Math.max(prims[5]?.by ?? 0, prims[7]?.by ?? 0);
+    expect(tipY(jump)).toBeGreaterThan(tipY(fall) + 0.15);
+    expect(tipY(jump)).toBeGreaterThan(tipY(stand));
+    expect(Math.abs((jump[5]?.bx ?? 0) - (jump[7]?.bx ?? 0))).toBeLessThan(
+      Math.abs((fall[5]?.bx ?? 0) - (fall[7]?.bx ?? 0)),
+    );
+  });
 });

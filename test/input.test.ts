@@ -243,6 +243,15 @@ describe('join seats (PLAN 4.12)', () => {
     expect(menus.seats[1]?.taken).toBe(false);
   });
 
+  it('local play: already-connected pads occupy empty seats not-ready', () => {
+    const menus = createMenuState();
+    const claimed = claimConnectedPadIds(menus.seats, ['e2e-local-already'], menus.padMemory);
+    expect(claimed[0]?.padId).toBe('e2e-local-already');
+    expect(menus.seats[0]?.taken).toBe(true);
+    expect(menus.seats[0]?.ready).toBe(false);
+    expect(menus.seats[1]?.taken).toBe(false);
+  });
+
   it('a held Start after play begins is not a pause rising edge (PLAN 4.12)', () => {
     const held = [false, false, false, false];
     seedHeldFromDown(held, [true, false, false, false]);

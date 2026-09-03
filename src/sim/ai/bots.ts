@@ -60,17 +60,36 @@ export function bulletApproaching(world: World, x: number, y: number): boolean {
   return danger;
 }
 
-/** PLAN 4.14: short look-ahead + pit raycast. */
-export function hazardAhead(world: World, x: number, y: number, dir: number): boolean {
+/** PLAN 4.14: short look-ahead; pit ray is opt-in (grounded only — mid-air misses the floor). */
+export function hazardAhead(
+  world: World,
+  x: number,
+  y: number,
+  dir: number,
+  opts: { checkPit?: boolean } = {},
+): boolean {
   let danger = false;
   const lookX = x + dir * 1.4;
   world.query(Hazard, Transform).updateEach(([hz, ht]) => {
     if (!AVOID.has(hz.kind)) return;
     if (Math.abs(ht.x - lookX) < 1.6 && Math.abs(ht.y - y) < 2.2) danger = true;
   });
-  const pit = raycastClosest(world, lookX, y, lookX, y - 3.2);
-  if (!pit) danger = true;
+  if (opts.checkPit !== false) {
+    const pit = raycastClosest(world, lookX, y, lookX, y - 3.2);
+    if (!pit) danger = true;
+  }
   return danger;
+}
+
+/** Horizontal wall probe used by the climb heuristic (PLAN 4.14). */
+export function wallToward(world: World, x: number, y: number, dir: number): boolean {
+  const sign = Math.sign(dir) || 1;
+  return Boolean(raycastClosest(world, x, y, x + sign * 0.55, y));
+}
+
+/** Climb when a wall is in the move dir and the bot is airborne or the target is above. */
+export function shouldClimb(opts: { grounded: boolean; dy: number; wall: boolean }): boolean {
+  return opts.wall && (!opts.grounded || opts.dy > 1);
 }
 
 export function attachBots(world: World, slots: number[]): void {
@@ -97,6 +116,7 @@ export function thinkBots(world: World): void {
     });
     const looseT = nearestLoose(world, tr.x, tr.y);
     const armed = isArmed(world, entity);
+    let climbing = false;
     if (!armed && looseT && Math.hypot(looseT.x - tr.x, looseT.y - tr.y) < 8) {
       input.moveX = Math.sign(looseT.x - tr.x);
       if (looseT.y > tr.y + 1) input.jump = bot.think % 20 < 2;
@@ -119,14 +139,19 @@ export function thinkBots(world: World): void {
       input.block = bulletApproaching(world, tr.x, tr.y);
       if (dy > 1.2 || Math.abs(dx) > 3) input.jump = bot.think % 16 < 3;
       const climbDir = Math.sign(input.moveX) || Math.sign(dx) || ctrl.facing || 1;
-      const wall = raycastClosest(world, tr.x, tr.y, tr.x + climbDir * 0.55, tr.y);
-      if (wall && (!ctrl.grounded || dy > 1)) {
+      climbing = shouldClimb({
+        grounded: ctrl.grounded,
+        dy,
+        wall: wallToward(world, tr.x, tr.y, climbDir),
+      });
+      if (climbing) {
         input.moveX = climbDir;
         input.jump = true;
       }
     }
     const dir = Math.sign(input.moveX) || ctrl.facing || 1;
-    if (hazardAhead(world, tr.x, tr.y, dir)) {
+    // Pit rays from mid-air miss the floor; do not reverse an active climb.
+    if (!climbing && hazardAhead(world, tr.x, tr.y, dir, { checkPit: ctrl.grounded })) {
       input.moveX = -dir;
       input.jump = true;
     }

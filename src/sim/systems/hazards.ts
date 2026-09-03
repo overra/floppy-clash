@@ -36,7 +36,15 @@ export function hazardsStep(world: World): void {
       const dy = Math.abs(pt.y - ht.y);
       const hung = hz.kind === HazardKind.Chain && hz.param3 === 1;
       const reach = hung ? Math.max(2.2, (hz.param0 || 2.8) / 2 + 0.5) : 1.6;
-      const near = dx < reach && dy < 1.6;
+      const prev = hazard.get(PrevTransform);
+      const sweep =
+        (hz.kind === HazardKind.Saw || hz.kind === HazardKind.Crusher) && prev
+          ? pt.x >= Math.min(prev.x, ht.x) - reach &&
+            pt.x <= Math.max(prev.x, ht.x) + reach &&
+            pt.y >= Math.min(prev.y, ht.y) - 1.6 &&
+            pt.y <= Math.max(prev.y, ht.y) + 1.6
+          : false;
+      const near = sweep || (dx < reach && dy < 1.6);
       const mod = moduleForKind(hz.kind);
       if (!mod?.contact) return;
       if (!near && hz.kind !== HazardKind.Laser && hz.kind !== HazardKind.Conveyor) return;
