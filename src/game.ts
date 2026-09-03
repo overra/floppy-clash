@@ -1024,8 +1024,8 @@ export function createGame(root: HTMLElement): Game {
       clientAppliedX: clientView?.appliedX ?? 0,
       clientRestored: clientView?.restored ?? false,
       weaponCount: countWeapons(),
-      p0Hp: (sim ?? clientView?.sim)?.players()[0]?.get(Health)?.hp ?? 0,
-      p0Dead: (sim ?? clientView?.sim)?.players()[0]?.has(Dead) ?? false,
+      p0Hp: hpOfSlot(handle, 0),
+      p0Dead: deadOfSlot(handle, 0),
       slowmo: tuning.lastKillSlowmo,
       rendererSwitches,
       lastReplayBytes: recorder.lastBytes(),
@@ -1074,6 +1074,24 @@ export function createGame(root: HTMLElement): Game {
       if (p.slot >= 0 && p.slot < 4) xs[p.slot] = t.x;
     });
     return xs;
+  }
+
+  function hpOfSlot(world: SimHandle | null | undefined, slot: number): number {
+    let hp = 0;
+    if (!world) return hp;
+    world.ecs.query(Player, Health).updateEach(([p, h]) => {
+      if (p.slot === slot) hp = h.hp;
+    });
+    return hp;
+  }
+
+  function deadOfSlot(world: SimHandle | null | undefined, slot: number): boolean {
+    let dead = false;
+    if (!world) return dead;
+    world.ecs.query(Player).updateEach(([p], e) => {
+      if (p.slot === slot) dead = e.has(Dead);
+    });
+    return dead;
   }
 
   function readPlayerYs(world: SimHandle | null | undefined): number[] {

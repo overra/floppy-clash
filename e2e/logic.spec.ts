@@ -494,9 +494,9 @@ test('HP preset 25 is the spawned match Health', async ({ page }) => {
   if (await page.getByRole('heading', { name: 'Join' }).isVisible()) {
     await page.getByRole('button', { name: 'Start' }).click();
   }
-  await page.waitForFunction(() => window.__floppy?.phase === 2, null, { timeout: 15_000 });
-  await expect.poll(async () => page.evaluate(() => window.__floppy?.p0Hp ?? 0)).toBe(25);
+  await expect(page.locator('[data-countdown]')).toBeVisible({ timeout: 8_000 });
   await expect.poll(async () => page.evaluate(() => window.__floppy?.maxHp ?? 0)).toBe(25);
+  await expect.poll(async () => page.evaluate(() => window.__floppy?.p0Hp ?? 0)).toBe(25);
 });
 
 test('pad Start pauses on the rising edge; hold does not resume; same pad resumes', async ({
