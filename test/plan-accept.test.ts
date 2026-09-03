@@ -606,12 +606,11 @@ describe('PLAN accept stand-ins', () => {
     const a = playerOf(sim, 0);
     const b = playerOf(sim, 1);
     b.set(Transform, { x: 12.2, y: 4, angle: 0 });
-    const aim = b.get(Aim);
-    if (aim) b.set(Aim, { ...aim, x: 1, y: 0 });
+    b.set(Aim, { x: 1, y: 0, holdTicks: 12 });
     const spear = spawnWeapon(sim.ecs, 'spear', 12.2, 5);
     spear.add(Held(), HeldBy(b));
     spear.remove(Loose);
-    const kind = heldWeaponIntercept(sim.ecs, 12.55, 4, 12.85, 4, a);
+    const kind = heldWeaponIntercept(sim.ecs, 12.55, 3.5, 12.55, 4.5, a);
     expect(kind).toBe('disarm');
     expect(spear.has(Held)).toBe(false);
     expect(spear.has(Loose)).toBe(true);
@@ -663,5 +662,71 @@ describe('PLAN accept stand-ins', () => {
       if (hz.kind === HazardKind.Spikeball) y1 = t.y;
     });
     expect(y1).toBeLessThan(y0.n - 0.4);
+  });
+
+  it('snakes hop toward a distant player (PLAN 4.14)', () => {
+    const sim = makeSim({ seed: 412, settings: { playerCount: 1 } });
+    const p = playerOf(sim);
+    sim.ctx.bodies.get(p)?.setPosition({ x: 16, y: 4 });
+    p.set(Transform, { x: 16, y: 4, angle: 0 });
+    spawnSnake(sim.ecs, 8, 4, undefined, false, false);
+    let hopped = false;
+    for (let i = 0; i < 20; i++) {
+      sim.step([hold({}), hold({}), hold({}), hold({})]);
+      sim.ecs.query(Snake).updateEach((_, e) => {
+        if ((sim.ctx.bodies.get(e)?.getLinearVelocity().y ?? 0) > 2) hopped = true;
+      });
+    }
+    expect(hopped).toBe(true);
+  });
+
+  it('flying snakes ignore gravity and chase in 2D (PLAN 4.14 / Appendix C)', () => {
+    const sim = makeSim({ seed: 413, settings: { playerCount: 1 } });
+    const p = playerOf(sim);
+    sim.ctx.bodies.get(p)?.setPosition({ x: 8, y: 10 });
+    p.set(Transform, { x: 8, y: 10, angle: 0 });
+    spawnSnake(sim.ecs, 8, 4, undefined, false, true);
+    let scale = 1;
+    sim.ecs.query(Snake).updateEach((_, e) => {
+      scale = sim.ctx.bodies.get(e)?.getGravityScale() ?? 1;
+    });
+    expect(scale).toBe(0);
+    const y0 = { n: 4 };
+    sim.ecs.query(Snake, Transform).updateEach(([_s, t]) => {
+      y0.n = t.y;
+    });
+    for (let i = 0; i < 40; i++) sim.step([hold({}), hold({}), hold({}), hold({})]);
+    let y1 = y0.n;
+    sim.ecs.query(Snake, Transform).updateEach(([_s, t]) => {
+      y1 = t.y;
+    });
+    expect(y1).toBeGreaterThan(y0.n + 0.8);
+  });
+
+  it('black hole swallows a player who enters the core', () => {
+    const sim = makeSim({ seed: 414, settings: { playerCount: 2 } });
+    const a = playerOf(sim, 0);
+    const b = playerOf(sim, 1);
+    sim.ctx.bodies.get(a)?.setPosition({ x: 8, y: 4 });
+    sim.ctx.bodies.get(b)?.setPosition({ x: 12, y: 4 });
+    a.set(Transform, { x: 8, y: 4, angle: 0 });
+    b.set(Transform, { x: 12, y: 4, angle: 0 });
+    const gun = spawnWeapon(sim.ecs, 'black-hole', 8, 5);
+    gun.add(Held(), HeldBy(a));
+    gun.remove(Loose);
+    sim.step([hold({ attack: true, aimX: 1, aimY: 0 }), hold({}), hold({}), hold({})]);
+    sim.ecs.query(Projectile).updateEach(([p], e) => {
+      p.vx = 0;
+      p.vy = 0;
+      p.x = 12;
+      p.y = 4;
+      p.fuse = 20;
+      sim.ctx.bodies.get(e)?.setLinearVelocity({ x: 0, y: 0 });
+      sim.ctx.bodies.get(e)?.setPosition({ x: 12, y: 4 });
+    });
+    sim.ctx.bodies.get(b)?.setPosition({ x: 12, y: 4 });
+    b.set(Transform, { x: 12, y: 4, angle: 0 });
+    for (let i = 0; i < 8; i++) sim.step([hold({}), hold({}), hold({}), hold({})]);
+    expect(b.has(Dead) || (b.get(Health)?.hp ?? 1) <= 0).toBe(true);
   });
 });

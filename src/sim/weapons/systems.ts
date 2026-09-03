@@ -84,6 +84,7 @@ function spawnBullet(
     def.projectile.kind === 'creature' ||
     def.projectile.kind === 'burst-into';
   if (needsBody) {
+    proj.add(Transform({ x, y, angle: 0 }), PrevTransform({ x, y, angle: 0 }));
     const body = createBoxBody(
       ctx.physics,
       proj,

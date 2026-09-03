@@ -29,6 +29,7 @@ import {
   Player,
   PrevTransform,
   Projectile,
+  ProjectileKind,
   RagdollPart,
   RoundState,
   SimClock,
@@ -278,6 +279,7 @@ export function serializeWorld(world: World, opts?: { skipOwnedByCache?: boolean
 /** Consume change trackers after a full snapshot so the next delta is incremental. */
 const DELTA_TRAITS = [
   Transform,
+  Controller,
   Status,
   Combat,
   HazardPath,
@@ -355,6 +357,20 @@ export function mergeSnapshot(base: WorldSnapshot, delta: WorldSnapshot): WorldS
   };
 }
 
+function projectileNeedsBody(kind: number): boolean {
+  return (
+    kind === ProjectileKind.Grenade ||
+    kind === ProjectileKind.Rocket ||
+    kind === ProjectileKind.Field ||
+    kind === ProjectileKind.Creature ||
+    kind === ProjectileKind.BurstInto
+  );
+}
+
+function applyLinearVelocity(world: World, entity: Entity, vx: number, vy: number): void {
+  getContext(world).bodies.get(entity)?.setLinearVelocity({ x: vx, y: vy });
+}
+
 function applyRecord(world: World, entity: Entity, rec: TraitSnapshot, full: boolean): void {
   const ctx = getContext(world);
   const t = rec.traits.Transform;
@@ -384,6 +400,7 @@ function applyRecord(world: World, entity: Entity, rec: TraitSnapshot, full: boo
       jumpBuffer: Number(c.jumpBuffer ?? curC.jumpBuffer),
       lockTicks: Number(c.lockTicks ?? curC.lockTicks),
     });
+    applyLinearVelocity(world, entity, Number(c.vx ?? curC.vx), Number(c.vy ?? curC.vy));
   }
   const a = rec.traits.Aim;
   const curA = entity.get(Aim);
@@ -439,6 +456,11 @@ function applyRecord(world: World, entity: Entity, rec: TraitSnapshot, full: boo
       gravity: Number(pr.gravity ?? curPr.gravity),
       ownerGrace: Number(pr.ownerGrace ?? curPr.ownerGrace),
     });
+    const pbody = ctx.bodies.get(entity);
+    if (pbody) {
+      pbody.setPosition({ x: Number(pr.x), y: Number(pr.y) });
+      pbody.setLinearVelocity({ x: Number(pr.vx), y: Number(pr.vy) });
+    }
   }
   const st = rec.traits.Status;
   if (st) {
@@ -743,23 +765,43 @@ function spawnMissing(world: World, rec: TraitSnapshot, newRootNetIds: Set<numbe
   }
 
   if (pr) {
-    world.spawn(
+    const kind = Number(pr.kind ?? 0);
+    const px = Number(pr.x ?? x);
+    const py = Number(pr.y ?? y);
+    const vx = Number(pr.vx ?? 0);
+    const vy = Number(pr.vy ?? 0);
+    const gravity = Number(pr.gravity ?? 0);
+    const entity = world.spawn(
       Projectile({
-        kind: Number(pr.kind ?? 0),
+        kind,
         damage: Number(pr.damage ?? 0),
         speed: Number(pr.speed ?? 0),
         bounces: Number(pr.bounces ?? 0),
         fuse: Number(pr.fuse ?? 0),
-        x: Number(pr.x ?? x),
-        y: Number(pr.y ?? y),
-        vx: Number(pr.vx ?? 0),
-        vy: Number(pr.vy ?? 0),
-        gravity: Number(pr.gravity ?? 0),
+        x: px,
+        y: py,
+        vx,
+        vy,
+        gravity,
         ownerGrace: Number(pr.ownerGrace ?? 0),
         defId: Number(pr.defId ?? 0),
       }),
+      Transform({ x: px, y: py, angle }),
+      PrevTransform({ x: px, y: py, angle }),
       NetId({ id: rec.netId }),
     );
+    if (projectileNeedsBody(kind)) {
+      const body = createBoxBody(ctx.physics, entity, 'projectile', px, py, 0.14, 0.14, 'dynamic', {
+        density: 0.4,
+        friction: 0.2,
+        restitution: 0.05,
+        bullet: true,
+        fixedRotation: false,
+      });
+      body.setLinearVelocity({ x: vx, y: vy });
+      body.setGravityScale(gravity > 0 ? gravity / ctx.tuning.gravity : 0);
+      registerBody(world, entity, body);
+    }
     return;
   }
 

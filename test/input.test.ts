@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { radialDeadzone } from '../src/input/gamepad';
 import { rising } from '../src/sim/input';
 import { Aim, Controller } from '../src/sim/traits';
-import { canStartMatch, createMenuState, takeOrReadySeat, takeSeat } from '../src/ui/menus';
+import { canStartMatch, createMenuState, cycleSeatColor, takeOrReadySeat, takeSeat } from '../src/ui/menus';
 import { hold, makeSim, playerOf } from './helpers';
 
 describe('input', () => {
@@ -47,5 +47,20 @@ describe('join seats (PLAN 4.12)', () => {
     takeOrReadySeat(menus.seats, 'keyboard');
     expect(menus.seats[1]?.taken).toBe(true);
     expect(menus.seats[1]?.ready).toBe(false);
+  });
+
+  it('left/right cycles seat color (PLAN 4.12)', () => {
+    const menus = createMenuState();
+    takeSeat(menus.seats, 'pad-0');
+    const seat = menus.seats[0]!;
+    expect(seat.color).toBe(0);
+    cycleSeatColor(seat, 1);
+    expect(seat.color).toBe(1);
+    cycleSeatColor(seat, 1);
+    cycleSeatColor(seat, 1);
+    cycleSeatColor(seat, 1);
+    expect(seat.color).toBe(0);
+    cycleSeatColor(seat, -1);
+    expect(seat.color).toBe(3);
   });
 });

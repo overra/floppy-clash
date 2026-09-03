@@ -164,6 +164,25 @@ describe('gamepad mapping', () => {
     expect(mem.moveX).toBe(a.moveX);
   });
 
+  it('LB / L1 is a second jump binding (PLAN 4.12)', () => {
+    const input = readPad(
+      fakePad({ buttons: [false, false, false, false, true] }),
+      emptyLatch(),
+      { x: 1, y: 0 },
+    );
+    expect(input.jump).toBe(true);
+    expect(input.attack).toBe(false);
+  });
+
+  it('d-pad is a digital move / duck fallback (PLAN 4.12)', () => {
+    const buttons = Array.from({ length: 17 }, () => false);
+    buttons[13] = true;
+    buttons[15] = true;
+    const input = readPad(fakePad({ buttons }), emptyLatch(), { x: 1, y: 0 });
+    expect(input.moveX).toBe(1);
+    expect(input.down).toBe(true);
+  });
+
   it('honours a custom remap', () => {
     const latch = emptyLatch();
     const pad = fakePad({

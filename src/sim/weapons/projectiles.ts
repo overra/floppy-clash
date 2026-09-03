@@ -30,6 +30,7 @@ import { explodeDamageAt, rollIfRanged } from './mapping';
 import type { FixtureUserData } from '../physics/categories';
 
 const bullets = createQuery(Projectile);
+const heldWeapons = createQuery(Weapon);
 
 function ownerOf(entity: Entity): Entity | undefined {
   return entity.targetFor(OwnedBy);
@@ -94,8 +95,10 @@ export function heldWeaponIntercept(
   owner: Entity | undefined,
 ): 'none' | 'deflect' | 'disarm' {
   let result: 'none' | 'deflect' | 'disarm' = 'none';
-  world.query(Weapon, Held).updateEach(([w], weapon) => {
+  // Query Weapon only — a same-tick Held add is not always in a Weapon+Held cache.
+  world.query(heldWeapons).updateEach(([w], weapon) => {
     if (result !== 'none') return;
+    if (!weapon.has(Held)) return;
     const holder = weapon.targetFor(HeldBy);
     if (!holder || holder === owner) return;
     const aim = holder.get(Aim);

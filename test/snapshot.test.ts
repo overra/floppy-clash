@@ -34,6 +34,7 @@ import {
   OwnedBy,
   PartOf,
   Projectile,
+  ProjectileKind,
   RagdollPart,
   Snake,
   Status,
@@ -276,6 +277,66 @@ describe('M8 snapshot', () => {
       if (path.points.length >= 2) pathOk = true;
     });
     expect(pathOk).toBe(true);
+  });
+
+  it('restores player body velocity from Controller (PLAN 4.13)', () => {
+    const host = makeSim({ seed: 107, settings: { playerCount: 2 } });
+    const a = playerOf(host, 0);
+    host.ctx.bodies.get(a)?.setLinearVelocity({ x: 7.5, y: 3.2 });
+    const ctrl = a.get(Controller)!;
+    a.set(Controller, { ...ctrl, vx: 7.5, vy: 3.2 });
+    const snap = serializeWorld(host.ecs);
+    const view = createClientView(snap);
+    const v = view.sim.ctx.bodies.get(playerOf(view.sim, 0))?.getLinearVelocity();
+    expect(v?.x).toBeCloseTo(7.5, 1);
+    expect(v?.y).toBeCloseTo(3.2, 1);
+  });
+
+  it('deltas include Controller-only ducking without Transform motion', () => {
+    const host = makeSim({ seed: 108, settings: { playerCount: 2 } });
+    serializeWorld(host.ecs);
+    drainChangeTrackers(host.ecs);
+    const a = playerOf(host, 0);
+    const ctrl = a.get(Controller)!;
+    a.set(Controller, { ...ctrl, ducking: true, vx: 2, vy: -1 });
+    const delta = serializeDelta(host.ecs);
+    const rec = delta.entities.find((e) => Number(e.traits.Player?.slot) === 0);
+    expect(rec?.traits.Controller?.ducking).toBe(1);
+    expect(rec?.traits.Controller?.vx).toBe(2);
+  });
+
+  it('late-join spawns a body for grenade projectiles and copies velocity', () => {
+    const host = makeSim({ seed: 109, settings: { playerCount: 2 } });
+    const a = playerOf(host, 0);
+    const gun = spawnWeapon(host.ecs, 'grenade-launcher', 8, 6);
+    gun.add(Held(), HeldBy(a));
+    gun.remove(Loose);
+    host.step([hold({ attack: true, aimX: 1, aimY: 0 }), hold({}), hold({}), hold({})]);
+    const hostVel = { x: 0, y: 0, found: false };
+    host.ecs.query(Projectile).updateEach(([p], e) => {
+      const v = host.ctx.bodies.get(e)?.getLinearVelocity();
+      if (v) {
+        hostVel.x = v.x;
+        hostVel.y = v.y;
+        hostVel.found = true;
+      }
+      expect(p.kind).toBe(ProjectileKind.Grenade);
+    });
+    expect(hostVel.found).toBe(true);
+    const snap = serializeWorld(host.ecs);
+    expect(snap.entities.some((e) => e.traits.Projectile && e.traits.Transform)).toBe(true);
+    const view = createClientView(snap);
+    let bodies = 0;
+    let vx = 0;
+    view.sim.ecs.query(Projectile).updateEach((_, e) => {
+      const body = view.sim.ctx.bodies.get(e);
+      if (body) {
+        bodies += 1;
+        vx = body.getLinearVelocity().x;
+      }
+    });
+    expect(bodies).toBeGreaterThan(0);
+    expect(Math.abs(vx)).toBeGreaterThan(2);
   });
 
   it('deltas include Status and OwnedBy changes without Transform motion', () => {

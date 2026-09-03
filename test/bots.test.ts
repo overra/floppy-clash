@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { bulletApproaching } from '../src/sim/ai/bots';
+import { bulletApproaching, hazardAhead } from '../src/sim/ai/bots';
+import { getLevel } from '../src/levels/catalog';
 import { Bot, Projectile, Transform } from '../src/sim/traits';
 import { makeSim, playerOf } from './helpers';
 
@@ -48,6 +49,19 @@ describe('M9 bots', () => {
     );
     expect(bulletApproaching(sim.ecs, 14, 4)).toBe(true);
     expect(bulletApproaching(sim.ecs, 8, 10)).toBe(false);
+  });
+
+  it('avoids lava / pits in the look-ahead (PLAN 4.14)', () => {
+    const sim = makeSim({
+      level: getLevel('test-lava'),
+      seed: 94,
+      settings: { playerCount: 1, bots: 1 },
+    });
+    const lava = getLevel('test-lava').objects.find((o) => o.type === 'lava');
+    const x = lava?.x ?? 16;
+    const y = (lava?.y ?? 1.6) + 1.2;
+    expect(hazardAhead(sim.ecs, x - 1.4, y, 1)).toBe(true);
+    expect(hazardAhead(sim.ecs, 4, 3.2, 1)).toBe(false);
   });
 
   it('bot soak of 2000 ticks stays finite', { timeout: 30_000 }, () => {

@@ -59,7 +59,8 @@ export function bulletApproaching(world: World, x: number, y: number): boolean {
   return danger;
 }
 
-function hazardAhead(world: World, x: number, y: number, dir: number): boolean {
+/** PLAN 4.14: short look-ahead + pit raycast. */
+export function hazardAhead(world: World, x: number, y: number, dir: number): boolean {
   let danger = false;
   const lookX = x + dir * 1.4;
   world.query(Hazard, Transform).updateEach(([hz, ht]) => {
