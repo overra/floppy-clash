@@ -325,12 +325,16 @@ test('guest joining after the match started gets a binary late-join snapshot', a
     .poll(async () => guest.evaluate(() => window.__floppy?.netSlot ?? 0), { timeout: 10_000 })
     .toBeGreaterThan(0);
   const slot = await guest.evaluate(() => window.__floppy?.netSlot ?? 0);
+  await host.waitForFunction(() => window.__floppy?.phase === 2, null, { timeout: 15_000 });
   const x0 = await host.evaluate((s) => window.__floppy?.playerXs?.[s] ?? 0, slot);
-  await guest.evaluate(() => window.__floppy?.holdInput({ moveX: 1, aimX: 1, aimY: 0 }));
   await expect
-    .poll(async () => host.evaluate((s) => window.__floppy?.playerXs?.[s] ?? 0, slot), {
-      timeout: 15_000,
-    })
+    .poll(
+      async () => {
+        await guest.evaluate(() => window.__floppy?.holdInput({ moveX: 1, aimX: 1, aimY: 0 }));
+        return host.evaluate((s) => window.__floppy?.playerXs?.[s] ?? 0, slot);
+      },
+      { timeout: 15_000 },
+    )
     .toBeGreaterThan(x0 + 0.2);
   await guest.evaluate(() => window.__floppy?.clearInput());
   await hostCtx.close();
