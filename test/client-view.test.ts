@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { applyLateJoinSnapshot, createClientView, worldFromSnapshot } from '../src/net/clientView';
+import {
+  applyLateJoinSnapshot,
+  createClientView,
+  snapshotCanOpenClientView,
+  worldFromSnapshot,
+} from '../src/net/clientView';
 import { createInterpBuffer } from '../src/net/interp';
 import { decode, encode } from '../src/net/protocol';
 import { netShapeFromSearch } from '../src/net/shape';
@@ -266,5 +271,19 @@ describe('client interpolation view', () => {
     expect(view.sim.ctx.level.bounds.w).toBe(36);
     expect(view.sim.ecs.get(RoundState)?.phase).toBe(RoundPhase.Fighting);
     expect(snap.phase).toBe(RoundPhase.Fighting);
+  });
+
+  it('refuses to open a client view from a delta or a custom level without JSON', () => {
+    const host = makeSim({ seed: 9, settings: { playerCount: 2 } });
+    const full = host.snapshot();
+    const delta = { ...host.snapshotDelta(), full: false as const };
+    expect(snapshotCanOpenClientView(delta)).toBe(false);
+    expect(snapshotCanOpenClientView(full)).toBe(true);
+    const custom = { ...full, levelId: 'e2e-flat' };
+    expect(snapshotCanOpenClientView(custom)).toBe(false);
+    expect(snapshotCanOpenClientView(custom, { ...woodsClearing, id: 'e2e-flat' })).toBe(true);
+    expect(snapshotCanOpenClientView({ ...delta, levelId: 'e2e-flat' }, { ...woodsClearing, id: 'e2e-flat' })).toBe(
+      false,
+    );
   });
 });

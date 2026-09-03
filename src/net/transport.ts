@@ -217,10 +217,21 @@ export async function createWebRtcSession(
         const link = peers.get(peerId);
         if (link) link.unreliable = ch;
       } else unreliable = ch;
-    } else if (role === 'host') {
+      return;
+    }
+    if (role === 'host') {
       const link = peers.get(peerId);
       if (link) link.reliable = ch;
-    } else reliable = ch;
+      const announce = () => {
+        for (const h of handlers) h({ t: 'event', kind: 'peer-open', payload: peerId });
+      };
+      if (ch.readyState === 'open') announce();
+      else ch.onopen = announce;
+      return;
+    }
+    reliable = ch;
+    // Ready only after the reliable channel is open; hello is sent on that channel
+    // and is silently dropped if we race the unordered channel's onopen.
     if (ch.readyState === 'open') markOpen?.();
     else ch.onopen = () => markOpen?.();
   };

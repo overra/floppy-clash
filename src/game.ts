@@ -65,7 +65,7 @@ import {
   Transform,
   Weapon,
 } from './sim/traits';
-import { createClientView, type ClientView } from './net/clientView';
+import { createClientView, snapshotCanOpenClientView, type ClientView } from './net/clientView';
 import { createSimWorld, type SimHandle } from './sim/world';
 import { spawnWeapon } from './sim/systems/weapons';
 import { applyFistDriveAll } from './sim/ai/fistDrive';
@@ -73,7 +73,7 @@ import { tuning } from './sim/tuning';
 import { loadSettings, saveSettings, type UserSettings } from './ui/settingsStore';
 import { loadStats, recordKos, recordMatch } from './ui/statsStore';
 import { hostContentMessages, lateJoinSnapshotMessage, snapshotBytes } from './net/protocol';
-import { drainChangeTrackers } from './sim/snapshot';
+import { drainChangeTrackers, type WorldSnapshot } from './sim/snapshot';
 import {
   acceptInputBundle,
   applyRemoteInboxes,
@@ -140,6 +140,7 @@ type FloppyDebug = {
   clientViewTick: number;
   clientAppliedX: number;
   clientRestored: boolean;
+  clientPendingSnaps: number;
   weaponCount: number;
   p0Hp: number;
   p0Dead: boolean;
@@ -237,6 +238,7 @@ export function createGame(root: HTMLElement): Game {
   const slotByName = new Map<string, number>();
   let helloRetryAt = 0;
   let pendingLevel: LevelDef | undefined;
+  let pendingClientSnaps: WorldSnapshot[] = [];
   const remoteInboxes: RemoteInbox[] = [
     emptyRemoteInbox(),
     emptyRemoteInbox(),
@@ -427,6 +429,67 @@ export function createGame(root: HTMLElement): Game {
     });
   }
 
+  function enqueuePendingSnap(snap: WorldSnapshot): void {
+    pendingClientSnaps.push(snap);
+    if (pendingClientSnaps.length > 8) pendingClientSnaps.splice(0, pendingClientSnaps.length - 8);
+  }
+
+  function tryOpenClientView(snap: WorldSnapshot): boolean {
+    if (clientView) return true;
+    if (!snapshotCanOpenClientView(snap, pendingLevel)) {
+      enqueuePendingSnap(snap);
+      return false;
+    }
+    try {
+      const override =
+        pendingLevel && (!snap.levelId || snap.levelId === pendingLevel.id) ? pendingLevel : undefined;
+      clientView = createClientView(snap, 120, override);
+      pendingClientSnaps = [];
+      return true;
+    } catch {
+      enqueuePendingSnap(snap);
+      return false;
+    }
+  }
+
+  function flushPendingClientSnaps(): void {
+    if (clientView || pendingClientSnaps.length === 0) return;
+    const queued = pendingClientSnaps;
+    pendingClientSnaps = [];
+    let opened: WorldSnapshot | undefined;
+    for (const snap of queued) {
+      if (tryOpenClientView(snap)) {
+        opened = snap;
+        break;
+      }
+    }
+    if (!clientView || !opened) return;
+    for (const extra of queued) {
+      if (extra === opened || extra.tick < opened.tick) continue;
+      try {
+        clientView.push(performance.now(), extra);
+        clientView.apply(performance.now());
+      } catch {
+        /* later snap */
+      }
+    }
+    syncClientLevelChrome();
+  }
+
+  function retryClientHello(): void {
+    if (menus.netRole !== 'client' || netSlot !== 0 || !net.ready || !netName) return;
+    const now = performance.now();
+    if (now - helloRetryAt <= 400) return;
+    helloRetryAt = now;
+    net.send({ t: 'hello', name: netName }, true);
+  }
+
+  function enterClientPlayIfReady(): void {
+    if (!clientView || menus.netRole !== 'client' || menus.screen === 'play') return;
+    menus.screen = 'play';
+    show();
+  }
+
   function attachNet(session: NetSession): void {
     net.close();
     net = session;
@@ -468,7 +531,11 @@ export function createGame(root: HTMLElement): Game {
             /* id-only payload */
           }
         }
-        if (pendingLevel) clientView?.useLevel(pendingLevel);
+        if (pendingLevel) {
+          clientView?.useLevel(pendingLevel);
+          flushPendingClientSnaps();
+          enterClientPlayIfReady();
+        }
         if (menus.screen === 'lobby') show();
       }
       if (msg.t === 'input' && session.role === 'host') {
@@ -490,27 +557,36 @@ export function createGame(root: HTMLElement): Game {
         menus.notice = `Late-join snapshot tick ${msg.snap.tick}`;
         if (session.role === 'client') {
           if (pendingLevel) clientView?.useLevel(pendingLevel);
-          if (!clientView) {
-            clientView = createClientView(msg.snap, 120, pendingLevel);
+          if (!clientView) tryOpenClientView(msg.snap);
+          if (clientView) {
+            try {
+              clientView.push(performance.now(), msg.snap);
+              clientView.apply(performance.now());
+              syncClientLevelChrome();
+            } catch {
+              /* wait for a later snapshot */
+            }
           }
-          clientView.push(performance.now(), msg.snap);
-          clientView.apply(performance.now());
-          syncClientLevelChrome();
-          const nowMs = performance.now();
-          if (netSlot === 0 && netName && nowMs - helloRetryAt > 400) {
-            helloRetryAt = nowMs;
-            session.send({ t: 'hello', name: netName }, true);
-          }
-          if (menus.screen !== 'play') {
-            menus.screen = 'play';
-            show();
-          }
+          retryClientHello();
+          enterClientPlayIfReady();
         }
         if (menus.screen === 'lobby') show();
       }
       if (msg.t === 'event' && msg.kind === 'disconnect') {
         menus.notice = 'Peer disconnected';
         if (menus.screen === 'lobby') show();
+      }
+      if (msg.t === 'event' && msg.kind === 'peer-open' && session.role === 'host') {
+        for (const m of hostContentMessages(
+          JSON.stringify({ maxHp: settings.maxHp, firstTo: settings.firstTo }),
+          JSON.stringify(sim?.ctx.level ?? { id: 'host-level' }),
+        )) {
+          session.send(m, true);
+        }
+        if (sim) {
+          session.send(lateJoinSnapshotMessage(sim.snapshot()), true);
+          drainChangeTrackers(sim.ecs);
+        }
       }
       if (msg.t === 'hello' && session.role === 'host') {
         let slot = slotByName.get(msg.name);
@@ -560,7 +636,7 @@ export function createGame(root: HTMLElement): Game {
       );
       if (role === 'client') {
         netName = `g${Math.random().toString(36).slice(2, 6)}`;
-        session.send({ t: 'hello', name: netName });
+        session.send({ t: 'hello', name: netName }, true);
       }
       if (role === 'host') {
         nextGuestSlot = 0;
@@ -873,6 +949,7 @@ export function createGame(root: HTMLElement): Game {
   function tick(now: number) {
     const dt = Math.min(0.05, (now - last) / 1000);
     last = now;
+    retryClientHello();
     applyPauseHotkey();
     // PLAN 4.12: join A/color/Start and pause Start are sampled even when the sim is idle.
     if (menus.screen === 'join' || menus.screen === 'pause') {
@@ -1171,6 +1248,7 @@ export function createGame(root: HTMLElement): Game {
       clientViewTick: clientView?.appliedTick ?? 0,
       clientAppliedX: clientView?.appliedX ?? 0,
       clientRestored: clientView?.restored ?? false,
+      clientPendingSnaps: pendingClientSnaps.length,
       weaponCount: countWeapons(),
       p0Hp: hpOfSlot(handle, 0),
       p0Dead: deadOfSlot(handle, 0),

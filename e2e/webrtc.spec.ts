@@ -20,6 +20,10 @@ const FLAT_ARENA = {
   ],
 };
 
+function uniqueRoom(prefix: string): string {
+  return `${prefix}${Math.random().toString(36).slice(2, 6).toUpperCase()}`.slice(0, 8);
+}
+
 test('two pages exchange chat over localhost WebRTC', async ({ browser }) => {
   const hostCtx = await browser.newContext();
   const guestCtx = await browser.newContext();
@@ -29,8 +33,9 @@ test('two pages exchange chat over localhost WebRTC', async ({ browser }) => {
   await guest.goto('/?signal=ws://127.0.0.1:8787');
   await host.getByRole('button', { name: 'Online' }).click();
   await guest.getByRole('button', { name: 'Online' }).click();
-  await host.locator('#room').fill('E2E42');
-  await guest.locator('#room').fill('E2E42');
+  const room = uniqueRoom('E2E');
+  await host.locator('#room').fill(room);
+  await guest.locator('#room').fill(room);
   await Promise.all([
     host.getByRole('button', { name: 'Host' }).click(),
     guest.getByRole('button', { name: 'Join' }).click(),
@@ -50,6 +55,7 @@ test('two pages exchange chat over localhost WebRTC', async ({ browser }) => {
 });
 
 test('late-join snapshot restores a client interpolation view', async ({ browser }) => {
+  test.setTimeout(90_000);
   const hostCtx = await browser.newContext();
   const guestCtx = await browser.newContext();
   const host = await hostCtx.newPage();
@@ -58,8 +64,9 @@ test('late-join snapshot restores a client interpolation view', async ({ browser
   await guest.goto('/?signal=ws://127.0.0.1:8787');
   await host.getByRole('button', { name: 'Online' }).click();
   await guest.getByRole('button', { name: 'Online' }).click();
-  await host.locator('#room').fill('SNAP01');
-  await guest.locator('#room').fill('SNAP01');
+  const room = uniqueRoom('SNAP');
+  await host.locator('#room').fill(room);
+  await guest.locator('#room').fill(room);
   await Promise.all([
     host.getByRole('button', { name: 'Host' }).click(),
     guest.getByRole('button', { name: 'Join' }).click(),
@@ -115,11 +122,18 @@ test('late-join snapshot restores a client interpolation view', async ({ browser
   await expect(guest.locator('#matchchat')).toContainText('ingame-hi', { timeout: 10_000 });
   const slot = await guest.evaluate(() => window.__floppy?.netSlot ?? 0);
   expect(slot).toBeGreaterThan(0);
+  await host.waitForFunction(() => window.__floppy?.phase === 2, null, { timeout: 20_000 });
+  await host.waitForFunction(
+    (s) =>
+      window.__floppy?.playerGrounded?.[s] === true && (window.__floppy?.playerXs?.[s] ?? 0) > 1,
+    slot,
+    { timeout: 20_000 },
+  );
   const x0 = await host.evaluate((s) => window.__floppy?.playerXs?.[s] ?? 0, slot);
   await guest.evaluate(() => window.__floppy?.holdInput({ moveX: 1, aimX: 1, aimY: 0 }));
   await expect
     .poll(async () => host.evaluate((s) => window.__floppy?.playerXs?.[s] ?? 0, slot), {
-      timeout: 15_000,
+      timeout: 20_000,
     })
     .toBeGreaterThan(x0 + 0.25);
   await expect
@@ -140,7 +154,7 @@ test('four localhost peers connect; 100ms/2% shaping still delivers chat', async
   const g1 = pages[1]!;
   const g2 = pages[2]!;
   const g3 = pages[3]!;
-  const room = 'FOURP1';
+  const room = uniqueRoom('FOUR');
   for (const p of pages) {
     await p.goto(`/?signal=ws://127.0.0.1:8787&net=100,2`);
     await p.getByRole('button', { name: 'Online' }).click();
@@ -253,8 +267,9 @@ test('host custom level JSON is applied on the client sim', async ({ browser }) 
   await guest.goto('/?signal=ws://127.0.0.1:8787');
   await host.getByRole('button', { name: 'Online' }).click();
   await guest.getByRole('button', { name: 'Online' }).click();
-  await host.locator('#room').fill('LVL01');
-  await guest.locator('#room').fill('LVL01');
+  const room = uniqueRoom('LVL');
+  await host.locator('#room').fill(room);
+  await guest.locator('#room').fill(room);
   await Promise.all([
     host.getByRole('button', { name: 'Host' }).click(),
     guest.getByRole('button', { name: 'Join' }).click(),
@@ -308,76 +323,86 @@ test('host custom level JSON is applied on the client sim', async ({ browser }) 
 test('guest joining after the match started gets a binary late-join snapshot', async ({
   browser,
 }) => {
+  test.setTimeout(90_000);
+  const room = uniqueRoom('LATE');
   const hostCtx = await browser.newContext();
   const guestCtx = await browser.newContext();
   const host = await hostCtx.newPage();
   const guest = await guestCtx.newPage();
   await host.goto('/?signal=ws://127.0.0.1:8787');
   await host.getByRole('button', { name: 'Online' }).click();
-  await host.locator('#room').fill('LATE01');
+  await host.locator('#room').fill(room);
   await host.getByRole('button', { name: 'Host' }).click();
   await expect(host.locator('#netstatus')).toHaveAttribute('data-net-state', 'up', {
     timeout: 20_000,
   });
+  await host.waitForFunction(() => window.__floppy?.netReady === true, null, { timeout: 10_000 });
   await host.waitForFunction(() => Boolean(window.__floppy?.loadLevel));
   const lateArena = await host.evaluate((level) => window.__floppy?.loadLevel(level), FLAT_ARENA);
   expect(lateArena).toBe('e2e-flat');
   await host.getByRole('button', { name: 'Start match' }).click();
   await expect(host.locator('canvas#game')).toBeVisible({ timeout: 15_000 });
-  await host.waitForFunction(() => (window.__floppy?.tick ?? 0) > 8, null, { timeout: 15_000 });
+  await host.waitForFunction(
+    () => window.__floppy?.phase === 2 && (window.__floppy?.tick ?? 0) > 8,
+    null,
+    { timeout: 20_000 },
+  );
   await guest.goto('/?signal=ws://127.0.0.1:8787');
   await guest.getByRole('button', { name: 'Online' }).click();
-  await guest.locator('#room').fill('LATE01');
+  await guest.locator('#room').fill(room);
   await guest.getByRole('button', { name: 'Join' }).click();
+  await expect
+    .poll(async () => host.evaluate(() => window.__floppy?.netPeers ?? 0), { timeout: 25_000 })
+    .toBeGreaterThanOrEqual(1);
+  await expect
+    .poll(async () => guest.evaluate(() => window.__floppy?.netReady === true), { timeout: 25_000 })
+    .toBe(true);
   // Host is already broadcasting 20 Hz snaps; the guest leaves the lobby as
   // soon as the late-join frame lands, so #netstatus is not on screen.
+  // Require the restored view — netState 'up' alone is a DataChannel-open cheat.
   await expect
     .poll(
       async () =>
         guest.evaluate(
-          () => window.__floppy?.netState === 'up' || window.__floppy?.clientRestored === true,
+          () => window.__floppy?.clientRestored === true && (window.__floppy?.lastSnapTick ?? 0) > 0,
         ),
-      { timeout: 20_000 },
+      { timeout: 30_000 },
     )
     .toBe(true);
   await expect
-    .poll(async () => guest.evaluate(() => window.__floppy?.clientRestored ?? false), {
-      timeout: 20_000,
-    })
-    .toBe(true);
-  await expect
     .poll(async () => guest.evaluate(() => window.__floppy?.lastSnapBinary ?? false), {
-      timeout: 10_000,
+      timeout: 15_000,
     })
     .toBe(true);
-  await expect
-    .poll(async () => guest.evaluate(() => window.__floppy?.lastSnapTick ?? 0), { timeout: 10_000 })
-    .toBeGreaterThan(0);
   const hostX = await host.evaluate(() => window.__floppy?.playerXs?.[0] ?? 0);
   const guestX = await guest.evaluate(() => window.__floppy?.clientAppliedX ?? 0);
   expect(Number.isFinite(hostX)).toBe(true);
   expect(Number.isFinite(guestX)).toBe(true);
   expect(Math.abs(guestX - hostX)).toBeLessThan(4);
   await expect
-    .poll(async () => guest.evaluate(() => window.__floppy?.netSlot ?? 0), { timeout: 10_000 })
+    .poll(async () => guest.evaluate(() => window.__floppy?.netSlot ?? 0), { timeout: 20_000 })
     .toBeGreaterThan(0);
   const slot = await guest.evaluate(() => window.__floppy?.netSlot ?? 0);
-  await host.waitForFunction(() => window.__floppy?.phase === 2, null, { timeout: 15_000 });
   await host.waitForFunction(
-    (s) => window.__floppy?.playerGrounded?.[s] === true,
+    (s) =>
+      window.__floppy?.phase === 2 &&
+      window.__floppy?.playerGrounded?.[s] === true &&
+      (window.__floppy?.playerXs?.[s] ?? 0) > 1,
     slot,
-    { timeout: 8_000 },
+    { timeout: 20_000 },
   );
   const x0 = await host.evaluate((s) => window.__floppy?.playerXs?.[s] ?? 0, slot);
+  await guest.evaluate(() => window.__floppy?.holdInput({ moveX: 1, aimX: 1, aimY: 0 }));
   await expect
-    .poll(
-      async () => {
-        await guest.evaluate(() => window.__floppy?.holdInput({ moveX: 1, aimX: 1, aimY: 0 }));
-        return host.evaluate((s) => window.__floppy?.playerXs?.[s] ?? 0, slot);
-      },
-      { timeout: 15_000 },
-    )
+    .poll(async () => host.evaluate((s) => window.__floppy?.playerXs?.[s] ?? 0, slot), {
+      timeout: 20_000,
+    })
     .toBeGreaterThan(x0 + 0.2);
+  await expect
+    .poll(async () => host.evaluate(() => window.__floppy?.lastInputBundleLen ?? 0), {
+      timeout: 15_000,
+    })
+    .toBeGreaterThanOrEqual(1);
   await guest.evaluate(() => window.__floppy?.clearInput());
   await hostCtx.close();
   await guestCtx.close();

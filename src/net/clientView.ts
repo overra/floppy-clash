@@ -18,6 +18,15 @@ export type ClientView = {
   apply: (now: number) => WorldSnapshot | null;
 };
 
+/** Full snap plus a catalog level or host JSON. Deltas must not open a fresh view. */
+export function snapshotCanOpenClientView(snap: WorldSnapshot, pending?: LevelDef): boolean {
+  if (snap.full === false) return false;
+  const id = snap.levelId;
+  if (!id) return true;
+  if (findLevel(id)) return true;
+  return Boolean(pending && pending.id === id);
+}
+
 export function worldFromSnapshot(snap: WorldSnapshot, levelOverride?: LevelDef): SimHandle {
   let level: LevelDef;
   if (levelOverride) {
