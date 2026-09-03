@@ -25,7 +25,7 @@ describe('PLAN 4.11 persistent decals', () => {
 
     const hashAfterStamp = layer.hashPixels();
     expect(hashAfterStamp).toBe(hashPixels(layer));
-    const [r, g, b, a] = layer.sample(4, 3);
+    const [r, g, _b, a] = layer.sample(4, 3);
     expect(a).toBeGreaterThan(0);
     expect(r).toBeGreaterThan(g);
 
