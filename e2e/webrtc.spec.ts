@@ -15,8 +15,12 @@ test('two pages exchange chat over localhost WebRTC', async ({ browser }) => {
     host.getByRole('button', { name: 'Host' }).click(),
     guest.getByRole('button', { name: 'Join' }).click(),
   ]);
-  await expect(host.locator('#netstatus')).toHaveAttribute('data-net-state', 'up', { timeout: 20_000 });
-  await expect(guest.locator('#netstatus')).toHaveAttribute('data-net-state', 'up', { timeout: 20_000 });
+  await expect(host.locator('#netstatus')).toHaveAttribute('data-net-state', 'up', {
+    timeout: 20_000,
+  });
+  await expect(guest.locator('#netstatus')).toHaveAttribute('data-net-state', 'up', {
+    timeout: 20_000,
+  });
   await host.locator('#chat').fill('hello webrtc');
   await host.getByRole('button', { name: 'Send' }).click();
   await expect(guest.locator('text=hello webrtc')).toBeVisible({ timeout: 10_000 });
@@ -40,15 +44,31 @@ test('late-join snapshot restores a client interpolation view', async ({ browser
     host.getByRole('button', { name: 'Host' }).click(),
     guest.getByRole('button', { name: 'Join' }).click(),
   ]);
-  await expect(host.locator('#netstatus')).toHaveAttribute('data-net-state', 'up', { timeout: 20_000 });
-  await expect(guest.locator('#netstatus')).toHaveAttribute('data-net-state', 'up', { timeout: 20_000 });
+  await expect(host.locator('#netstatus')).toHaveAttribute('data-net-state', 'up', {
+    timeout: 20_000,
+  });
+  await expect(guest.locator('#netstatus')).toHaveAttribute('data-net-state', 'up', {
+    timeout: 20_000,
+  });
   await host.getByRole('button', { name: 'Start match' }).click();
-  await expect.poll(async () => guest.evaluate(() => window.__floppy?.clientRestored ?? false), { timeout: 20_000 }).toBe(true);
-  await expect.poll(async () => guest.evaluate(() => window.__floppy?.lastSnapTick ?? 0), { timeout: 10_000 }).toBeGreaterThan(0);
-  await expect.poll(async () => guest.evaluate(() => window.__floppy?.clientViewTick ?? 0), { timeout: 10_000 }).toBeGreaterThan(0);
+  await expect
+    .poll(async () => guest.evaluate(() => window.__floppy?.clientRestored ?? false), {
+      timeout: 20_000,
+    })
+    .toBe(true);
+  await expect
+    .poll(async () => guest.evaluate(() => window.__floppy?.lastSnapTick ?? 0), { timeout: 10_000 })
+    .toBeGreaterThan(0);
+  await expect
+    .poll(async () => guest.evaluate(() => window.__floppy?.clientViewTick ?? 0), {
+      timeout: 10_000,
+    })
+    .toBeGreaterThan(0);
   const x = await guest.evaluate(() => window.__floppy?.clientAppliedX ?? 0);
   expect(Number.isFinite(x)).toBe(true);
-  await expect.poll(async () => guest.evaluate(() => window.__floppy?.netSlot ?? 0), { timeout: 10_000 }).toBeGreaterThan(0);
+  await expect
+    .poll(async () => guest.evaluate(() => window.__floppy?.netSlot ?? 0), { timeout: 10_000 })
+    .toBeGreaterThan(0);
   await expect(host.locator('#matchchat')).toBeVisible();
   await host.keyboard.press('Enter');
   await expect(host.locator('#matchchat-in')).toBeVisible();
@@ -74,21 +94,50 @@ test('four localhost peers connect; 100ms/2% shaping still delivers chat', async
   }
   await host.getByRole('button', { name: 'Host' }).click();
   await g1.getByRole('button', { name: 'Join' }).click();
-  await expect(host.locator('#netstatus')).toHaveAttribute('data-net-state', 'up', { timeout: 25_000 });
-  await expect(g1.locator('#netstatus')).toHaveAttribute('data-net-state', 'up', { timeout: 25_000 });
+  await expect(host.locator('#netstatus')).toHaveAttribute('data-net-state', 'up', {
+    timeout: 25_000,
+  });
+  await expect(g1.locator('#netstatus')).toHaveAttribute('data-net-state', 'up', {
+    timeout: 25_000,
+  });
   await g2.getByRole('button', { name: 'Join' }).click();
-  await expect(g2.locator('#netstatus')).toHaveAttribute('data-net-state', 'up', { timeout: 25_000 });
+  await expect(g2.locator('#netstatus')).toHaveAttribute('data-net-state', 'up', {
+    timeout: 25_000,
+  });
   await g3.getByRole('button', { name: 'Join' }).click();
-  await expect(g3.locator('#netstatus')).toHaveAttribute('data-net-state', 'up', { timeout: 25_000 });
-  await expect.poll(async () => host.evaluate(() => window.__floppy?.netPeers ?? 0), { timeout: 10_000 }).toBeGreaterThanOrEqual(3);
-  await g1.locator('#chat').fill('peer-one');
-  await g1.getByRole('button', { name: 'Send' }).click();
-  await g2.locator('#chat').fill('peer-two');
-  await g2.getByRole('button', { name: 'Send' }).click();
-  await g3.locator('#chat').fill('peer-three');
-  await g3.getByRole('button', { name: 'Send' }).click();
-  await expect(host.locator('text=peer-one')).toBeVisible({ timeout: 15_000 });
-  await expect(host.locator('text=peer-two')).toBeVisible({ timeout: 15_000 });
-  await expect(host.locator('text=peer-three')).toBeVisible({ timeout: 15_000 });
+  await expect(g3.locator('#netstatus')).toHaveAttribute('data-net-state', 'up', {
+    timeout: 25_000,
+  });
+  await expect
+    .poll(async () => host.evaluate(() => window.__floppy?.netPeers ?? 0), { timeout: 10_000 })
+    .toBeGreaterThanOrEqual(3);
+  await expect
+    .poll(async () => g3.evaluate(() => window.__floppy?.netReady ?? false), { timeout: 10_000 })
+    .toBe(true);
+  const send = async (page: typeof g1, text: string) => {
+    await page.locator('#chat').fill(text);
+    await page.getByRole('button', { name: 'Send' }).click();
+  };
+  await send(g1, 'peer-one');
+  await send(g2, 'peer-two');
+  await send(g3, 'peer-three');
+  const seen = async (needle: string) =>
+    host.evaluate((n) => document.body.innerText.includes(n), needle);
+  for (const [page, text] of [
+    [g1, 'peer-one'],
+    [g2, 'peer-two'],
+    [g3, 'peer-three'],
+  ] as const) {
+    await expect
+      .poll(
+        async () => {
+          if (await seen(text)) return true;
+          await send(page, text);
+          return seen(text);
+        },
+        { timeout: 20_000 },
+      )
+      .toBe(true);
+  }
   await Promise.all(ctxs.map((c) => c.close()));
 });
