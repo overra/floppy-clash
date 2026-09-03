@@ -13,12 +13,17 @@ export const laser: HazardModule = {
   },
   step(world, _entity, hz) {
     const ctx = getContext(world);
-    const cycle = (hz.param0 || 90) + (hz.param1 || 90);
-    const phase = (ctx.tick + (hz.param2 || 0)) % cycle;
-    hz.armed = phase > (hz.param0 || 90) ? 1 : 0;
+    const on = hz.param0 || 40;
+    const off = hz.param1 || 50;
+    const warn = hz.param2 || 12;
+    const cycle = on + off;
+    const phase = ctx.tick % cycle;
+    if (phase < warn) hz.armed = 2;
+    else if (phase < on) hz.armed = 1;
+    else hz.armed = 0;
   },
   contact(world, player, hz, ht) {
-    if (!hz.armed) return;
+    if (hz.armed !== 1) return;
     const pt = player.get(Transform);
     if (!pt) return;
     const reach = hz.param3 || 14;

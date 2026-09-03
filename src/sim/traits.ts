@@ -27,6 +27,17 @@ export const replication = {
   Bot: 'local',
   Boss: 'replicated',
   PhysArm: 'local',
+  Crown: 'replicated',
+  Solid: 'replicated',
+  Sensor: 'local',
+  Destructible: 'replicated',
+  SpawnPoint: 'local',
+  PunchHit: 'local',
+  RoundState: 'replicated',
+  MatchState: 'replicated',
+  SimClock: 'replicated',
+  DropState: 'replicated',
+  HazardPath: 'replicated',
 } as const;
 
 export type ReplicationClass = 'replicated' | 'local';
@@ -101,6 +112,15 @@ export const Bot = trait({ slot: 0, think: 0 });
 export const Boss = trait({ hp: 200, bite: 0, speed: 3.2 });
 export const PhysArm = trait({ side: 0, owner: 0 });
 export const Crown = trait();
+/** Waypoint path for kinematic movers (PLAN 4.10 / Appendix D `platform.moving`). */
+export const HazardPath = trait(() => ({
+  points: [] as { x: number; y: number }[],
+  index: 0,
+  accum: 0,
+  mode: 0,
+  dir: 1,
+  speed: 3,
+}));
 export const Dead = trait();
 export const Loose = trait();
 export const Held = trait();

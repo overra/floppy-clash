@@ -36,6 +36,8 @@ describe('M7 editor', () => {
     const state = createEditorState();
     state.level.name = 'Hash Pit';
     const hash = shareHash(state);
+    expect(hash.startsWith('c1')).toBe(true);
+    expect(hash.length).toBeLessThan(JSON.stringify(state.level).length);
     const loaded = fromHash(hash);
     expect(loaded?.name).toBe('Hash Pit');
     expect(loaded?.objects.length).toBe(state.level.objects.length);

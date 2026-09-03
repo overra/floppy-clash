@@ -3,7 +3,16 @@ import { getContext } from '../context';
 import { assignNetId, createBoxBody, createCircleBody, registerBody } from '../physics/bodies';
 import { takeDamage } from '../player/health';
 import { Vec2 } from 'planck';
-import { Destructible, Hazard, Kinematic, PrevTransform, Solid, StandingOn, Static, Transform } from '../traits';
+import {
+  Destructible,
+  Hazard,
+  Kinematic,
+  PrevTransform,
+  Solid,
+  StandingOn,
+  Static,
+  Transform,
+} from '../traits';
 import { weaponIndex } from '../weapons/defs';
 import type { LevelObject } from '../level/schema';
 import type { ControllerView, TransformView } from './types';
@@ -16,20 +25,52 @@ export function paramsFromObject(obj: LevelObject): {
   param2: number;
   param3: number;
 } {
-  if (obj.type === 'trigger.drop') {
-    return {
-      param0: obj.atTick ?? 180,
-      param1: weaponIndex(obj.weapon ?? 'pistol'),
-      param2: 0,
-      param3: 0,
-    };
+  switch (obj.type) {
+    case 'trigger.drop':
+      return {
+        param0: obj.atTick ?? 180,
+        param1: weaponIndex(obj.weapon ?? 'pistol'),
+        param2: 0,
+        param3: 0,
+      };
+    case 'lava':
+      return { param0: obj.rate ?? 0, param1: obj.w ?? 4, param2: obj.h ?? 1.2, param3: 0 };
+    case 'laser':
+      return {
+        param0: obj.onTicks ?? 40,
+        param1: obj.offTicks ?? 50,
+        param2: obj.warningTicks ?? 12,
+        param3: 14,
+      };
+    case 'conveyor':
+      return { param0: obj.w ?? 6, param1: obj.speed ?? 4, param2: 0, param3: 0 };
+    case 'bounce':
+      return { param0: obj.w ?? 2, param1: obj.speed ?? 16, param2: 0, param3: 0 };
+    case 'saw':
+      return { param0: obj.omega ?? 6, param1: obj.speed ?? 0, param2: 0, param3: 0 };
+    case 'crusher':
+      return { param0: obj.period ?? 60, param1: obj.speed ?? 4, param2: 0, param3: 0 };
+    case 'platform.disappearing':
+      return { param0: obj.period ?? 140, param1: obj.delay ?? 0, param2: 0, param3: 0 };
+    case 'platform.collapsing':
+      return { param0: obj.w ?? 3, param1: 0, param2: obj.delay ?? 20, param3: 0 };
+    case 'platform.rotating':
+      return { param0: obj.omega ?? 1, param1: 0, param2: 0, param3: 0 };
+    case 'platform.moving':
+      return {
+        param0: obj.speed ?? 3,
+        param1: obj.path?.length ?? 2,
+        param2: obj.mode === 'loop' ? 0 : 1,
+        param3: 0,
+      };
+    default:
+      return {
+        param0: obj.speed ?? obj.period ?? obj.w ?? 0,
+        param1: obj.path?.length ?? obj.rate ?? obj.offTicks ?? obj.h ?? 0,
+        param2: obj.mode === 'pingpong' ? 1 : (obj.delay ?? obj.warningTicks ?? 0),
+        param3: obj.onTicks ?? obj.omega ?? 0,
+      };
   }
-  return {
-    param0: obj.speed ?? obj.period ?? obj.w ?? 0,
-    param1: obj.path?.length ?? obj.rate ?? obj.offTicks ?? obj.h ?? 0,
-    param2: obj.mode === 'pingpong' ? 1 : (obj.delay ?? obj.warningTicks ?? 0),
-    param3: obj.onTicks ?? obj.omega ?? 0,
-  };
 }
 
 export function spawnHazardEntity(world: World, obj: LevelObject, kind: number): Entity {
@@ -62,11 +103,21 @@ export function createStaticBox(
   entity.add(Static(), Solid());
   const w = (obj.w ?? 2) / 2;
   const h = (obj.h ?? 1) / 2;
-  const body = createBoxBody(ctx.physics, entity, opts.sensor ? 'sensor' : 'solid', obj.x, obj.y, w, h, 'static', {
-    friction: opts.friction ?? 0.6,
-    restitution: opts.restitution ?? 0,
-    sensor: opts.sensor,
-  });
+  const body = createBoxBody(
+    ctx.physics,
+    entity,
+    opts.sensor ? 'sensor' : 'solid',
+    obj.x,
+    obj.y,
+    w,
+    h,
+    'static',
+    {
+      friction: opts.friction ?? 0.6,
+      restitution: opts.restitution ?? 0,
+      sensor: opts.sensor,
+    },
+  );
   registerBody(world, entity, body);
   return entity;
 }
@@ -87,7 +138,8 @@ export function createDynamicBox(
     fixedRotation: false,
   });
   registerBody(world, entity, body);
-  if (opts.destructible != null) entity.add(Destructible({ hp: opts.destructible, maxHp: opts.destructible }));
+  if (opts.destructible != null)
+    entity.add(Destructible({ hp: opts.destructible, maxHp: opts.destructible }));
   return entity;
 }
 
@@ -95,7 +147,13 @@ export function createKinematicBox(
   world: World,
   obj: LevelObject,
   kind: number,
-  opts: { dynamic?: boolean; density?: number; friction?: number; sensor?: boolean; tag?: boolean } = {},
+  opts: {
+    dynamic?: boolean;
+    density?: number;
+    friction?: number;
+    sensor?: boolean;
+    tag?: boolean;
+  } = {},
 ): Entity {
   const ctx = getContext(world);
   const entity = spawnHazardEntity(world, obj, kind);
@@ -120,9 +178,18 @@ export function createKinematicBox(
 export function createKinematicCircle(world: World, obj: LevelObject, kind: number): Entity {
   const ctx = getContext(world);
   const entity = spawnHazardEntity(world, obj, kind);
-  const body = createCircleBody(ctx.physics, entity, 'sensor', obj.x, obj.y, obj.r ?? 0.45, 'kinematic', {
-    sensor: true,
-  });
+  const body = createCircleBody(
+    ctx.physics,
+    entity,
+    'sensor',
+    obj.x,
+    obj.y,
+    obj.r ?? 0.45,
+    'kinematic',
+    {
+      sensor: true,
+    },
+  );
   registerBody(world, entity, body);
   entity.add(Kinematic());
   return entity;

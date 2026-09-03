@@ -41,10 +41,6 @@ export function rules(world: World): void {
         const key = `wins${slot}` as 'wins0' | 'wins1' | 'wins2' | 'wins3';
         match[key] += 1;
         emit(world, { type: 'score', slot, wins: match[key] });
-        world.query(Player).updateEach(([p], e) => {
-          if (p.slot === slot) e.add(Crown());
-          else if (e.has(Crown)) e.remove(Crown);
-        });
         if (match.firstTo > 0 && match[key] >= match.firstTo) {
           round.phase = RoundPhase.MatchOver;
           emit(world, { type: 'round-phase', phase: 'match-over' });
@@ -69,8 +65,21 @@ export function rules(world: World): void {
     }
   }
 
+  assignCrownToLeader(world, match);
   world.set(RoundState, round);
   world.set(MatchState, match);
+}
+
+/** PLAN 4.8: the wins leader wears the crown (ties wear none). */
+export function assignCrownToLeader(world: World, match: { wins0: number; wins1: number; wins2: number; wins3: number }): void {
+  const wins = [match.wins0, match.wins1, match.wins2, match.wins3];
+  const best = Math.max(...wins);
+  const leaders = wins.map((w, i) => (w === best && best > 0 ? i : -1)).filter((i) => i >= 0);
+  world.query(Player).updateEach(([p], e) => {
+    const should = leaders.length === 1 && leaders[0] === p.slot;
+    if (should && !e.has(Crown)) e.add(Crown());
+    if (!should && e.has(Crown)) e.remove(Crown);
+  });
 }
 
 export function stepScaleForPhase(world: World): number {

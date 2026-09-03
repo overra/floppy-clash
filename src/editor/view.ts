@@ -313,7 +313,8 @@ export function mountEditor(root: HTMLElement, state: EditorState, fns: EditorVi
   requestAnimationFrame(draw);
   new ResizeObserver(() => draw()).observe(mid);
 
-  const padEdge = { left: false, right: false, up: false, down: false };
+  const padEdge = { left: false, right: false, up: false, down: false, a: false, lb: false, rb: false, start: false, b: false };
+  const tools = [...PALETTE, ...EXTRA_TOOLS];
   const pollPad = () => {
     if (!wrap.isConnected) return;
     const pad = typeof navigator !== 'undefined' ? navigator.getGamepads?.().find(Boolean) : null;
@@ -322,14 +323,40 @@ export function mountEditor(root: HTMLElement, state: EditorState, fns: EditorVi
       const right = !!pad.buttons[15]?.pressed;
       const up = !!pad.buttons[12]?.pressed;
       const down = !!pad.buttons[13]?.pressed;
+      const a = !!pad.buttons[0]?.pressed;
+      const b = !!pad.buttons[1]?.pressed;
+      const lb = !!pad.buttons[4]?.pressed;
+      const rb = !!pad.buttons[5]?.pressed;
+      const start = !!pad.buttons[9]?.pressed;
       if (left && !padEdge.left) nudge(-state.grid, 0);
       if (right && !padEdge.right) nudge(state.grid, 0);
       if (up && !padEdge.up) nudge(0, state.grid);
       if (down && !padEdge.down) nudge(0, -state.grid);
+      if (a && !padEdge.a) {
+        addObject(state, 12, 6);
+        draw();
+      }
+      if (lb && !padEdge.lb) {
+        const i = Math.max(0, tools.indexOf(state.tool as (typeof tools)[number]));
+        state.tool = tools[(i - 1 + tools.length) % tools.length]!;
+        paintTools();
+      }
+      if (rb && !padEdge.rb) {
+        const i = Math.max(0, tools.indexOf(state.tool as (typeof tools)[number]));
+        state.tool = tools[(i + 1) % tools.length]!;
+        paintTools();
+      }
+      if (start && !padEdge.start) fns.playtest(state.level);
+      if (b && !padEdge.b) fns.back();
       padEdge.left = left;
       padEdge.right = right;
       padEdge.up = up;
       padEdge.down = down;
+      padEdge.a = a;
+      padEdge.b = b;
+      padEdge.lb = lb;
+      padEdge.rb = rb;
+      padEdge.start = start;
     }
     requestAnimationFrame(pollPad);
   };

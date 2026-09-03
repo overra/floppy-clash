@@ -1,6 +1,17 @@
 import { describe, expect, it } from 'vitest';
 import { woodsClearing } from '../src/levels/handauthored';
-import { Dead, Health, MatchState, Player, RoundPhase, RoundState, Transform } from '../src/sim/traits';
+import {
+  Crown,
+  Dead,
+  Health,
+  MatchState,
+  Player,
+  RagdollPart,
+  RoundPhase,
+  RoundState,
+  Transform,
+} from '../src/sim/traits';
+import { nextMatchLevel } from '../src/sim/systems/reset';
 import { hold, hp, makeSim, playerOf } from './helpers';
 
 describe('M2 combat and rounds', () => {
@@ -48,7 +59,11 @@ describe('M2 combat and rounds', () => {
   });
 
   it('first-to-1 reaches MatchOver', () => {
-    const sim = makeSim({ level: woodsClearing, seed: 10, settings: { playerCount: 2, firstTo: 1 } });
+    const sim = makeSim({
+      level: woodsClearing,
+      seed: 10,
+      settings: { playerCount: 2, firstTo: 1 },
+    });
     sim.ctx.tuning.countdownTicks = 2;
     sim.ctx.tuning.slowmoTicks = 2;
     for (let i = 0; i < 10; i++) sim.step();
@@ -60,7 +75,11 @@ describe('M2 combat and rounds', () => {
   });
 
   it('same-tick double kill is a draw and awards no win', () => {
-    const sim = makeSim({ level: woodsClearing, seed: 11, settings: { playerCount: 2, firstTo: 0 } });
+    const sim = makeSim({
+      level: woodsClearing,
+      seed: 11,
+      settings: { playerCount: 2, firstTo: 0 },
+    });
     sim.ctx.tuning.countdownTicks = 2;
     for (let i = 0; i < 10; i++) sim.step();
     expect(sim.ecs.get(RoundState)?.phase).toBe(RoundPhase.Fighting);
@@ -70,5 +89,46 @@ describe('M2 combat and rounds', () => {
     const match = sim.ecs.get(MatchState);
     expect((match?.wins0 ?? 0) + (match?.wins1 ?? 0)).toBe(0);
     expect(ev.some((e) => e.type === 'round-phase' && e.phase === 'draw')).toBe(true);
+  });
+
+  it('crown sits on the match wins leader, not only the last kill', () => {
+    const sim = makeSim({
+      level: woodsClearing,
+      seed: 12,
+      settings: { playerCount: 2, firstTo: 0 },
+    });
+    sim.ctx.tuning.countdownTicks = 2;
+    sim.ctx.tuning.slowmoTicks = 2;
+    sim.ctx.tuning.scoreboardTicks = 2;
+    for (let i = 0; i < 10; i++) sim.step();
+    const match = sim.ecs.get(MatchState)!;
+    sim.ecs.set(MatchState, { ...match, wins0: 3, wins1: 1 });
+    playerOf(sim, 0).set(Health, { hp: 0, maxHp: 100 });
+    for (let i = 0; i < 6; i++) sim.step();
+    expect(playerOf(sim, 0).has(Crown)).toBe(true);
+    expect(playerOf(sim, 1).has(Crown)).toBe(false);
+  });
+
+  it('death swaps the capsule for a 10-part ragdoll', () => {
+    const sim = makeSim({ level: woodsClearing, seed: 13, settings: { playerCount: 1 } });
+    playerOf(sim, 0).set(Health, { hp: 0, maxHp: 100 });
+    sim.step([hold({}), hold({}), hold({}), hold({})]);
+    let parts = 0;
+    sim.ecs.query(RagdollPart).updateEach(() => {
+      parts += 1;
+    });
+    expect(parts).toBe(10);
+  });
+
+  it('random rotation never repeats the same level immediately', () => {
+    const sim = makeSim({ settings: { playerCount: 2, rotation: 'random' } });
+    const seen: string[] = [];
+    for (let i = 0; i < 8; i++) {
+      nextMatchLevel(sim.ecs);
+      seen.push(sim.ctx.level.id);
+    }
+    for (let i = 1; i < seen.length; i++) {
+      expect(seen[i]).not.toBe(seen[i - 1]);
+    }
   });
 });

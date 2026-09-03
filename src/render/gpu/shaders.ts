@@ -17,6 +17,20 @@ export const primitiveSdfGpu = tgpu.fn([GpuPrimitive, d.vec2f], d.f32)((prim, p)
   'use gpu';
   if (prim.kind === 0) return sdDisk(d.vec2f(p.x - prim.ax, p.y - prim.ay), prim.r);
   if (prim.kind === 1) return sdLine(p, d.vec2f(prim.ax, prim.ay), d.vec2f(prim.bx, prim.by)) - prim.r;
+  if (prim.kind === 2) {
+    const dx = Math.abs(p.x - prim.ax) - prim.bx + prim.r;
+    const dy = Math.abs(p.y - prim.ay) - prim.by + prim.r;
+    const ax = dx > 0 ? dx : 0;
+    const ay = dy > 0 ? dy : 0;
+    const inside = dx > dy ? dx : dy;
+    return Math.sqrt(ax * ax + ay * ay) + (inside < 0 ? inside : 0) - prim.r;
+  }
+  if (prim.kind === 3) {
+    return sdLine(p, d.vec2f(prim.ax, prim.ay), d.vec2f(prim.bx, prim.by)) - prim.r * 0.15;
+  }
+  if (prim.kind === 4) {
+    return sdDisk(d.vec2f(p.x - prim.ax, p.y - prim.ay), prim.r);
+  }
   return 1e9;
 });
 

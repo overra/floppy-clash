@@ -32,5 +32,12 @@ test('GPU renderer initialises or the fallback notice is shown', async ({ page }
   });
   expect(sample.ok).toBeTruthy();
   expect(sample.colored).toBeGreaterThan(0);
+  const frame = await page.evaluate(() => ({
+    kind: window.__floppy?.rendererKind,
+    groups: window.__floppy?.lastFrameGroups ?? 0,
+    colored: window.__floppy?.lastFrameColored ?? 0,
+  }));
+  expect(frame.kind === 'gpu' || frame.kind === 'canvas').toBe(true);
+  expect(frame.groups + frame.colored).toBeGreaterThan(0);
   await page.screenshot({ path: 'test-results/gpu-xvfb.png', fullPage: true });
 });

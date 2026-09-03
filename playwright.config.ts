@@ -41,7 +41,7 @@ export default defineConfig({
           args: ['--use-gl=swiftshader'],
         },
       },
-      testMatch: /logic\.spec\.ts|webrtc\.spec\.ts/,
+      testMatch: /logic\.spec\.ts|webrtc\.spec\.ts|walkthrough\.spec\.ts/,
     },
     {
       name: 'gpu',

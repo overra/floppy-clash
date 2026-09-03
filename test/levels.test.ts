@@ -25,7 +25,8 @@ describe('levels catalog', () => {
 
   it('ships a per-hazard test level', () => {
     const tests = hazardTestLevels();
-    expect(tests.length).toBeGreaterThanOrEqual(16);
+    expect(tests.length).toBeGreaterThanOrEqual(17);
+    expect(tests.some((l) => l.id === 'test-void')).toBe(true);
     expect(ALL_LEVELS.length).toBeGreaterThanOrEqual(60);
   });
 });

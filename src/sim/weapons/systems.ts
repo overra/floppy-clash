@@ -181,10 +181,14 @@ export function weapons(world: World): void {
         thrownHit: false,
         pickupCooldown: ctx.tuning.pickupCooldownTicks,
       });
+      const tx = transform.x + aim.x * 0.6;
+      const ty = transform.y + aim.y * 0.6;
+      held.set(Transform, { x: tx, y: ty, angle: 0 });
+      held.add(OwnedBy(entity));
       const wbody = ctx.bodies.get(held);
       if (wbody) {
         wbody.setActive(true);
-        wbody.setPosition(new Vec2(transform.x + aim.x * 0.6, transform.y + aim.y * 0.6));
+        wbody.setPosition(new Vec2(tx, ty));
         const pv = body.getLinearVelocity();
         wbody.setLinearVelocity(
           new Vec2(pv.x + aim.x * ctx.tuning.throwSpeed, pv.y + aim.y * ctx.tuning.throwSpeed),

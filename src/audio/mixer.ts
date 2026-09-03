@@ -59,10 +59,20 @@ export function createMixer(): Mixer {
     },
     startMusic() {
       if (!ctx || !musicGain) return;
-      const t0 = ctx.currentTime;
-      for (const n of musicPattern()) {
-        playTone(ctx, n.type, n.freq, n.dur, n.gain, musicGain, t0 + n.at);
-      }
+      let nextAt = ctx.currentTime;
+      const loop = 2;
+      const schedule = () => {
+        if (!ctx || !musicGain) return;
+        while (nextAt < ctx.currentTime + 4) {
+          for (const n of musicPattern()) {
+            playTone(ctx, n.type, n.freq, n.dur, n.gain, musicGain, nextAt + n.at);
+          }
+          nextAt += loop;
+        }
+      };
+      schedule();
+      const id = window.setInterval(schedule, 1500);
+      void id;
     },
   };
   function apply() {

@@ -112,6 +112,20 @@ export function buildFrame(
       fx,
       primitives: [{ kind: PRIM_ROUNDED_BOX, ax: x, ay: y, bx: 1.2, by: 0.35, r: 0.05 }],
     });
+    if (hz.kind === HazardKind.Laser && hz.armed >= 1) {
+      const reach = hz.param3 || 14;
+      groups.push({
+        minX: x,
+        minY: y - 0.08,
+        maxX: x + reach,
+        maxY: y + 0.08,
+        color: hz.armed === 2 ? '#ffcc66' : '#ff3355',
+        blend: 'union',
+        smoothK: 0,
+        layer: 7,
+        primitives: [{ kind: PRIM_CAPSULE, ax: x, ay: y, bx: x + reach, by: y, r: hz.armed === 2 ? 0.03 : 0.06 }],
+      });
+    }
   });
 
   world.query(Weapon, Transform, PrevTransform).updateEach(([w, t, prev]) => {

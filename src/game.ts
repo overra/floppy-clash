@@ -24,7 +24,18 @@ import { createDecalLayer, stampFxDecals, type PersistentDecalLayer } from './re
 import { emitIntoWorld, listParticles, stepFxParticles } from './render/fx/particles';
 import { clearFx, createFxWorld } from './render/fx/world';
 import { blankInputs, type PlayerInput } from './sim/input';
-import { Dead, Health, MatchState, Player, RoundPhase, RoundState, Transform, Weapon } from './sim/traits';
+import { inspectWorld, formatInspect } from './sim/inspect';
+import { primitiveSdf } from './render/sdf/primitives';
+import {
+  Dead,
+  Health,
+  MatchState,
+  Player,
+  RoundPhase,
+  RoundState,
+  Transform,
+  Weapon,
+} from './sim/traits';
 import { createClientView, type ClientView } from './net/clientView';
 import { createSimWorld, type SimHandle } from './sim/world';
 import { spawnWeapon } from './sim/systems/weapons';
@@ -36,7 +47,12 @@ import { drainChangeTrackers } from './sim/snapshot';
 import { applyInputBundle, bundleInputs } from './net/simnet';
 import { createEditorState, fromHash, loadLibrary, type EditorState } from './editor/editor';
 import { mountEditor } from './editor/view';
-import { createLocalLoopback, createWebRtcSession, signalingUrlFromLocation, type NetSession } from './net/transport';
+import {
+  createLocalLoopback,
+  createWebRtcSession,
+  signalingUrlFromLocation,
+  type NetSession,
+} from './net/transport';
 import { createRecorder } from './input/replay';
 import type { LevelDef } from './sim/level/schema';
 
@@ -76,6 +92,9 @@ type FloppyDebug = {
   entities: number;
   chatOpen: boolean;
   lastChat: string;
+  lastFrameGroups: number;
+  lastFrameColored: number;
+  inspect: string;
 };
 
 declare global {
@@ -136,6 +155,8 @@ export function createGame(root: HTMLElement): Game {
   let maps = loadMaps();
   let hitStop = 0;
   let stats = loadStats();
+  let lastFrameGroups = 0;
+  let lastFrameColored = 0;
 
   function show() {
     renderMenus(
@@ -243,7 +264,12 @@ export function createGame(root: HTMLElement): Game {
       settings.rotation === 'ordered'
         ? (pool[0] ?? gymLevel)
         : (pool[Math.floor(Math.random() * pool.length)] ?? gymLevel);
-    startSim(level, { playerCount: humans, bots: menus.bots, maxHp: settings.maxHp, firstTo: settings.firstTo });
+    startSim(level, {
+      playerCount: humans,
+      bots: menus.bots,
+      maxHp: settings.maxHp,
+      firstTo: settings.firstTo,
+    });
   }
 
   function attachNet(session: NetSession): void {
@@ -376,7 +402,10 @@ export function createGame(root: HTMLElement): Game {
     void beginMatch();
   }
 
-  function startSim(level: LevelDef, opts: { playerCount: number; bots: number; maxHp?: number; firstTo?: number }) {
+  function startSim(
+    level: LevelDef,
+    opts: { playerCount: number; bots: number; maxHp?: number; firstTo?: number },
+  ) {
     mixer.resume();
     mixer.startMusic();
     const seed = (Math.random() * 1e9) | 0;
@@ -506,7 +535,15 @@ export function createGame(root: HTMLElement): Game {
         const mine = sampled[0];
         if (mine && netSlot > 0) {
           inputHist.push(mine);
-          net.send({ t: 'input', tick: clientView.appliedTick, slot: netSlot, bundle: bundleInputs(inputHist) }, false);
+          net.send(
+            {
+              t: 'input',
+              tick: clientView.appliedTick,
+              slot: netSlot,
+              bundle: bundleInputs(inputHist),
+            },
+            false,
+          );
         }
         stepFxParticles(fx, dt);
         const frame = buildFrame(
@@ -527,13 +564,24 @@ export function createGame(root: HTMLElement): Game {
         );
         frame.hud.hash = clientView.sim.hash();
         frame.hud.gpuMs = renderer?.lastGpuMs ?? 0;
+        const frameSample = sampleRenderFrame(frame);
+        lastFrameGroups = frameSample.groups;
+        lastFrameColored = frameSample.colored;
         renderer?.render(frame);
         drawHud(frame);
-        publishDebug(frame.hud.hash ?? '', frame.hud.tick ?? 0, frame.hud.countdown, frame.hud.physicsMs ?? 0, frame.hud.gpuMs ?? 0, frame.hud.phase ?? 0);
+        publishDebug(
+          frame.hud.hash ?? '',
+          frame.hud.tick ?? 0,
+          frame.hud.countdown,
+          frame.hud.physicsMs ?? 0,
+          frame.hud.gpuMs ?? 0,
+          frame.hud.phase ?? 0,
+        );
         raf = requestAnimationFrame(tick);
         return;
       }
-      const scale = viewSim.ecs.get(RoundState)?.phase === RoundPhase.LastKill ? tuning.lastKillSlowmo : 1;
+      const scale =
+        viewSim.ecs.get(RoundState)?.phase === RoundPhase.LastKill ? tuning.lastKillSlowmo : 1;
       const steps = loop.consume(dt, scale);
       let sampled = sampleInputs();
       if (menus.netRole === 'host') {
@@ -560,14 +608,18 @@ export function createGame(root: HTMLElement): Game {
           const ms = viewSim.ecs.get(MatchState);
           stats = recordMatch((ms?.wins0 ?? 0) >= (ms?.firstTo || 1));
         }
-        if (events.some((e) => e.type === 'explosion' || e.type === 'kill') && !settings.reduceShake) {
+        if (
+          events.some((e) => e.type === 'explosion' || e.type === 'kill') &&
+          !settings.reduceShake
+        ) {
           addShake(cam, events.some((e) => e.type === 'explosion') ? 10 : 5);
         }
         if (events.some((e) => e.type === 'explosion')) rumble('boom');
         else if (events.some((e) => e.type === 'hit')) rumble('hit');
         if (menus.netRole === 'host') {
           for (const ev of events) {
-            if (ev.type === 'round-phase') net.send({ t: 'event', kind: 'round-phase', payload: ev.phase });
+            if (ev.type === 'round-phase')
+              net.send({ t: 'event', kind: 'round-phase', payload: ev.phase });
             if (ev.type === 'spawn' || ev.type === 'despawn' || ev.type === 'shot') {
               net.send({ t: 'event', kind: ev.type, payload: JSON.stringify(ev) });
             }
@@ -603,9 +655,19 @@ export function createGame(root: HTMLElement): Game {
       );
       frame.hud.hash = viewSim.hash();
       frame.hud.gpuMs = renderer?.lastGpuMs ?? 0;
+      const frameSample = sampleRenderFrame(frame);
+      lastFrameGroups = frameSample.groups;
+      lastFrameColored = frameSample.colored;
       renderer?.render(frame);
       drawHud(frame);
-      publishDebug(frame.hud.hash ?? '', frame.hud.tick ?? 0, frame.hud.countdown, frame.hud.physicsMs ?? 0, frame.hud.gpuMs ?? 0, frame.hud.phase ?? 0);
+      publishDebug(
+        frame.hud.hash ?? '',
+        frame.hud.tick ?? 0,
+        frame.hud.countdown,
+        frame.hud.physicsMs ?? 0,
+        frame.hud.gpuMs ?? 0,
+        frame.hud.phase ?? 0,
+      );
     } else if (renderer && menus.screen !== 'editor') {
       renderer.render({
         groups: [],
@@ -618,7 +680,14 @@ export function createGame(root: HTMLElement): Game {
     raf = requestAnimationFrame(tick);
   }
 
-  function publishDebug(hash: string, tick: number, countdown: number, physicsMs: number, gpuMs: number, phase: number): void {
+  function publishDebug(
+    hash: string,
+    tick: number,
+    countdown: number,
+    physicsMs: number,
+    gpuMs: number,
+    phase: number,
+  ): void {
     window.__floppy = {
       rendererKind,
       lastHash: hash,
@@ -656,7 +725,26 @@ export function createGame(root: HTMLElement): Game {
       entities: sim?.ctx.bodies.size ?? clientView?.sim.ctx.bodies.size ?? 0,
       chatOpen,
       lastChat: menus.chat[menus.chat.length - 1] ?? '',
+      lastFrameGroups,
+      lastFrameColored,
+      inspect:
+        (sim ?? clientView?.sim)
+          ? formatInspect(inspectWorld((sim ?? clientView!.sim).ecs, 12))
+          : '',
     };
+  }
+
+  function sampleRenderFrame(frame: ReturnType<typeof buildFrame>): {
+    groups: number;
+    colored: number;
+  } {
+    let colored = 0;
+    for (const g of frame.groups) {
+      for (const p of g.primitives) {
+        if (primitiveSdf(p, { x: p.ax, y: p.ay }) < 0.25) colored += 1;
+      }
+    }
+    return { groups: frame.groups.length, colored };
   }
 
   function countWeapons(): number {
@@ -682,7 +770,8 @@ export function createGame(root: HTMLElement): Game {
     }
     if (frame.hud.showWins && frame.hud.wins) {
       const bar = document.createElement('div');
-      bar.style.cssText = 'position:absolute;top:10px;left:12px;font-weight:700;text-shadow:0 1px 4px #000';
+      bar.style.cssText =
+        'position:absolute;top:10px;left:12px;font-weight:700;text-shadow:0 1px 4px #000';
       const names = ['P1', 'P2', 'P3', 'P4'];
       bar.textContent =
         names.map((n, i) => `${n} ${frame.hud.wins![i] ?? 0}`).join('   ') +
@@ -727,14 +816,16 @@ export function createGame(root: HTMLElement): Game {
       dbg.textContent = [
         `tick ${frame.hud.tick ?? 0}`,
         `hash ${frame.hud.hash ?? '--------'}`,
-        `phys ${((frame.hud.physicsMs ?? 0)).toFixed(2)} ms`,
-        `gpu  ${((frame.hud.gpuMs ?? 0)).toFixed(2)} ms`,
+        `phys ${(frame.hud.physicsMs ?? 0).toFixed(2)} ms`,
+        `gpu  ${(frame.hud.gpuMs ?? 0).toFixed(2)} ms`,
         `ents ${frame.hud.entities ?? 0}`,
         `weap ${countWeapons()}`,
         `rend ${rendererKind}`,
         `phase ${frame.hud.phase ?? 0}`,
         `peers ${net.peerCount}`,
         ...players,
+        '--- traits ---',
+        sim ? formatInspect(inspectWorld(sim.ecs, 10)) : '',
       ].join('\n');
       hudEl.append(dbg);
     }
@@ -770,9 +861,9 @@ export function createGame(root: HTMLElement): Game {
     type PaneUi = { addBinding: (o: object, k: string) => void; hidden: boolean };
     pane = new Pane({ title: 'Tuning' });
     const ui = pane as unknown as PaneUi;
-    ui.addBinding(tuning, 'runSpeed');
-    ui.addBinding(tuning, 'jumpSpeed');
-    ui.addBinding(tuning, 'gravity');
+    for (const key of Object.keys(tuning) as (keyof typeof tuning)[]) {
+      if (typeof tuning[key] === 'number') ui.addBinding(tuning, key);
+    }
     ui.hidden = true;
     window.addEventListener('keydown', (e) => {
       if (e.code === 'F1') debugDraw = !debugDraw;
@@ -849,7 +940,9 @@ export function createGame(root: HTMLElement): Game {
             if (!chatOpen) {
               chatOpen = true;
             } else {
-              const typed = (document.querySelector('#matchchat-in') as HTMLInputElement | null)?.value.trim();
+              const typed = (
+                document.querySelector('#matchchat-in') as HTMLInputElement | null
+              )?.value.trim();
               if (typed) {
                 menus.chat.push(`you: ${typed}`);
                 net.send({ t: 'chat', from: netName || menus.netRole || 'you', text: typed });

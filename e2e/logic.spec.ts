@@ -109,6 +109,9 @@ test('F3 debug HUD and F1 overlay flags are wired', async ({ page }) => {
   expect(flags.hud).toBe(true);
   expect(flags.draw).toBe(true);
   await expect(page.locator('pre', { hasText: 'hash' })).toBeVisible();
+  await expect(page.locator('pre', { hasText: 'traits' })).toBeVisible();
+  const inspect = await page.evaluate(() => window.__floppy?.inspect ?? '');
+  expect(inspect).toMatch(/Player|NetId|#\d+/);
 });
 
 test('F4–F9 spawn, kill, slow-mo, freeze, renderer-switch, replay-download', async ({ page }) => {
@@ -145,6 +148,21 @@ test('F4–F9 spawn, kill, slow-mo, freeze, renderer-switch, replay-download', a
   await page.waitForFunction(() => (window.__floppy?.lastReplayBytes ?? 0) > 0, null, { timeout: 3_000 });
   await page.keyboard.press('F5');
   await page.waitForFunction(() => (window.__floppy?.p0Hp ?? 1) <= 0, null, { timeout: 5_000 });
+});
+
+test('controller disconnect overlay pauses the match', async ({ page }) => {
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Solo vs Bots' }).click();
+  await page.keyboard.press('Enter');
+  await page.waitForTimeout(800);
+  if (await page.getByRole('heading', { name: 'Join' }).isVisible()) {
+    await page.getByRole('button', { name: 'Start' }).click();
+  }
+  await page.waitForFunction(() => window.__floppy?.phase === 2, null, { timeout: 15_000 });
+  await page.evaluate(() => {
+    window.dispatchEvent(new Event('gamepaddisconnected'));
+  });
+  await expect(page.getByRole('heading', { name: 'Controller disconnected' })).toBeVisible();
 });
 
 test('service worker registers for PWA offline cache', async ({ page }) => {

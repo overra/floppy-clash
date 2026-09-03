@@ -22,6 +22,9 @@ v1 needs two or more pads. Physical 4-pad evenings cannot be faked in CI.
 | Simulated 100 ms / 2 % loss, 10 rounds, < 30 KB/s | `test/net.test.ts` |
 | Two-page localhost WebRTC + signaling + chat | `e2e/webrtc.spec.ts` + `test/signaling.test.ts` (`ws://127.0.0.1:8787`) |
 | Editor playtest / F1–F3 debug / PWA service worker | `e2e/logic.spec.ts` |
+| Headed Xvfb walkthrough recording (menu → settings → editor → solo) | `e2e/walkthrough.spec.ts` (Playwright video + `test-results/walkthrough-play.png`) |
+| Controller-disconnect overlay | `e2e/logic.spec.ts` |
+| Entity/trait inspector | F3 HUD + `test/core.test.ts` |
 
 ## Still hardware-only
 

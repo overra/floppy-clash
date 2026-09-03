@@ -458,7 +458,7 @@ const raw = [
     ammo: 40,
     fireMode: 'auto',
     fireIntervalTicks: 5,
-    projectile: { kind: 'grenade', speed: 18, damage: 12, spreadDeg: 10, count: 1, gravity: 20, bounce: 0, fuse: 40, radius: 0.4, explodeDamage: 12, explodeImpulse: 4, status: 'burn', warningTicks: 0, beamTicks: 0, rare: false },
+    projectile: { kind: 'grenade', speed: 18, damage: 12, spreadDeg: 10, count: 1, gravity: 20, bounce: 0, fuse: 0, radius: 0.4, explodeDamage: 12, explodeImpulse: 4, status: 'burn', warningTicks: 0, beamTicks: 0, rare: false },
     recoil: { back: 0.5, up: 0.3, forward: 0 },
     knockback: 6,
     thrownDamage: 55,

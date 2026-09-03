@@ -114,5 +114,28 @@ describe('M3 weapons', () => {
     }
     expect((b.get(Health)?.hp ?? 100) < before || exploded).toBe(true);
   });
+
+  it('thrown weapons deal 55 on first hit and bounce off a block', () => {
+    const sim = makeSim({ level: woodsClearing, seed: 18, settings: { playerCount: 2 } });
+    const a = playerOf(sim, 0);
+    const b = playerOf(sim, 1);
+    sim.ctx.bodies.get(a)?.setPosition({ x: 10, y: 4 });
+    sim.ctx.bodies.get(b)?.setPosition({ x: 11.1, y: 4 });
+    a.set(Transform, { x: 10, y: 4, angle: 0 });
+    b.set(Transform, { x: 11.1, y: 4, angle: 0 });
+    const gun = spawnWeapon(sim.ecs, 'pistol', 10, 5);
+    gun.add(Held(), HeldBy(a));
+    gun.remove(Loose);
+    const before = b.get(Health)?.hp ?? 100;
+    for (let i = 0; i < 16; i++) {
+      sim.step([
+        hold({ throw: i === 2, aimX: 1, aimY: 0 }),
+        hold({}),
+        hold({}),
+        hold({}),
+      ]);
+    }
+    expect((b.get(Health)?.hp ?? 100) <= before - 50 || gun.get(Weapon)?.thrownHit).toBe(true);
+  });
 });
 

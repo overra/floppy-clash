@@ -5,6 +5,7 @@ import {
   opSmoothUnion,
   primitiveSdf,
   PRIM_DISK,
+  PRIM_ROUNDED_BOX,
   sdCapsule,
   sdDisk,
 } from '../src/render/sdf/primitives';
@@ -40,6 +41,8 @@ describe('TypeGPU use-gpu fns on CPU', () => {
     expect(evalCoverageGpu(-1)).toBeGreaterThan(0.5);
     const inside = evalPrimitiveSdfGpu({ kind: PRIM_DISK, ax: 0, ay: 0, bx: 0, by: 0, r: 1 }, 0, 0);
     expect(inside).toBeLessThan(0);
+    const box = evalPrimitiveSdfGpu({ kind: PRIM_ROUNDED_BOX, ax: 0, ay: 0, bx: 1, by: 1, r: 0.1 }, 0, 0);
+    expect(box).toBeLessThan(0);
     const u = evalSmoothUnionGpu(-0.2, -0.1, 0.3);
     expect(Number.isFinite(u)).toBe(true);
   });

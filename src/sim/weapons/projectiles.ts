@@ -113,6 +113,54 @@ export function projectiles(world: World): void {
     const def = weaponByIndex(proj.defId);
     const body = ctx.bodies.get(entity);
 
+    if (proj.kind === ProjectileKind.Melee) {
+      const aim = owner?.get(Aim);
+      const ot = owner?.get(Transform);
+      const reach = def.projectile.radius || 0.7;
+      if (aim && ot) {
+        const hx = ot.x + aim.x * reach;
+        const hy = ot.y + aim.y * reach;
+        world.query(Player, Transform, Not(Dead)).updateEach(([_p, pt], other) => {
+          if (other === owner) return;
+          if (Math.hypot(pt.x - hx, pt.y - hy) > reach) return;
+          const block = shieldBlocks(world, other, hx, hy, aim.x, aim.y);
+          if (block !== 'none') {
+            emit(world, { type: 'block', player: other, reflected: false });
+            return;
+          }
+          takeDamage(world, other, proj.damage, 'body', owner ?? -1, pt.x, pt.y);
+          const tb = ctx.bodies.get(other);
+          if (tb) {
+            const v = tb.getLinearVelocity();
+            tb.setLinearVelocity(new Vec2(v.x + aim.x * def.knockback, v.y + aim.y * def.knockback));
+          }
+        });
+      }
+      ctx.pendingDestroy.push(entity);
+      return;
+    }
+
+    if (proj.kind === ProjectileKind.Beam) {
+      const warn = def.projectile.warningTicks || 0;
+      const life = def.projectile.beamTicks || 2;
+      if (proj.fuse <= 0) proj.fuse = warn + life;
+      const remaining = proj.fuse;
+      proj.fuse -= 1;
+      const age = warn + life - remaining;
+      const active = age >= warn;
+      const aim = owner?.get(Aim);
+      const ot = owner?.get(Transform);
+      if (active && aim && ot) {
+        const hit = raycastClosest(world, ot.x, ot.y, ot.x + aim.x * 40, ot.y + aim.y * 40, (h) => h.entity === owner);
+        if (hit && world.has(hit.entity as Entity) && (hit.entity as Entity).has(Player)) {
+          takeDamage(world, hit.entity as Entity, proj.damage, 'body', owner ?? -1, hit.x, hit.y);
+          if (def.projectile.status !== 'none') applyStatus(hit.entity as Entity, def.projectile.status, 90);
+        }
+      }
+      if (proj.fuse <= 0) ctx.pendingDestroy.push(entity);
+      return;
+    }
+
     if (proj.kind === ProjectileKind.Bullet || proj.kind === ProjectileKind.Pellet) {
       const nx = proj.x + proj.vx * dt;
       const ny = proj.y + proj.vy * dt;
@@ -255,20 +303,6 @@ export function projectiles(world: World): void {
         explode(world, proj.x, proj.y, proj.defId, owner);
         ctx.pendingDestroy.push(entity);
         return;
-      }
-    }
-
-    if (proj.kind === ProjectileKind.Beam) {
-      const aim = owner ? owner.get(Aim) : undefined;
-      const ot = owner ? owner.get(Transform) : undefined;
-      if (aim && ot) {
-        const hit = raycastClosest(world, ot.x, ot.y, ot.x + aim.x * 40, ot.y + aim.y * 40, (h) => h.entity === owner);
-        if (hit && world.has(hit.entity as Entity) && (hit.entity as Entity).has(Player)) {
-          takeDamage(world, hit.entity as Entity, proj.damage, 'body', owner ?? -1, hit.x, hit.y);
-        }
-      }
-      if (def.projectile.beamTicks > 0) {
-        proj.fuse = proj.fuse || def.projectile.beamTicks;
       }
     }
 

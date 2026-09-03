@@ -93,7 +93,13 @@ export function addObject(state: EditorState, x: number, y: number): void {
     return;
   }
   pushHistory(state);
-  const obj: LevelObject = { type: state.tool, x: snap(x, state.grid), y: snap(y, state.grid), w: 2, h: 1 };
+  const obj: LevelObject = {
+    type: state.tool,
+    x: snap(x, state.grid),
+    y: snap(y, state.grid),
+    w: 2,
+    h: 1,
+  };
   state.level.objects.push(obj);
   state.selected = state.level.objects.length - 1;
 }
@@ -187,13 +193,101 @@ export function importLevel(state: EditorState, raw: string): void {
   state.level = parseLevel(JSON.parse(raw));
 }
 
+/** Dictionary + LZ77 token compression so share URLs stay short (PLAN 4.15). */
+const DICT = [
+  '"type":',
+  '"x":',
+  '"y":',
+  '"w":',
+  '"h":',
+  '"spawns":',
+  '"objects":',
+  '"bounds":',
+  '"theme":',
+  '"drops":',
+  '"enabled":',
+  '"name":',
+  '"id":',
+  '"killMargin":',
+  '"intervalScale":',
+  '"xMin":',
+  '"xMax":',
+  'platform.',
+  'true',
+  'false',
+];
+
+export function compressLevelJson(json: string): string {
+  let s = json;
+  for (let i = 0; i < DICT.length; i++) {
+    s = s.split(DICT[i]!).join(`\x01${String.fromCharCode(65 + i)}`);
+  }
+  const packed = lz77(s);
+  return `c1${btoa(unescape(encodeURIComponent(packed)))}`;
+}
+
+export function decompressLevelJson(hash: string): string {
+  const raw = hash.startsWith('c1') ? hash.slice(2) : hash;
+  const packed = decodeURIComponent(escape(atob(raw)));
+  let s = unlz77(packed);
+  for (let i = DICT.length - 1; i >= 0; i--) {
+    s = s.split(`\x01${String.fromCharCode(65 + i)}`).join(DICT[i]!);
+  }
+  return s;
+}
+
+function lz77(input: string): string {
+  const out: string[] = [];
+  let i = 0;
+  while (i < input.length) {
+    let bestLen = 0;
+    let bestOff = 0;
+    const maxOff = Math.min(i, 255);
+    for (let off = 1; off <= maxOff; off++) {
+      let len = 0;
+      while (len < 15 && i + len < input.length && input[i - off + len] === input[i + len])
+        len += 1;
+      if (len > bestLen) {
+        bestLen = len;
+        bestOff = off;
+      }
+    }
+    if (bestLen >= 3) {
+      out.push(`\x02${String.fromCharCode(bestOff)}${String.fromCharCode(bestLen)}`);
+      i += bestLen;
+    } else {
+      out.push(input[i]!);
+      i += 1;
+    }
+  }
+  return out.join('');
+}
+
+function unlz77(input: string): string {
+  let out = '';
+  for (let i = 0; i < input.length; i++) {
+    if (input[i] === '\x02' && i + 2 < input.length) {
+      const off = input.charCodeAt(i + 1);
+      const len = input.charCodeAt(i + 2);
+      out += out.slice(out.length - off, out.length - off + len);
+      i += 2;
+    } else {
+      out += input[i];
+    }
+  }
+  return out;
+}
+
 export function shareHash(state: EditorState): string {
-  return btoa(unescape(encodeURIComponent(JSON.stringify(state.level))));
+  return compressLevelJson(JSON.stringify(state.level));
 }
 
 export function fromHash(hash: string): LevelDef | null {
   try {
-    return parseLevel(JSON.parse(decodeURIComponent(escape(atob(hash)))));
+    const json = hash.startsWith('c1')
+      ? decompressLevelJson(hash)
+      : decodeURIComponent(escape(atob(hash)));
+    return parseLevel(JSON.parse(json));
   } catch {
     return null;
   }

@@ -31,5 +31,7 @@ describe('fuzz / soak', () => {
       expect(Number.isFinite(t.y)).toBe(true);
       expect(Number.isFinite(t.angle)).toBe(true);
     });
+    expect(sim.ctx.bodies.size).toBeLessThan(400);
+    expect(sim.ctx.lastPhysicsMs).toBeLessThan(80);
   });
 });

@@ -1633,6 +1633,17 @@ export const test_platform_momentum: LevelDef = {
   ],
 };
 
+export const test_void: LevelDef = {
+  id: 'test-void',
+  name: 'Test void',
+  theme: 'arena',
+  bounds: { x: 0, y: 0, w: 16, h: 10 },
+  killMargin: 2,
+  spawns: [{ x: 4, y: 4 }, { x: 12, y: 4 }, { x: 6, y: 6 }, { x: 10, y: 6 }],
+  drops: { enabled: false, xMin: 4, xMax: 12, intervalScale: 1 },
+  objects: [{ type: 'solid', x: 8, y: 1, w: 16, h: 2 }],
+};
+
 export const GENERATED_LEVELS: LevelDef[] = [
   woods_01,
   woods_02,
@@ -1724,5 +1735,6 @@ export const GENERATED_LEVELS: LevelDef[] = [
   test_chain,
   test_spikeball,
   test_trigger_drop,
-  test_platform_momentum
+  test_platform_momentum,
+  test_void,
 ];
