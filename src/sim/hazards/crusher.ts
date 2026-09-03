@@ -34,7 +34,7 @@ export const crusher: HazardModule = {
     const body = ctx.bodies.get(entity);
     if (body) body.setLinearVelocity(new Vec2(t * (hz.param1 || 4), 0));
   },
-  contact(world, player, hz, ht, _ctrl, dt, hazard) {
+  contact(world, player, hz, ht, _ctrl, _dt, hazard) {
     const pt = player.get(Transform);
     if (!pt) return;
     const ctx = getContext(world);
@@ -42,13 +42,10 @@ export const crusher: HazardModule = {
     const pprev = player.get(PrevTransform);
     const body = ctx.bodies.get(hazard);
     const pos = body?.getPosition();
-    const vel = body?.getLinearVelocity();
     const lastX = prev?.x ?? ht.x;
     const lastY = prev?.y ?? ht.y;
     const bodyX = pos?.x ?? ht.x;
     const bodyY = pos?.y ?? ht.y;
-    const predX = bodyX + (vel?.x ?? 0) * dt;
-    const predY = bodyY + (vel?.y ?? 0) * dt;
     const halfW = hz.param2 || 0.75;
     const halfH = hz.param3 || 3;
     const samples = [
@@ -58,8 +55,7 @@ export const crusher: HazardModule = {
     for (const [px, py] of samples) {
       if (
         crusherOverlaps(px, py, ht.x, ht.y, halfW, halfH, lastX, lastY) ||
-        crusherOverlaps(px, py, bodyX, bodyY, halfW, halfH, ht.x, ht.y) ||
-        crusherOverlaps(px, py, predX, predY, halfW, halfH, bodyX, bodyY)
+        crusherOverlaps(px, py, bodyX, bodyY, halfW, halfH, ht.x, ht.y)
       ) {
         kill(world, player, pt.x, pt.y);
         return;

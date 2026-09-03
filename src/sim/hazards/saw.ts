@@ -52,7 +52,7 @@ export const saw: HazardModule = {
       body.setLinearVelocity(new Vec2((homeX + ox - body.getPosition().x) / dt, 0));
     }
   },
-  contact(world, player, _hz, ht, _ctrl, dt, hazard) {
+  contact(world, player, _hz, ht, _ctrl, _dt, hazard) {
     const pt = player.get(Transform);
     if (!pt) return;
     const ctx = getContext(world);
@@ -60,13 +60,10 @@ export const saw: HazardModule = {
     const pprev = player.get(PrevTransform);
     const body = ctx.bodies.get(hazard);
     const pos = body?.getPosition();
-    const vel = body?.getLinearVelocity();
     const lastX = prev?.x ?? ht.x;
     const lastY = prev?.y ?? ht.y;
     const bodyX = pos?.x ?? ht.x;
     const bodyY = pos?.y ?? ht.y;
-    const predX = bodyX + (vel?.x ?? 0) * dt;
-    const predY = bodyY + (vel?.y ?? 0) * dt;
     const samples = [
       [pt.x, pt.y],
       [pprev?.x ?? pt.x, pprev?.y ?? pt.y],
@@ -74,8 +71,7 @@ export const saw: HazardModule = {
     for (const [px, py] of samples) {
       if (
         sawOverlaps(px, py, ht.x, ht.y, 0.7, lastX, lastY) ||
-        sawOverlaps(px, py, bodyX, bodyY, 0.7, ht.x, ht.y) ||
-        sawOverlaps(px, py, predX, predY, 0.7, bodyX, bodyY)
+        sawOverlaps(px, py, bodyX, bodyY, 0.7, ht.x, ht.y)
       ) {
         kill(world, player, pt.x, pt.y);
         return;

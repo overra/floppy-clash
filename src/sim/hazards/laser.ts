@@ -174,25 +174,20 @@ export const laser: HazardModule = {
       }
     }
 
-    const dt = 1 / ctx.tuning.tickRate;
     world.query(Player, Transform).updateEach(([_p, pt], player) => {
       if (player.has(Dead)) return;
       const prev = player.get(PrevTransform);
       const body = ctx.bodies.get(player);
       const pos = body?.getPosition();
-      const vel = body?.getLinearVelocity();
       const lastX = prev?.x ?? pt.x;
       const lastY = prev?.y ?? pt.y;
       const bodyX = pos?.x ?? pt.x;
       const bodyY = pos?.y ?? pt.y;
-      const predX = bodyX + (vel?.x ?? 0) * dt;
-      const predY = bodyY + (vel?.y ?? 0) * dt;
       const hw = ctx.tuning.radius + 0.05;
       const hh = ctx.tuning.height * 0.5;
       const paths = [
         [lastX, lastY, pt.x, pt.y],
         [pt.x, pt.y, bodyX, bodyY],
-        [bodyX, bodyY, predX, predY],
       ] as const;
       for (const [ax, ay, bx, by] of paths) {
         const cross = playerCrossesBeam(ax, ay, bx, by, tr.x, tr.y, x2, y2, hw, hh);

@@ -19,7 +19,7 @@ import { crusherOverlaps } from '../src/sim/hazards/crusher';
 import { diskSweepsPlayer } from '../src/sim/hazards/common';
 import { playerCrossesBeam } from '../src/sim/hazards/laser';
 import { sawOverlaps } from '../src/sim/hazards/saw';
-import { hold, makeSim, pin, playerOf } from './helpers';
+import { hold, makeSim, pin, place, playerOf } from './helpers';
 
 describe('M4 hazards', () => {
   it('spikes kill on contact that tick', () => {
@@ -99,24 +99,23 @@ describe('M4 hazards', () => {
       id: 'sweep-crusher-live',
       objects: [
         { type: 'solid' as const, x: 12, y: 1, w: 24, h: 2 },
-        { type: 'crusher' as const, x: 8, y: 5, w: 1.5, h: 2, period: 1, speed: 720 },
+        { type: 'solid' as const, x: 12, y: 4, w: 6, h: 0.5 },
+        { type: 'crusher' as const, x: 8, y: 5.2, w: 1.5, h: 2, period: 40, speed: 8 },
       ],
     };
     const sim = makeSim({ level, seed: 25, settings: { playerCount: 1 } });
     const p = playerOf(sim);
-    pin(sim, p, 14, 5);
-    const hx = { n: 8 };
-    sim.ecs.query(Hazard, Transform).updateEach(([hz, t]) => {
-      if (hz.kind === HazardKind.Crusher) hx.n = t.x;
-    });
-    expect(Math.abs(hx.n - 14)).toBeGreaterThan(2);
-    sim.step([hold({}), hold({}), hold({}), hold({})]);
-    expect(p.has(Dead)).toBe(false);
-    expect(p.get(Health)?.hp ?? 1).toBeGreaterThan(0);
-    pin(sim, p, 14, 5);
-    sim.step([hold({}), hold({}), hold({}), hold({})]);
+    place(sim, p, 12, 5.3);
+    let deadAt = -1;
+    for (let i = 0; i < 240; i++) {
+      sim.step([hold({}), hold({}), hold({}), hold({})]);
+      if (p.has(Dead) || (p.get(Health)?.hp ?? 1) <= 0) {
+        deadAt = i;
+        break;
+      }
+    }
+    expect(deadAt).toBeGreaterThan(4);
     expect(p.has(Dead)).toBe(true);
-    expect(p.get(Health)?.hp ?? 1).toBeLessThanOrEqual(0);
   });
 
   it('does not tunnel a player through a fast spikeball (PLAN M4 sweep)', () => {
@@ -128,19 +127,17 @@ describe('M4 hazards', () => {
       settings: { playerCount: 1 },
     });
     const p = playerOf(sim);
-    sim.ecs.query(Hazard, Transform).updateEach(([hz, t], e) => {
-      if (hz.kind !== HazardKind.Spikeball) return;
-      e.set(Transform, { x: 8, y: 5, angle: 0 });
-      e.set(PrevTransform, { x: 8, y: 5, angle: 0 });
-      sim.ctx.bodies.get(e)?.setPosition({ x: 8, y: 5 });
-      sim.ctx.bodies.get(e)?.setLinearVelocity({ x: 720, y: 0 });
-      t.x = 8;
-      t.y = 5;
-    });
-    pin(sim, p, 14, 5);
-    sim.step([hold({}), hold({}), hold({}), hold({})]);
+    place(sim, p, 14, 3.3);
+    let deadAt = -1;
+    for (let i = 0; i < 240; i++) {
+      sim.step([hold({}), hold({}), hold({}), hold({})]);
+      if (p.has(Dead) || (p.get(Health)?.hp ?? 1) <= 0) {
+        deadAt = i;
+        break;
+      }
+    }
+    expect(deadAt).toBeGreaterThan(2);
     expect(p.has(Dead)).toBe(true);
-    expect(p.get(Health)?.hp ?? 1).toBeLessThanOrEqual(0);
   });
 
   it('does not tunnel a player through an on laser via live velocity (PLAN M4 sweep)', () => {
@@ -267,7 +264,7 @@ describe('M4 hazards', () => {
     expect(sawOverlaps(10, 5, 18, 5, 0.7, 8, 5)).toBe(true);
     expect(sawOverlaps(4, 2, 18, 5, 0.7, 16, 5)).toBe(false);
 
-    // Live: player sits on the segment the blade travels this tick, not on the current disk.
+    // Path completion teleports the body this tick; sweep that commanded span, not vel*dt.
     const level = {
       ...getLevel('test-saw'),
       id: 'sweep-saw-live',
@@ -289,13 +286,21 @@ describe('M4 hazards', () => {
     };
     const sim = makeSim({ level, seed: 24, settings: { playerCount: 1 } });
     const p = playerOf(sim);
-    pin(sim, p, 14, 5);
-    const sawX = { n: 8 };
+    place(sim, p, 14, 5);
+    const before = { x: 8 };
     sim.ecs.query(Hazard, Transform).updateEach(([hz, t]) => {
-      if (hz.kind === HazardKind.Saw) sawX.n = t.x;
+      if (hz.kind === HazardKind.Saw) before.x = t.x;
     });
-    expect(Math.abs(sawX.n - 14)).toBeGreaterThan(2);
+    expect(Math.abs(before.x - 14)).toBeGreaterThan(2);
     sim.step([hold({}), hold({}), hold({}), hold({})]);
+    const after = { x: 8, body: 8 };
+    sim.ecs.query(Hazard, Transform).updateEach(([hz, t], e) => {
+      if (hz.kind !== HazardKind.Saw) return;
+      after.x = t.x;
+      after.body = sim.ctx.bodies.get(e)?.getPosition().x ?? t.x;
+    });
+    expect(Math.min(before.x, after.body)).toBeLessThan(14);
+    expect(Math.max(before.x, after.body)).toBeGreaterThan(14);
     expect(p.has(Dead)).toBe(true);
     expect(p.get(Health)?.hp ?? 1).toBeLessThanOrEqual(0);
   });

@@ -37,7 +37,7 @@ export const spikeball: HazardModule = {
     }
     return entity;
   },
-  contact(world, player, hz, ht, _ctrl, dt, hazard) {
+  contact(world, player, hz, ht, _ctrl, _dt, hazard) {
     const pt = player.get(Transform);
     if (!pt) return;
     const ctx = getContext(world);
@@ -45,13 +45,10 @@ export const spikeball: HazardModule = {
     const pprev = player.get(PrevTransform);
     const body = ctx.bodies.get(hazard);
     const pos = body?.getPosition();
-    const vel = body?.getLinearVelocity();
     const lastX = prev?.x ?? ht.x;
     const lastY = prev?.y ?? ht.y;
     const bodyX = pos?.x ?? ht.x;
     const bodyY = pos?.y ?? ht.y;
-    const predX = bodyX + (vel?.x ?? 0) * dt;
-    const predY = bodyY + (vel?.y ?? 0) * dt;
     const reach = (hz.param0 || 0.4) + 0.35;
     const samples = [
       [pt.x, pt.y],
@@ -60,8 +57,7 @@ export const spikeball: HazardModule = {
     for (const [px, py] of samples) {
       if (
         diskSweepsPlayer(px, py, ht.x, ht.y, reach, lastX, lastY) ||
-        diskSweepsPlayer(px, py, bodyX, bodyY, reach, ht.x, ht.y) ||
-        diskSweepsPlayer(px, py, predX, predY, reach, bodyX, bodyY)
+        diskSweepsPlayer(px, py, bodyX, bodyY, reach, ht.x, ht.y)
       ) {
         kill(world, player, pt.x, pt.y);
         return;
