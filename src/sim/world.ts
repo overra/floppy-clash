@@ -1,0 +1,131 @@
+import { createWorld, type Entity, type World } from 'koota';
+import { World as PhysicsWorld } from 'planck';
+import { thinkBots } from './ai/bots';
+import { bindContext, getContext, makeContext, type SimContext } from './context';
+import type { SimEvents } from './events';
+import { blankInputs, normalizeInput, type PlayerInput } from './input';
+import { loadLevel, spawnPlayer } from './level/loader';
+import type { LevelDef } from './level/schema';
+import { assignNetId, createBoxBody, registerBody } from './physics/bodies';
+import { mergeSettings, type MatchSettings } from './rules/settings';
+import { hashWorld, serializeWorld } from './snapshot';
+import { applyInputs } from './systems/applyInputs';
+import { cleanup } from './systems/cleanup';
+import { combat } from './systems/combat';
+import { controller } from './systems/controller';
+import { damageDeath } from './systems/damage';
+import { hazardsStep } from './systems/hazards';
+import { projectiles } from './systems/projectiles';
+import { rules } from './systems/rules';
+import { spawner } from './systems/spawner';
+import { physicsStep, syncTransforms } from './systems/syncTransforms';
+import { weapons } from './systems/weapons';
+import { DropState, MatchState, PrevTransform, RoundPhase, RoundState, SimClock, Transform } from './traits';
+
+export type CreateSimOptions = {
+  level: LevelDef;
+  seed: number;
+  settings?: Partial<MatchSettings>;
+  spawnPlayers?: boolean;
+  boxes?: number;
+};
+
+export type SimHandle = {
+  ecs: World;
+  ctx: SimContext;
+  step: (inputs?: PlayerInput[]) => SimEvents;
+  getTick: () => number;
+  hash: () => string;
+  snapshot: () => ReturnType<typeof serializeWorld>;
+  players: () => Entity[];
+};
+
+export function createSimWorld(opts: CreateSimOptions): SimHandle {
+  const settings = mergeSettings(opts.settings);
+  const ecs = createWorld();
+  const physics = new PhysicsWorld({ gravity: { x: 0, y: -30 } });
+  const ctx = makeContext(ecs, physics, opts.level, opts.seed, settings);
+  bindContext(ecs, ctx);
+
+  ecs.add(
+    RoundState({ phase: RoundPhase.Loading, ticks: 0, aliveMask: 0, lastKiller: -1, seed: opts.seed }),
+    MatchState({
+      wins0: 0,
+      wins1: 0,
+      wins2: 0,
+      wins3: 0,
+      firstTo: settings.firstTo,
+      levelIndex: 0,
+      rotation: settings.rotation === 'ordered' ? 1 : 0,
+      showWins: settings.showWins ? 1 : 0,
+      maxHp: settings.maxHp,
+      round: 0,
+    }),
+    SimClock({ tick: 0, stepScale: 1 }),
+    DropState({ nextDrop: 180, looseCount: 0 }),
+  );
+
+  loadLevel(ecs, opts.level);
+
+  if (opts.spawnPlayers !== false) {
+    const count = Math.max(1, Math.min(4, settings.playerCount + settings.bots));
+    const order = ctx.rng.shuffle(opts.level.spawns.slice());
+    for (let i = 0; i < count; i++) {
+      const spawn = order[i % order.length]!;
+      spawnPlayer(ecs, i, spawn.x, spawn.y + 1, i, i);
+    }
+  }
+
+  if (opts.boxes && opts.boxes > 0) {
+    spawnTestBoxes(ecs, opts.boxes);
+  }
+
+  const step = (inputs?: PlayerInput[]): SimEvents => {
+    ctx.events = [];
+    ctx.prevInputs = ctx.inputs.map((i) => ({ ...i }));
+    ctx.inputs = (inputs ?? blankInputs(4)).map(normalizeInput);
+    thinkBots(ecs);
+    applyInputs(ecs);
+    controller(ecs);
+    combat(ecs);
+    weapons(ecs);
+    projectiles(ecs);
+    hazardsStep(ecs);
+    physicsStep(ecs);
+    syncTransforms(ecs);
+    damageDeath(ecs);
+    rules(ecs);
+    spawner(ecs);
+    cleanup(ecs);
+    ctx.tick += 1;
+    ecs.set(SimClock, { tick: ctx.tick, stepScale: 1 });
+    return ctx.events;
+  };
+
+  return {
+    ecs,
+    ctx,
+    step,
+    getTick: () => ctx.tick,
+    hash: () => hashWorld(ecs),
+    snapshot: () => serializeWorld(ecs),
+    players: () => ctx.players.slice(),
+  };
+}
+
+function spawnTestBoxes(world: World, count: number): void {
+  const ctx = getContext(world);
+  for (let i = 0; i < count; i++) {
+    const x = 8 + (i % 6) * 1.2;
+    const y = 10 + Math.floor(i / 6) * 1.2;
+    const e = world.spawn(Transform({ x, y, angle: 0 }), PrevTransform({ x, y, angle: 0 }));
+    assignNetId(world, e);
+    const body = createBoxBody(ctx.physics, e, 'prop', x, y, 0.4, 0.4, 'dynamic', {
+      density: 1,
+      friction: 0.4,
+      restitution: 0.05,
+      fixedRotation: false,
+    });
+    registerBody(world, e, body);
+  }
+}

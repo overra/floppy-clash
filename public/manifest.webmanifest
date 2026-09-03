@@ -1,0 +1,17 @@
+{
+  "name": "Floppy Clash",
+  "short_name": "Floppy Clash",
+  "description": "A 2-4 player couch physics brawler. Press A to join.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#111318",
+  "theme_color": "#111318",
+  "icons": [
+    {
+      "src": "/favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
+  ]
+}

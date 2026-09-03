@@ -1,0 +1,41 @@
+import { z } from 'zod';
+
+export const WeaponDefSchema = z.object({
+  id: z.string(),
+  category: z.enum(['melee', 'pistol', 'rifle', 'explosive', 'snake', 'lava', 'other']),
+  ammo: z.number(),
+  fireMode: z.enum(['semi', 'auto', 'burst', 'hold']),
+  fireIntervalTicks: z.number(),
+  burstCount: z.number().optional(),
+  projectile: z.object({
+    kind: z.enum(['bullet', 'pellets', 'grenade', 'rocket', 'beam', 'melee', 'field', 'creature', 'burst-into']),
+    speed: z.number().default(40),
+    damage: z.number(),
+    spreadDeg: z.number().default(0),
+    count: z.number().default(1),
+    gravity: z.number().default(0),
+    bounce: z.number().default(0),
+    fuse: z.number().default(0),
+    radius: z.number().default(0),
+    explodeDamage: z.number().default(0),
+    explodeImpulse: z.number().default(0),
+    status: z.enum(['none', 'burn', 'slow', 'glue', 'bubble']).default('none'),
+    burstInto: z.string().optional(),
+    burstCount: z.number().optional(),
+    warningTicks: z.number().default(0),
+    beamTicks: z.number().default(0),
+    rare: z.boolean().default(false),
+  }),
+  recoil: z.object({ back: z.number().default(0), up: z.number().default(0), forward: z.number().default(0) }),
+  knockback: z.number().default(2),
+  thrownDamage: z.number().default(55),
+  dropWeight: z.number().default(1),
+  twoHanded: z.boolean().default(false),
+  laserSight: z.boolean().default(false),
+  infiniteAmmo: z.boolean().default(false),
+  shape: z.object({ kind: z.string(), length: z.number().default(0.45) }),
+  sound: z.string(),
+  milestone: z.enum(['m2', 'm3', 'm6']),
+});
+
+export type WeaponDef = z.infer<typeof WeaponDefSchema>;
