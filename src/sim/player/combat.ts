@@ -38,7 +38,7 @@ export function combat(world: World): void {
   const ctx = getContext(world);
   const t = ctx.tuning;
 
-  world.query(fighters).updateEach(([player, combat, aim, ctrl, transform], entity) => {
+  world.query(fighters).updateEach(([player, combat, aim, _ctrl, transform], entity) => {
     if (entity.has(Dead)) return;
     const input = ctx.inputs[player.inputIndex] ?? ctx.inputs[player.slot];
     const prev = ctx.prevInputs[player.inputIndex] ?? ctx.prevInputs[player.slot];
