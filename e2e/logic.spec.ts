@@ -77,12 +77,13 @@ test('boots, joins with keyboard, starts a local match vs bots', async ({ page }
     window.__floppy?.configureMatch?.({ maxHp: 1, enabledWeapons: [] });
     window.__floppy?.speedRounds();
   });
-  await expect
-    .poll(async () => page.evaluate(() => window.__floppy?.matchRound ?? 0), { timeout: 30_000 })
-    .toBeGreaterThan(0);
-  await expect(page.locator('[data-round-over]')).toBeVisible({ timeout: 8_000 });
+  // Overlay is LastKill/Scoreboard. match.round only increments after that window.
+  await expect(page.locator('[data-round-over]')).toBeVisible({ timeout: 30_000 });
   await expect
     .poll(async () => page.evaluate(() => window.__floppy?.fistKills ?? 0), { timeout: 5_000 })
+    .toBeGreaterThan(0);
+  await expect
+    .poll(async () => page.evaluate(() => window.__floppy?.matchRound ?? 0), { timeout: 15_000 })
     .toBeGreaterThan(0);
 });
 
