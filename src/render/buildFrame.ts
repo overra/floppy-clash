@@ -72,9 +72,59 @@ function nextLimb(fx: FxWorld | undefined, simId: number, vx: number, vy: number
   return cur;
 }
 
+/** PLAN §4.11: a weapon is a group of 2–4 rounded boxes. */
+function weaponPrimitives(x: number, y: number, length: number) {
+  const half = Math.max(0.12, length * 0.5);
+  const barrel = {
+    kind: PRIM_ROUNDED_BOX,
+    ax: x,
+    ay: y,
+    bx: half,
+    by: 0.055,
+    r: 0.03,
+  };
+  const handle = {
+    kind: PRIM_ROUNDED_BOX,
+    ax: x - half * 0.35,
+    ay: y - 0.12,
+    bx: 0.045,
+    by: 0.11,
+    r: 0.02,
+  };
+  if (length > 0.7) {
+    return [
+      barrel,
+      handle,
+      {
+        kind: PRIM_ROUNDED_BOX,
+        ax: x - half * 0.78,
+        ay: y - 0.02,
+        bx: 0.14,
+        by: 0.04,
+        r: 0.02,
+      },
+    ];
+  }
+  return [barrel, handle];
+}
+
+function bodyHalfSize(
+  ctx: ReturnType<typeof getContext>,
+  e: unknown,
+): { hx: number; hy: number } | null {
+  const body = ctx.bodies.get(e as number);
+  const fix = body?.getFixtureList();
+  if (!fix) return null;
+  const aabb = fix.getAABB(0);
+  const hx = (aabb.upperBound.x - aabb.lowerBound.x) * 0.5;
+  const hy = (aabb.upperBound.y - aabb.lowerBound.y) * 0.5;
+  if (!Number.isFinite(hx) || !Number.isFinite(hy) || hx < 0.05 || hy < 0.05) return null;
+  return { hx, hy };
+}
+
 /** PLAN §4.11: spikes use triangles; saw teeth use `sdPie`; lava stays a rounded box. */
-function hazardPrimitives(kind: number, x: number, y: number) {
-  const body = { kind: PRIM_ROUNDED_BOX, ax: x, ay: y, bx: 1.2, by: 0.35, r: 0.05 };
+function hazardPrimitives(kind: number, x: number, y: number, hx = 1.2, hy = 0.35) {
+  const body = { kind: PRIM_ROUNDED_BOX, ax: x, ay: y, bx: hx, by: hy, r: 0.05 };
   if (kind === HazardKind.Spikes) {
     return [
       body,
@@ -142,7 +192,8 @@ export function buildFrame(
     }
     const color = hz.kind === 4 ? theme.hazard : hz.kind === 3 ? '#222' : theme.solid;
     const fx = hz.kind === HazardKind.Lava ? ('lava' as const) : undefined;
-    const primitives = hazardPrimitives(hz.kind, x, y);
+    const size = bodyHalfSize(ctx, e);
+    const primitives = hazardPrimitives(hz.kind, x, y, size?.hx ?? 1.2, size?.hy ?? 0.35);
     const dest = e.get(Destructible);
     if (dest && dest.hp < dest.maxHp) {
       const cracks = Math.min(3, 1 + Math.floor((1 - dest.hp / dest.maxHp) * 3));
@@ -193,10 +244,11 @@ export function buildFrame(
   });
 
   const heldByEntity = new Map<object, { x: number; y: number; length: number }>();
-  world.query(Weapon, Held, Transform, PrevTransform).updateEach(([w, t, prev], we) => {
+  world.query(Weapon, Held, Transform).updateEach(([w, t], we) => {
     const holder = we.targetFor(HeldBy);
     if (!holder) return;
     const def = weaponByIndex(w.defId);
+    const prev = we.get(PrevTransform) ?? t;
     heldByEntity.set(holder, {
       x: lerp(prev.x, t.x, alpha),
       y: lerp(prev.y, t.y, alpha),
@@ -204,22 +256,20 @@ export function buildFrame(
     });
   });
 
-  world.query(Weapon, Transform, PrevTransform).updateEach(([w, t, prev], e) => {
+  world.query(Weapon, Transform).updateEach(([w, t], e) => {
     if (e.has(Held)) return;
     const def = weaponByIndex(w.defId);
+    const prev = e.get(PrevTransform) ?? t;
     const x = lerp(prev.x, t.x, alpha);
     const y = lerp(prev.y, t.y, alpha);
+    const prims = weaponPrimitives(x, y, def.shape.length);
     groups.push({
-      ...groupBounds([
-        { kind: PRIM_ROUNDED_BOX, ax: x, ay: y, bx: def.shape.length * 0.5, by: 0.08, r: 0.04 },
-      ]),
+      ...groupBounds(prims),
       color: '#2b2b2b',
       blend: 'union',
       smoothK: 0,
       layer: 3,
-      primitives: [
-        { kind: PRIM_ROUNDED_BOX, ax: x, ay: y, bx: def.shape.length * 0.5, by: 0.07, r: 0.03 },
-      ],
+      primitives: prims,
     });
   });
 
@@ -303,14 +353,7 @@ export function buildFrame(
       );
       const held = heldByEntity.get(e);
       if (held) {
-        prims.push({
-          kind: PRIM_ROUNDED_BOX,
-          ax: held.x,
-          ay: held.y,
-          bx: held.length * 0.45,
-          by: 0.07,
-          r: 0.03,
-        });
+        prims.push(...weaponPrimitives(held.x, held.y, held.length));
       }
       groups.push({
         ...groupBounds(prims, 0.5),
@@ -336,8 +379,6 @@ export function buildFrame(
       if (combat.blocking && !e.has(Dead)) {
         const arc = (ctx.tuning.blockArcDeg * Math.PI) / 180 / 2;
         const base = Math.atan2(aim.y, aim.x);
-        const a0 = base - arc;
-        const a1 = base + arc;
         groups.push({
           minX: x - 1.2,
           minY: y - 1.2,
@@ -349,12 +390,12 @@ export function buildFrame(
           layer: 7,
           primitives: [
             {
-              kind: PRIM_CAPSULE,
-              ax: x + Math.cos(a0) * 0.7,
-              ay: y + Math.sin(a0) * 0.7,
-              bx: x + Math.cos(a1) * 0.7,
-              by: y + Math.sin(a1) * 0.7,
-              r: 0.06,
+              kind: PRIM_PIE,
+              ax: x,
+              ay: y,
+              bx: arc,
+              by: base - Math.PI / 2,
+              r: 0.75,
             },
           ],
         });

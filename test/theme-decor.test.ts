@@ -3,10 +3,12 @@ import { woodsClearing } from '../src/levels/handauthored';
 import { createCamera } from '../src/render/camera';
 import { buildFrame } from '../src/render/buildFrame';
 import { groupBounds } from '../src/render/frame';
-import { PRIM_BEZIER, PRIM_ROUNDED_BOX } from '../src/render/sdf/primitives';
+import { PRIM_BEZIER, PRIM_PIE, PRIM_ROUNDED_BOX } from '../src/render/sdf/primitives';
 import { lerpHex, themePassGroups } from '../src/render/themeDecor';
+import { Combat } from '../src/sim/traits';
+import { spawnWeapon } from '../src/sim/systems/weapons';
 import { themeOf } from '../src/sim/level/themes';
-import { makeSim } from './helpers';
+import { makeSim, playerOf } from './helpers';
 
 describe('PLAN §4.11 theme pass', () => {
   it('emits gradient bands and parallax decorations including beziers', () => {
@@ -55,5 +57,39 @@ describe('PLAN §4.11 theme pass', () => {
     });
     expect(frame.groups.some((g) => g.layer === 0)).toBe(true);
     expect(frame.groups.some((g) => g.primitives.some((p) => p.kind === PRIM_BEZIER))).toBe(true);
+  });
+
+  it('solids use physics half-extents and the block arc is a pie', () => {
+    const sim = makeSim({ level: woodsClearing, seed: 2, settings: { playerCount: 1 } });
+    const p = playerOf(sim);
+    const combat = p.get(Combat);
+    if (combat) p.set(Combat, { ...combat, blocking: true });
+    const frame = buildFrame(sim, createCamera(sim.ctx.level.bounds), 0, 1280, 720, [], {
+      freezeCamera: true,
+    });
+    const floor = frame.groups
+      .flatMap((g) => g.primitives)
+      .filter((pr) => pr.kind === PRIM_ROUNDED_BOX && pr.bx > 8);
+    expect(floor.length).toBeGreaterThan(0);
+    expect(
+      frame.groups.some((g) => g.primitives.some((pr) => pr.kind === PRIM_PIE && g.layer === 7)),
+    ).toBe(true);
+  });
+
+  it('loose weapons are a group of 2–4 rounded boxes', () => {
+    const sim = makeSim({ level: woodsClearing, seed: 2, settings: { playerCount: 1 } });
+    spawnWeapon(sim.ecs, 'ak47', 16, 8);
+    sim.step();
+    const frame = buildFrame(sim, createCamera(sim.ctx.level.bounds), 0, 1280, 720, [], {
+      freezeCamera: true,
+    });
+    const guns = frame.groups.filter(
+      (g) =>
+        g.layer === 3 &&
+        g.primitives.length >= 2 &&
+        g.primitives.length <= 4 &&
+        g.primitives.every((pr) => pr.kind === PRIM_ROUNDED_BOX),
+    );
+    expect(guns.length).toBeGreaterThan(0);
   });
 });
