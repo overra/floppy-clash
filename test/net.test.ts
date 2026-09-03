@@ -105,6 +105,28 @@ describe('M8 netcode', () => {
     ).toBe(0);
   });
 
+  it('binary snapshot keeps wire "0" flags off and holderNetId 0', () => {
+    const host = makeSim({ settings: { playerCount: 2 } });
+    const a = playerOf(host, 0);
+    const gun = spawnWeapon(host.ecs, 'pistol', 8, 6);
+    gun.add(Held(), HeldBy(a));
+    gun.remove(Loose);
+    const snap = host.snapshot();
+    const playerRec = snap.entities.find((e) => Number(e.traits.Player?.slot) === 0);
+    const gunRec = snap.entities.find((e) => e.netId === gun.get(NetId)!.id);
+    expect(playerRec && gunRec).toBeTruthy();
+    playerRec!.traits.Controller = { ...playerRec!.traits.Controller, grounded: '0' };
+    playerRec!.traits.Combat = { ...playerRec!.traits.Combat, blocking: '0' };
+    gunRec!.traits.Weapon = { ...gunRec!.traits.Weapon, thrown: '0', holderNetId: '0', held: 1 };
+    const decoded = decodeSnapshotBinary(encodeSnapshotBinary(snap));
+    const decPlayer = decoded.entities.find((e) => e.netId === playerRec!.netId);
+    const decGun = decoded.entities.find((e) => e.netId === gunRec!.netId);
+    expect(decPlayer?.traits.Controller?.grounded).toBe(false);
+    expect(decPlayer?.traits.Combat?.blocking).toBe(false);
+    expect(decGun?.traits.Weapon?.thrown).toBe(false);
+    expect(Number(decGun?.traits.Weapon?.holderNetId)).toBe(0);
+  });
+
   it('binary snapshot carries a non-default host scoreboardTicks', () => {
     const host = makeSim({ settings: { playerCount: 2 } });
     host.ctx.tuning.scoreboardTicks = 120;

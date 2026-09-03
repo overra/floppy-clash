@@ -1,5 +1,6 @@
 import { Vec2 } from 'planck';
 import { getContext } from '../context';
+import { readBodyShape } from '../physics/bodies';
 import { HazardKind, HazardPath, PrevTransform, Transform } from '../traits';
 import { createKinematicCircle, diskSweepsPlayer, kill, stepHazardPath } from './common';
 import type { HazardModule } from './types';
@@ -66,14 +67,18 @@ export const saw: HazardModule = {
     const lastY = prev?.y ?? ht.y;
     const bodyX = pos?.x ?? ht.x;
     const bodyY = pos?.y ?? ht.y;
+    // Radius lives on the fixture (omega/speed/home occupy Hazard params).
+    // Missing / r: 0 is 0 — do not `|| 0.7` or a skinny/zero saw keeps the old disk.
+    const shape = body ? readBodyShape(body) : null;
+    const reach = shape?.circle === 1 ? shape.radius : 0;
     const samples = [
       [pt.x, pt.y],
       [pprev?.x ?? pt.x, pprev?.y ?? pt.y],
     ] as const;
     for (const [px, py] of samples) {
       if (
-        sawOverlaps(px, py, ht.x, ht.y, 0.7, lastX, lastY) ||
-        sawOverlaps(px, py, bodyX, bodyY, 0.7, ht.x, ht.y)
+        sawOverlaps(px, py, ht.x, ht.y, reach, lastX, lastY) ||
+        sawOverlaps(px, py, bodyX, bodyY, reach, ht.x, ht.y)
       ) {
         kill(world, player, pt.x, pt.y);
         return;

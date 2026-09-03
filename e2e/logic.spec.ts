@@ -400,14 +400,30 @@ test('local 10-round fists-only match (PLAN M2 stand-in)', async ({ page }) => {
   await expect
     .poll(async () => page.evaluate(() => window.__floppy?.phase ?? 0), { timeout: 20_000 })
     .toBe(2);
+  // Mid-round: after at least one completed round, back in Fighting.
+  await expect
+    .poll(async () => page.evaluate(() => window.__floppy?.matchRound ?? 0), { timeout: 80_000 })
+    .toBeGreaterThanOrEqual(1);
+  await expect
+    .poll(async () => page.evaluate(() => window.__floppy?.phase ?? 0), { timeout: 20_000 })
+    .toBe(2);
   await page.evaluate(() => {
-    const pads = (window as unknown as { __e2ePads: Gamepad[] }).__e2ePads;
-    window.dispatchEvent(Object.assign(new Event('gamepaddisconnected'), { gamepad: pads[0] }));
+    const pads = (window as unknown as { __e2ePads: (Gamepad | null)[] }).__e2ePads;
+    const removed = pads[0];
+    (window as unknown as { __e2eRemovedPad: Gamepad | null }).__e2eRemovedPad = removed;
+    pads[0] = null;
+    window.dispatchEvent(Object.assign(new Event('gamepaddisconnected'), { gamepad: removed }));
   });
   await expect(page.getByRole('heading', { name: 'Controller disconnected' })).toBeVisible();
+  const frozenTick = await page.evaluate(() => window.__floppy?.tick ?? 0);
+  await page.waitForTimeout(350);
+  const laterTick = await page.evaluate(() => window.__floppy?.tick ?? 0);
+  expect(laterTick - frozenTick).toBeLessThanOrEqual(2);
   await page.evaluate(() => {
-    const pads = (window as unknown as { __e2ePads: Gamepad[] }).__e2ePads;
-    window.dispatchEvent(Object.assign(new Event('gamepadconnected'), { gamepad: pads[0] }));
+    const pads = (window as unknown as { __e2ePads: (Gamepad | null)[] }).__e2ePads;
+    const restored = (window as unknown as { __e2eRemovedPad: Gamepad | null }).__e2eRemovedPad;
+    pads[0] = restored;
+    window.dispatchEvent(Object.assign(new Event('gamepadconnected'), { gamepad: restored }));
   });
   await expect(page.getByRole('heading', { name: 'Controller disconnected' })).toHaveCount(0);
   await expect
@@ -1044,6 +1060,35 @@ test('editor starting-weapon and decor use roster/kind dropdowns', async ({ page
   await expect(kindSel).toContainText('vine');
   await kindSel.selectOption('vine');
   await expect(page.locator('#edjson')).toContainText('"kind": "vine"');
+});
+
+test('editor theme, dir, style, and mode use schema dropdowns', async ({ page }) => {
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Level Editor' }).click();
+  await expect(page.locator('text=Level Editor')).toBeVisible();
+  const themeSel = page.locator('#edfields select[name="theme"]');
+  await expect(themeSel).toBeVisible();
+  await expect(themeSel).toContainText('western');
+  await themeSel.selectOption('western');
+  await expect(page.locator('#edjson')).toContainText('"theme": "western"');
+  await page.getByRole('button', { name: 'spikes', exact: true }).click();
+  await page.getByRole('button', { name: 'Add at 12,6' }).click();
+  const dirSel = page.locator('#edfields select[name="dir"]');
+  await expect(dirSel).toBeVisible();
+  await dirSel.selectOption('down');
+  await expect(page.locator('#edjson')).toContainText('"dir": "down"');
+  await page.getByRole('button', { name: 'spikeball' }).click();
+  await page.getByRole('button', { name: 'Add at 12,6' }).click();
+  const styleSel = page.locator('#edfields select[name="style"]');
+  await expect(styleSel).toBeVisible();
+  await styleSel.selectOption('roll');
+  await expect(page.locator('#edjson')).toContainText('"style": "roll"');
+  await page.getByRole('button', { name: 'platform.moving' }).click();
+  await page.getByRole('button', { name: 'Add at 12,6' }).click();
+  const modeSel = page.locator('#edfields select[name="mode"]');
+  await expect(modeSel).toBeVisible();
+  await modeSel.selectOption('loop');
+  await expect(page.locator('#edjson')).toContainText('"mode": "loop"');
 });
 
 test('editor trigger.drop uses the weapon roster dropdown', async ({ page }) => {

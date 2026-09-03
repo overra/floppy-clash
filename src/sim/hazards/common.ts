@@ -1,6 +1,6 @@
 import type { Entity, World } from 'koota';
 import { getContext } from '../context';
-import { assignNetId, createBoxBody, createCircleBody, registerBody } from '../physics/bodies';
+import { assignNetId, createBoxBody, createCircleBody, readBodyShape, registerBody } from '../physics/bodies';
 import { takeDamage } from '../player/health';
 import { Vec2 } from 'planck';
 import {
@@ -319,11 +319,21 @@ export function carryRider(
   ctrl: ControllerView,
   dt: number,
 ): void {
-  const dx = Math.abs(pt.x - ht.x);
-  if (!ctrl.grounded || dx >= 2.4 || pt.y <= ht.y || pt.y >= ht.y + 1.4) return;
-  player.add(StandingOn(hazard));
   const ctx = getContext(world);
   const pb = ctx.bodies.get(hazard);
+  const shape = pb ? readBodyShape(pb) : null;
+  const hz = hazard.get(Hazard);
+  // Body half-width wins (late-join BodyShape). Else authored param1 (full w).
+  // 0 means no carry reach — do not `|| 2.4`.
+  const halfW =
+    shape && shape.circle === 0
+      ? shape.hx
+      : hz && Number.isFinite(hz.param1)
+        ? Math.abs(hz.param1) / 2
+        : 0;
+  const dx = Math.abs(pt.x - ht.x);
+  if (!ctrl.grounded || dx >= halfW || pt.y <= ht.y || pt.y >= ht.y + 1.4) return;
+  player.add(StandingOn(hazard));
   const body = ctx.bodies.get(player);
   if (pb && body) {
     const pv = pb.getLinearVelocity();

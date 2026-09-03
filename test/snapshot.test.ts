@@ -198,6 +198,47 @@ describe('M8 snapshot', () => {
     expect(bodyActive).toBe(false);
   });
 
+  it('JSON wire "0" does not turn grounded / blocking / thrown on or drop holder 0', () => {
+    const host = makeSim({ seed: 411, settings: { playerCount: 2 } });
+    const a = playerOf(host, 0);
+    const ctrl = a.get(Controller)!;
+    a.set(Controller, { ...ctrl, grounded: false });
+    const combat = a.get(Combat)!;
+    a.set(Combat, { ...combat, blocking: false });
+    const gun = spawnWeapon(host.ecs, 'pistol', 8, 6);
+    gun.add(Held(), HeldBy(a));
+    gun.remove(Loose);
+    gun.set(Weapon, { ...gun.get(Weapon)!, thrown: false });
+    const snap = serializeWorld(host.ecs);
+    const playerRec = snap.entities.find((e) => Number(e.traits.Player?.slot) === 0);
+    const gunRec = snap.entities.find((e) => e.netId === gun.get(NetId)!.id);
+    expect(playerRec?.traits.Controller).toBeTruthy();
+    expect(gunRec?.traits.Weapon).toBeTruthy();
+    playerRec!.traits.Controller = { ...playerRec!.traits.Controller, grounded: '0' };
+    playerRec!.traits.Combat = { ...playerRec!.traits.Combat, blocking: '0' };
+    const holderId = a.get(NetId)!.id;
+    gunRec!.traits.Weapon = {
+      ...gunRec!.traits.Weapon,
+      thrown: '0',
+      held: 1,
+      holderNetId: String(holderId),
+    };
+
+    const view = createClientView(snap);
+    expect(playerOf(view.sim, 0).get(Controller)?.grounded).toBe(false);
+    expect(playerOf(view.sim, 0).get(Combat)?.blocking).toBe(false);
+    let thrown = true;
+    let holderOk = false;
+    view.sim.ecs.query(Weapon, NetId).updateEach(([w, n], e) => {
+      if (n.id !== gun.get(NetId)!.id) return;
+      thrown = w.thrown;
+      holderOk = e.targetFor(HeldBy) === playerOf(view.sim, 0);
+    });
+    expect(thrown).toBe(false);
+    expect(holderOk).toBe(true);
+    expect(Boolean('0')).toBe(true);
+  });
+
   it('late-join snapshot respawns ragdoll parts from a host death', () => {
     const host = makeSim({ seed: 92, settings: { playerCount: 2 } });
     const victim = playerOf(host, 1);

@@ -1,3 +1,4 @@
+import { wireFlag } from '../sim/authored';
 import type { TraitSnapshot, WorldSnapshot } from '../sim/snapshot';
 
 /** PLAN 4.13 quantized WorldSnapshot (v2). First byte is the version. */
@@ -190,9 +191,7 @@ function num(rec: Record<string, number | boolean | string> | undefined, key: st
 }
 
 function flag(rec: Record<string, number | boolean | string> | undefined, key: string): boolean {
-  const v = rec?.[key];
-  if (typeof v === 'boolean') return v;
-  return Number(v) !== 0;
+  return wireFlag(rec?.[key]);
 }
 
 function writeTrait(w: Writer, name: string, rec: Record<string, number | boolean | string>): void {

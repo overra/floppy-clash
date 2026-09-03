@@ -1,7 +1,7 @@
 import { createQuery, Not, type Entity, type World } from 'koota';
 import { emit, getContext } from '../context';
 import { moduleForKind } from '../hazards';
-import { assignNetId, createBoxBody, registerBody } from '../physics/bodies';
+import { assignNetId, createBoxBody, readBodyShape, registerBody } from '../physics/bodies';
 import { applyExplosion } from '../physics/queries';
 import { takeDamage } from '../player/health';
 import type { FixtureUserData } from '../physics/categories';
@@ -42,11 +42,26 @@ export function hazardsStep(world: World): void {
           : hz.kind === HazardKind.Lava
             ? hz.param1
             : 0;
-      const reach = hung ? Math.max(2.2, hz.param0 / 2 + 0.5) : Math.max(1.6, bed + 0.5);
       const prev = hazard.get(PrevTransform);
       const pprev = player.get(PrevTransform);
       const body = ctx.bodies.get(hazard);
       const pos = body?.getPosition();
+      const shape = body ? readBodyShape(body) : null;
+      // Platforms / bounce: body half-width (or authored w/2). Keep the 1.6
+      // floor so last-tick saw/crusher sweeps still invoke contact.
+      const deck =
+        hz.kind === HazardKind.MovingPlatform || hz.kind === HazardKind.RotatingPlatform
+          ? shape && shape.circle === 0
+            ? shape.hx
+            : Math.abs(hz.param1) / 2
+          : hz.kind === HazardKind.Bounce
+            ? shape && shape.circle === 0
+              ? shape.hx
+              : Math.abs(hz.param0) / 2
+            : 0;
+      const reach = hung
+        ? Math.max(2.2, hz.param0 / 2 + 0.5)
+        : Math.max(1.6, bed + 0.5, deck + 0.5);
       // Last-tick pose + this-tick commanded body (path teleport). Never vel*dt.
       const sweep =
         hz.kind === HazardKind.Saw ||

@@ -7,7 +7,7 @@ import { applyBodyShapeToSpec, DYNAMIC_APPENDIX_D_KINDS, lateJoinBodySpec } from
 import { destroyBody } from '../src/sim/physics/bodies';
 import { restoreWorld, serializeWorld } from '../src/sim/snapshot';
 import { Destructible, Hazard, HazardKind, NetId, PhysBody, SpawnPoint, Static, Transform } from '../src/sim/traits';
-import { hold, makeSim } from './helpers';
+import { hold, makeSim, playerOf } from './helpers';
 import type { SimHandle } from '../src/sim/world';
 import type { Body } from 'planck';
 
@@ -705,6 +705,31 @@ describe('spawnMissing restores host hazard density/type', () => {
       expect(row.restored.type).not.toBe('dynamic');
       expect(row.restored.type).not.toBe('kinematic');
     }
+  });
+
+  it('bounce pad still launches after spawnMissing', () => {
+    const host = makeSim({ level: getLevel('test-bounce'), seed: 466, settings: { playerCount: 1 } });
+    const snap = serializeWorld(host.ecs);
+    const view = createClientView(snap, 120, getLevel('test-bounce'));
+    const kill: Entity[] = [];
+    view.sim.ecs.query(Hazard, NetId).updateEach(([hz], e) => {
+      if (hz.kind === HazardKind.Bounce) kill.push(e);
+    });
+    expect(kill.length).toBeGreaterThan(0);
+    for (const e of kill) {
+      destroyBody(view.sim.ecs, e);
+      e.destroy();
+    }
+    restoreWorld(view.sim.ecs, snap);
+    const p = playerOf(view.sim);
+    const pad = getLevel('test-bounce').objects.find((o) => o.type === 'bounce');
+    view.sim.ctx.bodies.get(p)?.setPosition({ x: pad?.x ?? 13, y: (pad?.y ?? 2.3) + 0.9 });
+    let launched = false;
+    for (let i = 0; i < 24; i++) {
+      view.sim.step([hold({}), hold({}), hold({}), hold({})]);
+      if ((view.sim.ctx.bodies.get(p)?.getLinearVelocity().y ?? 0) > 4) launched = true;
+    }
+    expect(launched).toBe(true);
   });
 
   it('destructible / ice stay static with host friction after spawnMissing', () => {

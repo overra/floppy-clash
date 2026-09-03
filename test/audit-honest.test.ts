@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { getLevel } from '../src/levels/catalog';
 import { woodsClearing } from '../src/levels/handauthored';
-import { authored } from '../src/sim/authored';
+import { authored, wireFlag } from '../src/sim/authored';
 import { diskSweepsPlayer } from '../src/sim/hazards/common';
 import { crusherOverlaps } from '../src/sim/hazards/crusher';
 import { lavaSweepsPlayer } from '../src/sim/hazards/lava';
@@ -12,6 +12,7 @@ import { weaponIndex } from '../src/sim/weapons/defs';
 import { nextMatchLevel } from '../src/sim/systems/reset';
 import {
   Aim,
+  Controller,
   Dead,
   Hazard,
   HazardKind,
@@ -25,6 +26,7 @@ import {
   ProjectileKind,
   RoundPhase,
   RoundState,
+  StandingOn,
   Transform,
   Weapon,
 } from '../src/sim/traits';
@@ -162,11 +164,11 @@ describe('honest PLAN stand-ins (no pin/pred OR, no scoreboard shrink)', () => {
     expect(Math.min(span.prev, span.now)).toBeLessThan(10);
     expect(Math.max(span.prev, span.now)).toBeGreaterThan(10);
     freezeHazardKinematics(sim, HazardKind.Saw);
-    // diskSweepsPlayer Y half-extent is reach + player half-height (0.7 + 0.9).
-    const hitY = pointOnSweepOutsideCurrent(span.prev, span.now, 1.6);
+    // diskSweepsPlayer Y half-extent is authored r + player half-height (0.45 + 0.9).
+    const hitY = pointOnSweepOutsideCurrent(span.prev, span.now, 1.35);
     expect(hitY).not.toBeNull();
-    expect(sawOverlaps(span.x, hitY!, span.x, span.now, 0.7, span.x, span.now)).toBe(false);
-    expect(sawOverlaps(span.x, hitY!, span.x, span.now, 0.7, span.x, span.prev)).toBe(true);
+    expect(sawOverlaps(span.x, hitY!, span.x, span.now, 0.45, span.x, span.now)).toBe(false);
+    expect(sawOverlaps(span.x, hitY!, span.x, span.now, 0.45, span.x, span.prev)).toBe(true);
     place(sim, p, span.x, hitY!);
     sim.step([hold({}), hold({}), hold({}), hold({})]);
     const after = { now: span.now };
@@ -217,10 +219,10 @@ describe('honest PLAN stand-ins (no pin/pred OR, no scoreboard shrink)', () => {
     expect(Math.max(span.prev, span.now)).toBeGreaterThan(14);
     // Kill tick must not re-drive the path (that is a this-tick teleport / vel*dt substitute).
     freezeHazardKinematics(sim, HazardKind.Saw);
-    const hitX = pointOnSweepOutsideCurrent(span.prev, span.now, 1);
+    const hitX = pointOnSweepOutsideCurrent(span.prev, span.now, 0.75);
     expect(hitX).not.toBeNull();
-    expect(sawOverlaps(hitX!, span.y, span.now, span.y, 0.7, span.now, span.y)).toBe(false);
-    expect(sawOverlaps(hitX!, span.y, span.now, span.y, 0.7, span.prev, span.y)).toBe(true);
+    expect(sawOverlaps(hitX!, span.y, span.now, span.y, 0.45, span.now, span.y)).toBe(false);
+    expect(sawOverlaps(hitX!, span.y, span.now, span.y, 0.45, span.prev, span.y)).toBe(true);
     place(sim, p, hitX!, span.y);
     sim.step([hold({}), hold({}), hold({}), hold({})]);
     const after = { now: span.now };
@@ -273,12 +275,163 @@ describe('honest PLAN stand-ins (no pin/pred OR, no scoreboard shrink)', () => {
       prev.x = t.x;
       prev.y = t.y;
     });
-    const hitX = pointOnSweepOutsideCurrent(span.prev, span.now, 1);
+    const hitX = pointOnSweepOutsideCurrent(span.prev, span.now, 0.75);
     expect(hitX).not.toBeNull();
     place(sim, p, hitX!, span.y);
     sim.step([hold({}), hold({}), hold({}), hold({})]);
     expect(p.has(Dead)).toBe(false);
     expect(p.get(Health)?.hp ?? 1).toBeGreaterThan(0);
+  });
+
+  it('a skinny saw does not kill at the old 0.7 m disk', () => {
+    const sim = makeSim({
+      level: {
+        ...getLevel('test-saw'),
+        id: 'saw-skinny',
+        objects: [
+          { type: 'solid' as const, x: 12, y: 1, w: 24, h: 2 },
+          { type: 'saw' as const, x: 12, y: 6, r: 0.2, omega: 0, speed: 0 },
+        ],
+      },
+      seed: 201,
+      settings: { playerCount: 1 },
+    });
+    const p = playerOf(sim);
+    // 0.55 m: inside 0.7+0.3, outside authored 0.2+0.3.
+    pin(sim, p, 12.55, 6);
+    sim.step([hold({}), hold({}), hold({}), hold({})]);
+    expect(p.has(Dead)).toBe(false);
+    expect(p.get(Health)?.hp ?? 1).toBeGreaterThan(0);
+  });
+
+  it('a fat saw kills past the old 0.7 m disk', () => {
+    const sim = makeSim({
+      level: {
+        ...getLevel('test-saw'),
+        id: 'saw-fat',
+        objects: [
+          { type: 'solid' as const, x: 12, y: 1, w: 24, h: 2 },
+          { type: 'saw' as const, x: 12, y: 6, r: 0.9, omega: 0, speed: 0 },
+        ],
+      },
+      seed: 202,
+      settings: { playerCount: 1 },
+    });
+    const p = playerOf(sim);
+    // 1.05 m: outside 0.7+0.3, inside authored 0.9+0.3.
+    pin(sim, p, 13.05, 6);
+    sim.step([hold({}), hold({}), hold({}), hold({})]);
+    expect(p.has(Dead)).toBe(true);
+    expect(p.get(Health)?.hp ?? 1).toBeLessThanOrEqual(0);
+  });
+
+  it('a saw with r: 0 does not use a 0.7 m substitute', () => {
+    const sim = makeSim({
+      level: {
+        ...getLevel('test-saw'),
+        id: 'saw-zero-r',
+        objects: [
+          { type: 'solid' as const, x: 12, y: 1, w: 24, h: 2 },
+          { type: 'saw' as const, x: 12, y: 6, r: 0, omega: 0, speed: 0 },
+        ],
+      },
+      seed: 203,
+      settings: { playerCount: 1 },
+    });
+    const p = playerOf(sim);
+    pin(sim, p, 12.5, 6);
+    sim.step([hold({}), hold({}), hold({}), hold({})]);
+    expect(p.has(Dead)).toBe(false);
+    expect(p.get(Health)?.hp ?? 1).toBeGreaterThan(0);
+  });
+
+  it('a wide moving platform carries a rider past the old 2.4 m half-width', () => {
+    const sim = makeSim({
+      level: {
+        ...getLevel('test-platform.moving'),
+        id: 'plat-wide',
+        objects: [
+          { type: 'solid' as const, x: 12, y: 1, w: 24, h: 2 },
+          {
+            type: 'platform.moving' as const,
+            x: 12,
+            y: 6,
+            w: 8,
+            h: 0.6,
+            speed: 3,
+            mode: 'pingpong' as const,
+          },
+        ],
+      },
+      seed: 204,
+      settings: { playerCount: 1 },
+    });
+    const p = playerOf(sim);
+    const plat = { x: 12, y: 6, e: p };
+    sim.ecs.query(Hazard, Transform).updateEach(([hz, t], e) => {
+      if (hz.kind === HazardKind.MovingPlatform) {
+        plat.x = t.x;
+        plat.y = t.y;
+        plat.e = e;
+      }
+    });
+    pin(sim, p, plat.x + 3.2, plat.y + 1.15);
+    const ctrl = p.get(Controller);
+    if (ctrl) p.set(Controller, { ...ctrl, grounded: true });
+    sim.step([hold({}), hold({}), hold({}), hold({})]);
+    expect(p.targetFor(StandingOn)).toBe(plat.e);
+  });
+
+  it('a moving platform with w: 0 does not carry at center', () => {
+    const sim = makeSim({
+      level: {
+        ...getLevel('test-platform.moving'),
+        id: 'plat-zero-w',
+        objects: [
+          { type: 'solid' as const, x: 12, y: 1, w: 24, h: 2 },
+          {
+            type: 'platform.moving' as const,
+            x: 12,
+            y: 6,
+            w: 0,
+            h: 0.6,
+            speed: 3,
+            mode: 'pingpong' as const,
+          },
+        ],
+      },
+      seed: 205,
+      settings: { playerCount: 1 },
+    });
+    const p = playerOf(sim);
+    pin(sim, p, 12, 7.15);
+    const ctrl = p.get(Controller);
+    if (ctrl) p.set(Controller, { ...ctrl, grounded: true });
+    sim.step([hold({}), hold({}), hold({}), hold({})]);
+    expect(p.targetFor(StandingOn)).toBeUndefined();
+  });
+
+  it('a wide bounce pad launches at the rim past the old 1.6 m near-check', () => {
+    const sim = makeSim({
+      level: {
+        ...getLevel('test-bounce'),
+        id: 'bounce-wide',
+        objects: [
+          { type: 'solid' as const, x: 12, y: 1, w: 24, h: 2 },
+          { type: 'bounce' as const, x: 12, y: 2.3, w: 8, h: 0.4 },
+        ],
+      },
+      seed: 206,
+      settings: { playerCount: 1 },
+    });
+    const p = playerOf(sim);
+    sim.ctx.bodies.get(p)?.setPosition({ x: 15.2, y: 3.2 });
+    let launched = false;
+    for (let i = 0; i < 24; i++) {
+      sim.step([hold({}), hold({}), hold({}), hold({})]);
+      if ((sim.ctx.bodies.get(p)?.getLinearVelocity().y ?? 0) > 4) launched = true;
+    }
+    expect(launched).toBe(true);
   });
 
   it('laser last-tick PrevTransform kills after a live skip with velocity zeroed', () => {
@@ -1217,6 +1370,19 @@ describe('honest PLAN stand-ins (no pin/pred OR, no scoreboard shrink)', () => {
     expect(authored(undefined, 2)).toBe(2);
     expect(authored(undefined, 8)).toBe(8);
     expect(authored(undefined, 0.7)).toBe(0.7);
+  });
+
+  it('wireFlag treats JSON "0" as off (Boolean("0") is the false-green)', () => {
+    expect(wireFlag(false)).toBe(false);
+    expect(wireFlag(true)).toBe(true);
+    expect(wireFlag(0)).toBe(false);
+    expect(wireFlag(1)).toBe(true);
+    expect(wireFlag('0')).toBe(false);
+    expect(wireFlag('1')).toBe(true);
+    expect(wireFlag('')).toBe(false);
+    expect(wireFlag(undefined)).toBe(false);
+    expect(wireFlag(null)).toBe(false);
+    expect(Boolean('0')).toBe(true);
   });
 
   it('explosion radius 0 / impulse 0 do not substitute 2 / 8', () => {

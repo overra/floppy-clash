@@ -1,5 +1,6 @@
 import { createAdded, createChanged, createRemoved, type Entity, type World } from 'koota';
 import { fnv1a, hashToHex, quantize } from '../core/hash';
+import { wireFlag } from './authored';
 import { isolateChainBody } from './hazards/chain';
 import { applyBodyShapeToSpec, createLateJoinHazardBody, lateJoinBodySpec } from './hazards/lateJoin';
 import { attachLateJoinHazardJoints } from './hazards/lateJoinJoints';
@@ -437,7 +438,7 @@ function applyRecord(world: World, entity: Entity, rec: TraitSnapshot, full: boo
   if (c && curC) {
     entity.set(Controller, {
       ...curC,
-      grounded: Boolean(c.grounded),
+      grounded: wireFlag(c.grounded),
       facing: Number(c.facing),
       vx: Number(c.vx ?? curC.vx),
       vy: Number(c.vy ?? curC.vy),
@@ -466,7 +467,7 @@ function applyRecord(world: World, entity: Entity, rec: TraitSnapshot, full: boo
     entity.set(Combat, {
       ...curCb,
       blockMeter: Number(cb.blockMeter ?? curCb.blockMeter),
-      blocking: Boolean(cb.blocking),
+      blocking: wireFlag(cb.blocking),
       punchActive: Number(cb.punchActive ?? curCb.punchActive),
       blockStartTick: Number(cb.blockStartTick ?? curCb.blockStartTick),
       punchCooldown: Number(cb.punchCooldown ?? curCb.punchCooldown),
@@ -480,7 +481,7 @@ function applyRecord(world: World, entity: Entity, rec: TraitSnapshot, full: boo
       ...curW,
       defId: Number(w.defId ?? curW.defId),
       ammo: Number(w.ammo ?? curW.ammo),
-      thrown: Boolean(w.thrown),
+      thrown: wireFlag(w.thrown),
       thrownHit: Boolean(Number(w.thrownHit ?? (curW.thrownHit ? 1 : 0))),
       pickupCooldown: Number(w.pickupCooldown ?? curW.pickupCooldown),
     });
@@ -802,7 +803,7 @@ function spawnMissing(
         defId: Number(w.defId),
         ammo: Number(w.ammo ?? 0),
         pickupCooldown: Number(w.pickupCooldown ?? 0),
-        thrown: Boolean(w.thrown),
+        thrown: wireFlag(w.thrown),
         thrownHit: Boolean(Number(w.thrownHit ?? 0)),
       }),
       Transform({ x, y, angle }),
