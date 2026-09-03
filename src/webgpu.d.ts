@@ -2,6 +2,7 @@ interface GPUAdapter {
   requestDevice(desc?: unknown): Promise<GPUDevice>;
 }
 interface GPUDevice {
+  destroy(): void;
   createShaderModule(desc: { code: string }): GPUShaderModule;
   createRenderPipeline(desc: unknown): GPURenderPipeline;
   createBuffer(desc: { size: number; usage: number }): GPUBuffer;

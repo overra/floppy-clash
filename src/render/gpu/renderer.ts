@@ -14,6 +14,7 @@ import {
   READBACK_W,
   type FramebufferReadback,
 } from './readback';
+import { replayFrameReadback } from './replayReadback';
 import {
   createDecalDrawPipeline,
   createSdfDrawPipeline,
@@ -164,6 +165,7 @@ async function createGpuRenderer(
   let readbackLock = false;
   let pendingRead: ((value: FramebufferReadback) => void) | null = null;
   let inflightRead: Promise<FramebufferReadback> | null = null;
+  let lastFrame: RenderFrame | null = null;
   void root;
   (window as unknown as { __gpuKeepAlive?: unknown }).__gpuKeepAlive = { root, device, staging };
 
@@ -209,7 +211,7 @@ async function createGpuRenderer(
       await staging.mapAsync(mapRead);
       const mapped = new Uint8Array(staging.getMappedRange().slice(0));
       staging.unmap();
-      const out = inspectMappedRgba(mapped, cropW, cropH, bytesPerRow, 'webgpu-copy');
+      const out = inspectMappedRgba(mapped, cropW, cropH, bytesPerRow, 'webgpu-copy', 'swapchain');
       pendingRead?.(out);
       pendingRead = null;
       inflightRead = null;
@@ -258,14 +260,31 @@ async function createGpuRenderer(
     lastGpuMs: 0,
     decalUploads: 0,
     readFramebuffer() {
-      if (!readbackEnabled || !staging) {
-        return Promise.resolve(emptyReadback('unavailable', readbackError || 'copy-src-disabled'));
-      }
       if (inflightRead) return inflightRead;
-      inflightRead = new Promise<FramebufferReadback>((resolve) => {
-        pendingRead = resolve;
-        copyThisFrame = true;
-      });
+      inflightRead = (async () => {
+        const live =
+          readbackEnabled && staging
+            ? await Promise.race([
+                new Promise<FramebufferReadback>((resolve) => {
+                  pendingRead = resolve;
+                  copyThisFrame = true;
+                }),
+                new Promise<FramebufferReadback>((resolve) => {
+                  setTimeout(
+                    () => resolve(emptyReadback('unavailable', 'swapchain-timeout')),
+                    2000,
+                  );
+                }),
+              ])
+            : emptyReadback('unavailable', readbackError || 'copy-src-disabled');
+        if (live.source === 'webgpu-copy') return live;
+        if (!lastFrame) {
+          return emptyReadback('unavailable', `${live.error}; no-last-frame`);
+        }
+        const replay = await replayFrameReadback(lastFrame);
+        if (replay.source === 'webgpu-copy') return replay;
+        return emptyReadback('unavailable', `${live.error}; ${replay.error}`);
+      })();
       return inflightRead;
     },
     resize(w: number, h: number) {
@@ -276,6 +295,7 @@ async function createGpuRenderer(
       canvas.style.height = `${h}px`;
     },
     render(frame: RenderFrame) {
+      lastFrame = frame;
       const t0 = performance.now();
       const w = canvas.width;
       const h = canvas.height;

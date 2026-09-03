@@ -102,6 +102,7 @@ describe('GPU boot order (PLAN §4.11)', () => {
     expect(renderer).toContain('COPY_SRC');
     expect(renderer).toContain('readFramebuffer');
     expect(renderer).toContain('initFromDevice');
+    expect(renderer).toContain('replayFrameReadback');
   });
 });
 

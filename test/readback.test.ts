@@ -36,8 +36,9 @@ describe('PLAN §6 framebuffer readback helpers', () => {
     const samples = samplePixels(bytes, w, h, row);
     expect(samples[0]).toMatchObject({ x: 0, y: 0, r: 17, g: 19, b: 24 });
     expect(samples[1]).toMatchObject({ x: 2, y: 2, r: 242 });
-    const inspected = inspectMappedRgba(bytes, w, h, row, 'webgpu-copy');
+    const inspected = inspectMappedRgba(bytes, w, h, row, 'webgpu-copy', 'offscreen-replay');
     expect(inspected.source).toBe('webgpu-copy');
+    expect(inspected.via).toBe('offscreen-replay');
     expect(inspected.colored).toBe(2);
     expect(inspected.error).toBe('');
   });

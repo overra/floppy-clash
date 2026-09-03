@@ -6,6 +6,8 @@ export const PIXEL_BYTES = 4;
 
 export type FramebufferReadback = {
   source: 'webgpu-copy' | 'canvas-2d' | 'unavailable';
+  /** How the GPU bytes were produced. Swapchain copy is preferred; offscreen replay avoids a dead present device. */
+  via?: 'swapchain' | 'offscreen-replay';
   width: number;
   height: number;
   colored: number;
@@ -21,7 +23,7 @@ export function emptyReadback(
   source: FramebufferReadback['source'],
   error: string,
 ): FramebufferReadback {
-  return { source, width: 0, height: 0, colored: 0, samples: [], error };
+  return { source, width: 0, height: 0, colored: 0, samples: [], error, via: undefined };
 }
 
 export function countColoredPixels(
@@ -77,9 +79,11 @@ export function inspectMappedRgba(
   height: number,
   bytesPerRow: number,
   source: FramebufferReadback['source'],
+  via?: FramebufferReadback['via'],
 ): FramebufferReadback {
   return {
     source,
+    via,
     width,
     height,
     colored: countColoredPixels(bytes, width, height, bytesPerRow),

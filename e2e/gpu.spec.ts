@@ -76,6 +76,7 @@ test('GPU renderer initialises and PLAN §6 reads framebuffer pixels', async ({ 
     const raw = (window as unknown as { __gpuReadback: Record<string, unknown> }).__gpuReadback;
     return {
       source: String(raw.source ?? 'unavailable'),
+      via: String(raw.via ?? ''),
       width: Number(raw.width ?? 0),
       height: Number(raw.height ?? 0),
       colored: Number(raw.colored ?? 0),
@@ -92,6 +93,7 @@ test('GPU renderer initialises and PLAN §6 reads framebuffer pixels', async ({ 
     expect(rb.source, `PLAN §6 GPU pixel readback failed: ${rb.error || 'unknown'}`).toBe(
       'webgpu-copy',
     );
+    expect(rb.via === 'swapchain' || rb.via === 'offscreen-replay', `via=${rb.via}`).toBe(true);
     expect(rb.error).toBe('');
     expect(rb.width).toBeGreaterThan(0);
     expect(rb.height).toBeGreaterThan(0);
