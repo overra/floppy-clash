@@ -289,6 +289,14 @@ describe('PLAN accept stand-ins', () => {
     burn.step([hold({}), hold({}), hold({}), hold({})]);
     expect((bp.get(Health)?.hp ?? 100)).toBe(hp0 - 5);
     expect(bp.get(Status)?.burning).toBe(59);
+
+    const fresh = makeSim({ seed: 76, settings: { playerCount: 1 } });
+    const fp = playerOf(fresh);
+    fp.set(Status, { burning: 360, slowed: 0, glued: 0, bubbled: 0 });
+    const fhp = fp.get(Health)?.hp ?? 100;
+    fresh.step([hold({}), hold({}), hold({}), hold({})]);
+    expect(fp.get(Health)?.hp).toBe(fhp);
+    expect(fp.get(Status)?.burning).toBe(359);
   });
 
   it('a player can stand on a loose weapon (weapon jump)', () => {

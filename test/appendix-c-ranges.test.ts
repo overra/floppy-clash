@@ -169,6 +169,12 @@ describe('PLAN Appendix C range / duration mapping', () => {
     let beamHits = 0;
     const hp0 = b.get(Health)?.hp ?? 100;
     for (let i = 0; i < 60; i++) {
+      sim.ctx.bodies.get(a)?.setPosition({ x: 10, y: 4 });
+      sim.ctx.bodies.get(b)?.setPosition({ x: 14, y: 4 });
+      sim.ctx.bodies.get(a)?.setLinearVelocity({ x: 0, y: 0 });
+      sim.ctx.bodies.get(b)?.setLinearVelocity({ x: 0, y: 0 });
+      a.set(Transform, { x: 10, y: 4, angle: 0 });
+      b.set(Transform, { x: 14, y: 4, angle: 0 });
       const ev = sim.step([hold({ attack: true, aimX: 1, aimY: 0 }), hold({}), hold({}), hold({})]);
       beamHits += ev.filter((e) => e.type === 'hit').reduce((s, e) => s + (e.type === 'hit' ? e.damage : 0), 0);
     }
@@ -299,7 +305,7 @@ describe('PLAN Appendix C range / duration mapping', () => {
     const gun = spawnWeapon(sim.ecs, 'rpg', 8, 5);
     gun.add(Held(), HeldBy(a));
     gun.remove(Loose);
-    sim.step([hold({ attack: true, aimX: 1, aimY: 0 }), hold({}), hold({}), hold({})]);
+    sim.step([hold({ attack: true, aimX: 0, aimY: 1 }), hold({}), hold({}), hold({})]);
     sim.ecs.query(Projectile).updateEach(([p], e) => {
       p.x = 10;
       p.y = 4;

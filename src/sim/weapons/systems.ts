@@ -257,7 +257,10 @@ export function weapons(world: World): void {
     );
     emit(world, { type: 'shot', source: entity, weaponId: def.id, x: muzzleX, y: muzzleY, aimX: aim.x, aimY: aim.y });
     if (def.id === 'blink-dagger') {
-      body.setPosition(new Vec2(transform.x + aim.x * 4, transform.y + aim.y * 4));
+      // PLAN Appendix C: teleport forward, damage at destination (same tick).
+      transform.x += aim.x * 4;
+      transform.y += aim.y * 4;
+      body.setPosition(new Vec2(transform.x, transform.y));
     }
     void takeDamage;
     void Controller;

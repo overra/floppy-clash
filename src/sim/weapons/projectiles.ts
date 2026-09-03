@@ -131,9 +131,7 @@ function explode(world: World, x: number, y: number, defId: number, owner?: Enti
   const radius = def.projectile.radius || 2;
   const reported =
     def.projectile.explodeDamageMax ??
-    def.projectile.explodeDamage ||
-    rolledDamage ||
-    def.projectile.damage;
+    (def.projectile.explodeDamage || rolledDamage || def.projectile.damage);
   emit(world, { type: 'explosion', x, y, radius, damage: reported });
   applyExplosion(world, x, y, radius, def.projectile.explodeImpulse || 8, (body, falloff) => {
     const data = body.getUserData() as FixtureUserData | undefined;
@@ -238,6 +236,11 @@ export function projectiles(world: World): void {
               def.projectile.status,
               statusTicksFor(world, def.projectile.status, 90),
             );
+          }
+          const tb = ctx.bodies.get(hit.entity as Entity);
+          if (tb && def.knockback) {
+            const v = tb.getLinearVelocity();
+            tb.setLinearVelocity(new Vec2(v.x + aim.x * def.knockback, v.y + aim.y * def.knockback));
           }
         }
       }

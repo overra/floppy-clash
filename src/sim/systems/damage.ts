@@ -15,7 +15,10 @@ export function damageDeath(world: World): void {
     const status = entity.get(Status);
     if (status) {
       if (status.burning > 0) {
-        if (status.burning % ctx.tuning.burnIntervalTicks === 0) {
+        // PLAN Appendix C: 5/s for 6 s. Tick on elapsed time so refreshing
+        // `burning` to duration (lava stream / flamethrower) does not instant-proc.
+        const elapsed = ctx.tuning.burnDurationTicks - status.burning;
+        if (elapsed > 0 && elapsed % ctx.tuning.burnIntervalTicks === 0) {
           health.hp -= ctx.tuning.burnDamage;
         }
         status.burning -= 1;
