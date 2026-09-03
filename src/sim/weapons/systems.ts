@@ -6,6 +6,7 @@ import { createBoxBody, registerBody, assignNetId } from '../physics/bodies';
 import { Aim, Combat, Controller, Dead, Held, HeldBy, Loose, OwnedBy, Player, Projectile, ProjectileKind, Transform, Weapon } from '../traits';
 import type { WeaponDef } from './schema';
 import { weaponByIndex, weaponIndex } from './defs';
+import { rollIfRanged } from './mapping';
 import { takeDamage } from '../player/health';
 
 const holders = createQuery(Player, Aim, Combat, Transform);
@@ -52,8 +53,12 @@ function spawnBullet(
   const speed = def.projectile.speed;
   const vx = Math.cos(angle) * speed;
   const vy = Math.sin(angle) * speed;
-  const damage =
-    def.id === 'god-pistol' ? 30 + ctx.rng.next() * 30 : def.projectile.damage;
+  const damage = rollIfRanged(
+    ctx.rng,
+    def.projectile.damageMin,
+    def.projectile.damageMax,
+    def.projectile.damage,
+  );
   const proj = world.spawn(
     Projectile({
       kind: kindId(def.projectile.kind),
@@ -236,13 +241,14 @@ export function weapons(world: World): void {
       if (left <= 0) ctx.burstLeft.delete(entity);
       else ctx.burstLeft.set(entity, left);
     }
-    const shots = def.projectile.kind === 'pellets' ? def.projectile.count : 1;
+    const shots = Math.max(1, def.projectile.count ?? 1);
     const muzzleX = transform.x + aim.x * (0.45 + def.shape.length * 0.5);
     const muzzleY = transform.y + aim.y * (0.45 + def.shape.length * 0.5);
     for (let i = 0; i < shots; i++) {
       spawnBullet(world, entity, def, muzzleX, muzzleY, aim.x, aim.y);
     }
-    if (!def.infiniteAmmo) {
+    // PLAN Appendix C M16: ammo counts burst sequences (30 bursts), not bullets.
+    if (!def.infiniteAmmo && (def.fireMode !== 'burst' || fireEdge)) {
       held.set(Weapon, { ...wep, ammo: wep.ammo - 1 });
     }
     const vel = body.getLinearVelocity();

@@ -186,6 +186,7 @@ describe('PLAN accept stand-ins', () => {
     expect(shots[0]).toBe(1);
     expect(shots.reduce((a, b) => a + b, 0)).toBe(3);
     expect(shots.filter((n) => n > 0).length).toBe(3);
+    expect(gun.get(Weapon)?.ammo).toBe(29);
   });
 
   it('projectile head hit applies 2× damage', () => {

@@ -25,6 +25,7 @@ import {
 } from '../traits';
 import { disarm } from '../player/combat';
 import { weaponByIndex } from './defs';
+import { explodeDamageAt, rollIfRanged } from './mapping';
 import type { FixtureUserData } from '../physics/categories';
 
 const bullets = createQuery(Projectile);
@@ -125,18 +126,29 @@ function shieldBlocks(world: World, blocker: Entity, hx: number, hy: number, vx:
   return inWindow ? 'reflect' : 'absorb';
 }
 
-function explode(world: World, x: number, y: number, defId: number, owner?: Entity): void {
+function explode(world: World, x: number, y: number, defId: number, owner?: Entity, rolledDamage?: number): void {
   const def = weaponByIndex(defId);
   const radius = def.projectile.radius || 2;
-  const damage = def.projectile.explodeDamage || def.projectile.damage;
-  emit(world, { type: 'explosion', x, y, radius, damage });
+  const reported =
+    def.projectile.explodeDamageMax ??
+    def.projectile.explodeDamage ||
+    rolledDamage ||
+    def.projectile.damage;
+  emit(world, { type: 'explosion', x, y, radius, damage: reported });
   applyExplosion(world, x, y, radius, def.projectile.explodeImpulse || 8, (body, falloff) => {
     const data = body.getUserData() as FixtureUserData | undefined;
     if (!data) return;
     const target = data.entity as Entity;
     if (!world.has(target)) return;
+    const damage = explodeDamageAt(falloff, {
+      explodeDamageMin: def.projectile.explodeDamageMin,
+      explodeDamageMax: def.projectile.explodeDamageMax,
+      explodeDamage: def.projectile.explodeDamage,
+      damage: def.projectile.damage,
+      rolled: rolledDamage,
+    });
     if (target.has(Player) && !target.has(Dead)) {
-      takeDamage(world, target, damage * falloff, 'body', owner ?? -1, x, y);
+      takeDamage(world, target, damage, 'body', owner ?? -1, x, y);
       if (def.projectile.status !== 'none') {
         applyStatus(target, def.projectile.status, statusTicksFor(world, def.projectile.status, 180));
       }
@@ -144,7 +156,7 @@ function explode(world: World, x: number, y: number, defId: number, owner?: Enti
     if (target.has(Destructible)) {
       const d = target.get(Destructible);
       if (d) {
-        const hp = d.hp - damage * falloff;
+        const hp = d.hp - damage;
         target.set(Destructible, { hp, maxHp: d.maxHp });
       }
     }
@@ -400,10 +412,18 @@ export function projectiles(world: World): void {
           for (let i = 0; i < count; i++) {
             const a = (i / count) * Math.PI * 2;
             if (burst === 'snake') spawnSnake(world, proj.x, proj.y, owner, false, false);
-            else spawnBulletLike(world, proj.x, proj.y, Math.cos(a) * 18, Math.sin(a) * 18, 10, owner);
+            else {
+              const spikeDmg = rollIfRanged(
+                ctx.rng,
+                def.projectile.burstDamageMin,
+                def.projectile.burstDamageMax,
+                10,
+              );
+              spawnBulletLike(world, proj.x, proj.y, Math.cos(a) * 18, Math.sin(a) * 18, spikeDmg, owner, proj.defId);
+            }
           }
         }
-        explode(world, proj.x, proj.y, proj.defId, owner);
+        explode(world, proj.x, proj.y, proj.defId, owner, proj.damage);
         ctx.pendingDestroy.push(entity);
         return;
       }
@@ -419,11 +439,17 @@ export function projectiles(world: World): void {
             const a = (i / count) * Math.PI * 2;
             if (burst === 'snake') spawnSnake(world, proj.x, proj.y, owner, false, false);
             else {
-              spawnBulletLike(world, proj.x, proj.y, Math.cos(a) * 18, Math.sin(a) * 18, 10, owner);
+              const spikeDmg = rollIfRanged(
+                ctx.rng,
+                def.projectile.burstDamageMin,
+                def.projectile.burstDamageMax,
+                10,
+              );
+              spawnBulletLike(world, proj.x, proj.y, Math.cos(a) * 18, Math.sin(a) * 18, spikeDmg, owner, proj.defId);
             }
           }
         }
-        explode(world, proj.x, proj.y, proj.defId, owner);
+        explode(world, proj.x, proj.y, proj.defId, owner, proj.damage);
         ctx.pendingDestroy.push(entity);
         return;
       }
@@ -503,7 +529,16 @@ export function projectiles(world: World): void {
   });
 }
 
-function spawnBulletLike(world: World, x: number, y: number, vx: number, vy: number, damage: number, owner?: Entity): void {
+function spawnBulletLike(
+  world: World,
+  x: number,
+  y: number,
+  vx: number,
+  vy: number,
+  damage: number,
+  owner: Entity | undefined,
+  defId: number,
+): void {
   const proj = world.spawn(
     Projectile({
       kind: ProjectileKind.Bullet,
@@ -517,7 +552,7 @@ function spawnBulletLike(world: World, x: number, y: number, vx: number, vy: num
       vy,
       gravity: 0,
       ownerGrace: 0,
-      defId: 1,
+      defId,
     }),
   );
   if (owner) proj.add(OwnedBy(owner));

@@ -1,4 +1,7 @@
+import { holdAmmoFromSeconds } from './mapping';
 import { WeaponDefSchema, type WeaponDef } from './schema';
+
+/** Roster numbers: PLAN Appendix C. Ranges and hold durations use `src/sim/weapons/mapping.ts`. */
 
 const raw = [
   {
@@ -97,7 +100,7 @@ const raw = [
     ammo: 999,
     fireMode: 'semi',
     fireIntervalTicks: 18,
-    projectile: { kind: 'bullet', speed: 28, damage: 45, spreadDeg: 0, count: 1, gravity: 0, bounce: 0, fuse: 0, radius: 0.2, explodeDamage: 0, explodeImpulse: 0, status: 'none', warningTicks: 0, beamTicks: 0, rare: true },
+    projectile: { kind: 'bullet', speed: 28, damage: 45, damageMin: 30, damageMax: 60, spreadDeg: 0, count: 1, gravity: 0, bounce: 0, fuse: 0, radius: 0.2, explodeDamage: 0, explodeImpulse: 0, status: 'none', warningTicks: 0, beamTicks: 0, rare: true },
     recoil: { back: 1, up: 1, forward: 0 },
     knockback: 4,
     thrownDamage: 55,
@@ -130,6 +133,7 @@ const raw = [
   {
     id: 'm16',
     category: 'rifle',
+    /** PLAN Appendix C: "30 bursts" — ammo counts trigger sequences, not bullets. */
     ammo: 30,
     fireMode: 'burst',
     fireIntervalTicks: 3,
@@ -188,7 +192,7 @@ const raw = [
     ammo: 10,
     fireMode: 'semi',
     fireIntervalTicks: 22,
-    projectile: { kind: 'pellets', speed: 50, damage: 18, spreadDeg: 14, count: 5, gravity: 0, bounce: 0, fuse: 0, radius: 0, explodeDamage: 0, explodeImpulse: 0, status: 'none', warningTicks: 0, beamTicks: 0, rare: false },
+    projectile: { kind: 'pellets', speed: 50, damage: 20, damageMin: 10, damageMax: 30, spreadDeg: 14, count: 5, gravity: 0, bounce: 0, fuse: 0, radius: 0, explodeDamage: 0, explodeImpulse: 0, status: 'none', warningTicks: 0, beamTicks: 0, rare: false },
     recoil: { back: 8, up: 1.5, forward: 0 },
     knockback: 5,
     thrownDamage: 55,
@@ -206,7 +210,7 @@ const raw = [
     ammo: 10,
     fireMode: 'semi',
     fireIntervalTicks: 20,
-    projectile: { kind: 'pellets', speed: 55, damage: 5.5, spreadDeg: 6, count: 5, gravity: 0, bounce: 0, fuse: 0, radius: 0, explodeDamage: 0, explodeImpulse: 0, status: 'none', warningTicks: 0, beamTicks: 0, rare: false },
+    projectile: { kind: 'pellets', speed: 55, damage: 5.5, damageMin: 5, damageMax: 6, spreadDeg: 6, count: 5, gravity: 0, bounce: 0, fuse: 0, radius: 0, explodeDamage: 0, explodeImpulse: 0, status: 'none', warningTicks: 0, beamTicks: 0, rare: false },
     recoil: { back: 3, up: 1, forward: 0 },
     knockback: 3,
     thrownDamage: 55,
@@ -242,7 +246,7 @@ const raw = [
     ammo: 5,
     fireMode: 'semi',
     fireIntervalTicks: 28,
-    projectile: { kind: 'grenade', speed: 22, damage: 65, spreadDeg: 1, count: 1, gravity: 18, bounce: 3, fuse: 90, radius: 2.4, explodeDamage: 65, explodeImpulse: 12, status: 'none', warningTicks: 0, beamTicks: 0, rare: false },
+    projectile: { kind: 'grenade', speed: 22, damage: 65, spreadDeg: 1, count: 1, gravity: 18, bounce: 3, fuse: 90, radius: 2.4, explodeDamage: 80, explodeDamageMin: 50, explodeDamageMax: 80, explodeImpulse: 12, status: 'none', warningTicks: 0, beamTicks: 0, rare: false },
     recoil: { back: 1.2, up: 1, forward: 0 },
     knockback: 6,
     thrownDamage: 55,
@@ -278,7 +282,7 @@ const raw = [
     ammo: 3,
     fireMode: 'semi',
     fireIntervalTicks: 40,
-    projectile: { kind: 'rocket', speed: 32, damage: 300, spreadDeg: 0, count: 1, gravity: 0, bounce: 0, fuse: 0, radius: 3.2, explodeDamage: 300, explodeImpulse: 18, status: 'none', warningTicks: 0, beamTicks: 0, rare: true },
+    projectile: { kind: 'rocket', speed: 32, damage: 300, spreadDeg: 0, count: 1, gravity: 0, bounce: 0, fuse: 0, radius: 3.2, explodeDamage: 300, explodeDamageMin: 300, explodeDamageMax: 300, explodeImpulse: 18, status: 'none', warningTicks: 0, beamTicks: 0, rare: true },
     recoil: { back: 6, up: 2, forward: 0 },
     knockback: 14,
     thrownDamage: 55,
@@ -404,7 +408,7 @@ const raw = [
     ammo: 5,
     fireMode: 'semi',
     fireIntervalTicks: 26,
-    projectile: { kind: 'burst-into', speed: 16, damage: 30, count: 1, gravity: 14, bounce: 1, fuse: 50, radius: 1.8, explodeDamage: 20, explodeImpulse: 6, status: 'none', burstInto: 'spike', burstCount: 25, warningTicks: 0, beamTicks: 0, rare: false },
+    projectile: { kind: 'burst-into', speed: 16, damage: 30, count: 1, gravity: 14, bounce: 1, fuse: 50, radius: 1.8, explodeDamage: 20, explodeImpulse: 6, status: 'none', burstInto: 'spike', burstCount: 25, burstDamageMin: 20, burstDamageMax: 40, warningTicks: 0, beamTicks: 0, rare: false },
     recoil: { back: 1.2, up: 0.8, forward: 0 },
     knockback: 4,
     thrownDamage: 55,
@@ -437,7 +441,8 @@ const raw = [
   {
     id: 'lava-stream',
     category: 'lava',
-    ammo: 600,
+    ammo: holdAmmoFromSeconds(10, 2),
+    holdSeconds: 10,
     fireMode: 'hold',
     fireIntervalTicks: 2,
     projectile: { kind: 'beam', speed: 0, damage: 1, count: 1, gravity: 0, bounce: 0, fuse: 0, radius: 0.16, explodeDamage: 0, explodeImpulse: 0, status: 'burn', warningTicks: 0, beamTicks: 2, rare: false },
@@ -458,7 +463,7 @@ const raw = [
     ammo: 40,
     fireMode: 'auto',
     fireIntervalTicks: 5,
-    projectile: { kind: 'grenade', speed: 18, damage: 12, spreadDeg: 10, count: 1, gravity: 20, bounce: 0, fuse: 0, radius: 0.4, explodeDamage: 12, explodeImpulse: 4, status: 'burn', warningTicks: 0, beamTicks: 0, rare: false },
+    projectile: { kind: 'grenade', speed: 18, damage: 12.5, damageMin: 5, damageMax: 20, spreadDeg: 10, count: 1, gravity: 20, bounce: 0, fuse: 0, radius: 0.4, explodeDamage: 0, explodeImpulse: 4, status: 'burn', warningTicks: 0, beamTicks: 0, rare: false },
     recoil: { back: 0.5, up: 0.3, forward: 0 },
     knockback: 6,
     thrownDamage: 55,
@@ -476,7 +481,7 @@ const raw = [
     ammo: 25,
     fireMode: 'semi',
     fireIntervalTicks: 10,
-    projectile: { kind: 'burst-into', speed: 40, damage: 12, count: 1, gravity: 0, bounce: 0, fuse: 0, radius: 0.8, explodeDamage: 10, explodeImpulse: 3, status: 'none', burstInto: 'spike', burstCount: 3, warningTicks: 0, beamTicks: 0, rare: false },
+    projectile: { kind: 'burst-into', speed: 40, damage: 12.5, damageMin: 10, damageMax: 15, count: 1, gravity: 0, bounce: 0, fuse: 0, radius: 0.8, explodeDamage: 15, explodeDamageMin: 10, explodeDamageMax: 15, explodeImpulse: 3, status: 'none', burstInto: 'spike', burstCount: 3, burstDamageMin: 5, burstDamageMax: 10, warningTicks: 0, beamTicks: 0, rare: false },
     recoil: { back: 0.6, up: 0.4, forward: 0 },
     knockback: 2,
     thrownDamage: 55,
@@ -530,7 +535,7 @@ const raw = [
     ammo: 25,
     fireMode: 'semi',
     fireIntervalTicks: 20,
-    projectile: { kind: 'melee', speed: 14, damage: 36, count: 1, gravity: 0, bounce: 0, fuse: 0, radius: 0.6, explodeDamage: 0, explodeImpulse: 0, status: 'none', warningTicks: 0, beamTicks: 0, rare: false },
+    projectile: { kind: 'melee', speed: 14, damage: 36, damageMin: 22, damageMax: 50, count: 1, gravity: 0, bounce: 0, fuse: 0, radius: 0.6, explodeDamage: 0, explodeImpulse: 0, status: 'none', warningTicks: 0, beamTicks: 0, rare: false },
     recoil: { back: 0, up: 0, forward: 14 },
     knockback: 3,
     thrownDamage: 55,
@@ -653,7 +658,8 @@ const raw = [
   {
     id: 'flamethrower',
     category: 'other',
-    ammo: 300,
+    ammo: holdAmmoFromSeconds(5, 2),
+    holdSeconds: 5,
     fireMode: 'hold',
     fireIntervalTicks: 2,
     projectile: { kind: 'field', speed: 14, damage: 0.2, spreadDeg: 8, count: 1, gravity: 2, bounce: 0, fuse: 20, radius: 0.7, explodeDamage: 0, explodeImpulse: 0, status: 'burn', warningTicks: 0, beamTicks: 0, rare: false },
