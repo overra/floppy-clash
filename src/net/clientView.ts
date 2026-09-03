@@ -102,6 +102,9 @@ export function createClientView(first: WorldSnapshot, delayMs = 120, level?: Le
         buffer.push(at, snap);
         return;
       }
+      // Unreliable 20 Hz can deliver an older full/delta after a newer one.
+      // Applying it would rewind the late-join view (PLAN 4.13 host-authoritative).
+      if (snap.tick < acc.tick) return;
       const merged = snap.full === false ? mergeSnapshot(acc, snap) : snap;
       acc = merged;
       buffer.push(at, merged);

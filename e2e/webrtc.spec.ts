@@ -233,8 +233,12 @@ test('four localhost peers connect; 100ms/2% shaping still delivers chat', async
   }
   const rounds = await host.evaluate(() => window.__floppy?.matchRound ?? 0);
   const fists = await host.evaluate(() => window.__floppy?.fistKills ?? 0);
+  const board = await host.evaluate(() => window.__floppy?.scoreboardTicksSeen ?? 0);
+  const windowTicks = await host.evaluate(() => window.__floppy?.scoreboardWindow ?? 0);
   expect(rounds).toBeGreaterThanOrEqual(10);
   expect(fists).toBeGreaterThanOrEqual(10);
+  expect(windowTicks).toBe(90);
+  expect(board).toBeGreaterThanOrEqual(10 * 80);
   await host.evaluate(() => window.__floppy?.disarmLiveFists());
   const hostLevel = await host.evaluate(() => window.__floppy?.lastLevelId ?? '');
   expect(hostLevel.length).toBeGreaterThan(0);

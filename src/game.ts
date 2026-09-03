@@ -66,6 +66,7 @@ import {
   Weapon,
 } from './sim/traits';
 import { createClientView, snapshotCanOpenClientView, type ClientView } from './net/clientView';
+import { enqueuePendingSnap, extrasAfterOpen, takeOpenableFromQueue } from './net/lateJoinBuffer';
 import { createSimWorld, type SimHandle } from './sim/world';
 import { spawnWeapon } from './sim/systems/weapons';
 import { applyFistDriveAll } from './sim/ai/fistDrive';
@@ -429,51 +430,58 @@ export function createGame(root: HTMLElement): Game {
     });
   }
 
-  function enqueuePendingSnap(snap: WorldSnapshot): void {
-    pendingClientSnaps.push(snap);
-    if (pendingClientSnaps.length > 8) pendingClientSnaps.splice(0, pendingClientSnaps.length - 8);
+  function queuePendingSnap(snap: WorldSnapshot): void {
+    pendingClientSnaps = enqueuePendingSnap(pendingClientSnaps, snap);
+  }
+
+  function applyBufferedSnaps(view: ClientView, opened: WorldSnapshot, extras: WorldSnapshot[]): void {
+    const t0 = performance.now();
+    view.push(t0, opened);
+    extras.forEach((snap, i) => {
+      try {
+        view.push(t0 + (i + 1) * 16, snap);
+      } catch {
+        /* later snap */
+      }
+    });
+    view.apply(t0 + extras.length * 16 + 120);
+  }
+
+  function openClientViewFrom(snap: WorldSnapshot, extras: WorldSnapshot[]): ClientView | null {
+    const override =
+      pendingLevel && (!snap.levelId || snap.levelId === pendingLevel.id) ? pendingLevel : undefined;
+    try {
+      const view = createClientView(snap, 120, override);
+      clientView = view;
+      pendingClientSnaps = [];
+      applyBufferedSnaps(view, snap, extras);
+      return view;
+    } catch {
+      return null;
+    }
   }
 
   function tryOpenClientView(snap: WorldSnapshot): ClientView | null {
     if (clientView) return clientView;
     if (!snapshotCanOpenClientView(snap, pendingLevel)) {
-      enqueuePendingSnap(snap);
+      queuePendingSnap(snap);
       return null;
     }
-    try {
-      const override =
-        pendingLevel && (!snap.levelId || snap.levelId === pendingLevel.id) ? pendingLevel : undefined;
-      clientView = createClientView(snap, 120, override);
-      pendingClientSnaps = [];
-      return clientView;
-    } catch {
-      enqueuePendingSnap(snap);
-      return null;
-    }
+    const extras = extrasAfterOpen(pendingClientSnaps, snap);
+    const view = openClientViewFrom(snap, extras);
+    if (!view) queuePendingSnap(snap);
+    return view;
   }
 
   function flushPendingClientSnaps(): void {
     if (clientView || pendingClientSnaps.length === 0) return;
-    const queued = pendingClientSnaps;
-    pendingClientSnaps = [];
-    let opened: WorldSnapshot | undefined;
-    let view: ClientView | null = null;
-    for (const snap of queued) {
-      view = tryOpenClientView(snap);
-      if (view) {
-        opened = snap;
-        break;
-      }
-    }
-    if (!view || !opened) return;
-    for (const extra of queued) {
-      if (extra === opened || extra.tick < opened.tick) continue;
-      try {
-        view.push(performance.now(), extra);
-        view.apply(performance.now());
-      } catch {
-        /* later snap */
-      }
+    const taken = takeOpenableFromQueue(pendingClientSnaps, pendingLevel);
+    if (!taken) return;
+    const view = openClientViewFrom(taken.opened, taken.extras);
+    if (!view) {
+      pendingClientSnaps = enqueuePendingSnap(pendingClientSnaps, taken.opened);
+      for (const extra of taken.extras) pendingClientSnaps = enqueuePendingSnap(pendingClientSnaps, extra);
+      return;
     }
     syncClientLevelChrome();
   }

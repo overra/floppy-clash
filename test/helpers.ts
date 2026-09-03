@@ -68,6 +68,17 @@ export function freezeHazardKinematics(sim: SimHandle, kind: number): void {
   });
 }
 
+/**
+ * A point on last→now that sits outside a current-pose kill radius.
+ * Null if the last-tick span is too short for an honest sweep proof.
+ */
+export function pointOnSweepOutsideCurrent(prev: number, now: number, currentReach: number): number | null {
+  const span = Math.abs(now - prev);
+  if (span <= currentReach + 0.25) return null;
+  const dir = Math.sign(prev - now) || -1;
+  return now + dir * (currentReach + 0.25);
+}
+
 export function pos(sim: SimHandle, slot = 0) {
   const t = playerOf(sim, slot).get(Transform);
   if (!t) throw new Error('no transform');

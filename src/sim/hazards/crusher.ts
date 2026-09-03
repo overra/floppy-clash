@@ -32,7 +32,9 @@ export const crusher: HazardModule = {
     const ctx = getContext(world);
     const t = Math.sin(ctx.tick / (hz.param0 || 50));
     const body = ctx.bodies.get(entity);
-    if (body) body.setLinearVelocity(new Vec2(t * (hz.param1 || 4), 0));
+    // param1 is authored speed (default 4 in paramsFromObject). 0 means frozen —
+    // do not `|| 4` or a last-tick freeze becomes a 4 m/s this-tick drive.
+    if (body) body.setLinearVelocity(new Vec2(t * hz.param1, 0));
   },
   contact(world, player, hz, ht, _ctrl, _dt, hazard) {
     const pt = player.get(Transform);
