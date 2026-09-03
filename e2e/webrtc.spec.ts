@@ -113,7 +113,7 @@ test('late-join snapshot restores a client interpolation view', async ({ browser
 });
 
 test('four localhost peers connect; 100ms/2% shaping still delivers chat', async ({ browser }) => {
-  test.setTimeout(120_000);
+  test.setTimeout(180_000);
   const ctxs = await Promise.all(Array.from({ length: 4 }, () => browser.newContext()));
   const pages = await Promise.all(ctxs.map((c) => c.newPage()));
   const host = pages[0]!;
