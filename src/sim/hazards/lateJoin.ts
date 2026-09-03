@@ -225,6 +225,17 @@ export function lateJoinBodySpec(
         friction: 0.02,
         fixtureKind: 'solid',
       });
+    case HazardKind.Bounce:
+      return box({
+        bodyType: 'static',
+        // Host `createStaticBox` omitted h is 1 → hy 0.5. Width is param0.
+        hx: dim(hz.param0) / 2,
+        hy: 0.5,
+        density: 0,
+        friction: 0.1,
+        restitution: 1.2,
+        fixtureKind: 'solid',
+      });
     case HazardKind.Spikes:
       return box({
         bodyType: 'static',

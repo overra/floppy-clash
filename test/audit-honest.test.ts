@@ -124,6 +124,60 @@ describe('honest PLAN stand-ins (no pin/pred OR, no scoreboard shrink)', () => {
     expect(p.has(Dead)).toBe(true);
   });
 
+  it('vertical saw last-tick PrevTransform kills after live motion with velocity zeroed', () => {
+    const level = {
+      ...getLevel('test-saw-path'),
+      id: 'sweep-saw-prev-y',
+      objects: [
+        { type: 'solid' as const, x: 12, y: 1, w: 24, h: 2 },
+        {
+          type: 'saw' as const,
+          x: 14,
+          y: 4,
+          r: 0.45,
+          speed: 720,
+          mode: 'pingpong' as const,
+          path: [
+            { x: 14, y: 4 },
+            { x: 14, y: 16 },
+          ],
+        },
+      ],
+    };
+    const sim = makeSim({ level, seed: 241, settings: { playerCount: 1 } });
+    const p = playerOf(sim);
+    place(sim, p, 4, 10);
+    sim.ctx.holdHazards = true;
+    sim.step([hold({}), hold({}), hold({}), hold({})]);
+    sim.ctx.holdHazards = false;
+    const span = { prev: 4, now: 4, x: 14, ok: false };
+    sim.ecs.query(Hazard, Transform, PrevTransform).updateEach(([hz, t, prev]) => {
+      if (hz.kind !== HazardKind.Saw) return;
+      span.prev = prev.y;
+      span.now = t.y;
+      span.x = t.x;
+      span.ok = true;
+    });
+    expect(span.ok).toBe(true);
+    expect(Math.min(span.prev, span.now)).toBeLessThan(10);
+    expect(Math.max(span.prev, span.now)).toBeGreaterThan(10);
+    freezeHazardKinematics(sim, HazardKind.Saw);
+    // diskSweepsPlayer Y half-extent is reach + player half-height (0.7 + 0.9).
+    const hitY = pointOnSweepOutsideCurrent(span.prev, span.now, 1.6);
+    expect(hitY).not.toBeNull();
+    expect(sawOverlaps(span.x, hitY!, span.x, span.now, 0.7, span.x, span.now)).toBe(false);
+    expect(sawOverlaps(span.x, hitY!, span.x, span.now, 0.7, span.x, span.prev)).toBe(true);
+    place(sim, p, span.x, hitY!);
+    sim.step([hold({}), hold({}), hold({}), hold({})]);
+    const after = { now: span.now };
+    sim.ecs.query(Hazard, Transform).updateEach(([hz, t]) => {
+      if (hz.kind === HazardKind.Saw) after.now = t.y;
+    });
+    expect(Math.abs(after.now - span.now)).toBeLessThan(0.08);
+    expect(p.has(Dead)).toBe(true);
+    expect(p.get(Health)?.hp ?? 1).toBeLessThanOrEqual(0);
+  });
+
   it('saw last-tick PrevTransform kills after live motion with velocity zeroed', () => {
     const level = {
       ...getLevel('test-saw-path'),
@@ -533,6 +587,48 @@ describe('honest PLAN stand-ins (no pin/pred OR, no scoreboard shrink)', () => {
     const after = { now: span.now };
     sim.ecs.query(Hazard, Transform).updateEach(([hz, t]) => {
       if (hz.kind === HazardKind.Spikeball) after.now = t.x;
+    });
+    expect(Math.abs(after.now - span.now)).toBeLessThan(0.08);
+    expect(p.has(Dead)).toBe(true);
+    expect(p.get(Health)?.hp ?? 1).toBeLessThanOrEqual(0);
+  });
+
+  it('vertical spikeball last-tick PrevTransform kills after live motion with velocity zeroed', () => {
+    const sim = makeSim({
+      level: getLevel('test-spikeball-drop'),
+      seed: 248,
+      settings: { playerCount: 1 },
+    });
+    const p = playerOf(sim);
+    place(sim, p, 4, 10);
+    sim.ecs.query(Hazard).updateEach(([hz], e) => {
+      if (hz.kind !== HazardKind.Spikeball) return;
+      sim.ctx.bodies.get(e)?.setLinearVelocity({ x: 0, y: 720 });
+    });
+    sim.ctx.holdHazards = true;
+    sim.step([hold({}), hold({}), hold({}), hold({})]);
+    const span = { prev: 4, now: 4, x: 14, ok: false };
+    sim.ecs.query(Hazard, Transform, PrevTransform).updateEach(([hz, t, prev]) => {
+      if (hz.kind !== HazardKind.Spikeball) return;
+      span.prev = prev.y;
+      span.now = t.y;
+      span.x = t.x;
+      span.ok = true;
+    });
+    expect(span.ok).toBe(true);
+    expect(Math.abs(span.now - span.prev)).toBeGreaterThan(1.9);
+    // diskSweepsPlayer Y half-extent is reach + player half-height (0.75 + 0.9).
+    const hitY = pointOnSweepOutsideCurrent(span.prev, span.now, 1.65);
+    expect(hitY).not.toBeNull();
+    expect(diskSweepsPlayer(span.x, hitY!, span.x, span.now, 0.75, span.x, span.now)).toBe(false);
+    expect(diskSweepsPlayer(span.x, hitY!, span.x, span.now, 0.75, span.x, span.prev)).toBe(true);
+    sim.ctx.holdHazards = false;
+    freezeHazardKinematics(sim, HazardKind.Spikeball);
+    place(sim, p, span.x, hitY!);
+    sim.step([hold({}), hold({}), hold({}), hold({})]);
+    const after = { now: span.now };
+    sim.ecs.query(Hazard, Transform).updateEach(([hz, t]) => {
+      if (hz.kind === HazardKind.Spikeball) after.now = t.y;
     });
     expect(Math.abs(after.now - span.now)).toBeLessThan(0.08);
     expect(p.has(Dead)).toBe(true);

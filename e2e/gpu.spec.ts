@@ -106,3 +106,64 @@ test('GPU renderer initialises and PLAN §6 reads framebuffer pixels', async ({ 
   }
   await page.screenshot({ path: 'test-results/gpu-xvfb.png', fullPage: true });
 });
+
+test('GPU JFA textureLoad signs match CPU Jump Flood (no 4 ms claim)', async ({ page }) => {
+  await page.addInitScript(() => {
+    const prev = JSON.parse(localStorage.getItem('floppy-clash.settings') || '{}') as {
+      lighting?: boolean;
+    };
+    localStorage.setItem('floppy-clash.settings', JSON.stringify({ ...prev, lighting: true }));
+  });
+  await page.goto('/');
+  await expect(page.getByRole('heading', { name: 'Floppy Clash' })).toBeVisible();
+  await page.waitForFunction(
+    () => Boolean(window.__floppy?.readJfaIdentity),
+    null,
+    { timeout: 15_000 },
+  );
+  const report = await page.evaluate(async () => {
+    const fn = window.__floppy?.readJfaIdentity;
+    if (!fn) {
+      return {
+        lightingKind: 'none',
+        jfaBound: false,
+        error: 'no-readJfaIdentity',
+        samples: [],
+      };
+    }
+    return fn();
+  });
+  expect(['cascades', 'glow', 'off', 'none']).toContain(report.lightingKind);
+  if (!report.jfaBound) {
+    expect(report.lightingKind === 'cascades').toBe(false);
+    expect(report.error.length).toBeGreaterThan(0);
+    expect(report.samples).toHaveLength(0);
+    return;
+  }
+  expect(report.error, JSON.stringify(report)).toBe('');
+  expect(report.samples.length).toBeGreaterThanOrEqual(6);
+  for (const s of report.samples) {
+    expect(s.gpuJfa, `${s.scene}/${s.name} jfa`).toEqual(expect.any(Number));
+    expect(Number.isFinite(s.gpuJfa)).toBe(true);
+    expect(Number.isFinite(s.gpuCascade)).toBe(true);
+    expect(Math.sign(s.gpuJfa) || 1).toBe(Math.sign(s.gpuCascade) || 1);
+    // Empty emitters: cascade DualFn is the same textureLoad (not an AABB walk).
+    expect(Math.abs(s.gpuCascade - s.gpuJfa), `${s.scene}/${s.name} cascade≠jfa`).toBeLessThan(1e-3);
+    if (s.cpuInside) {
+      expect(s.gpuJfa, `${s.scene}/${s.name} inside`).toBeLessThan(0);
+      expect(s.cpuJfa).toBeLessThan(0);
+    } else {
+      expect(s.gpuJfa, `${s.scene}/${s.name} outside`).toBeGreaterThan(0);
+      expect(s.cpuJfa).toBeGreaterThan(0);
+    }
+    if (s.scene === 'empty') {
+      expect(s.cpuInside).toBe(false);
+      expect(s.gpuJfa).toBeGreaterThan(0);
+    }
+  }
+  const wallLeft = report.samples.find((s) => s.scene === 'wall' && s.name === 'left');
+  const wallMid = report.samples.find((s) => s.scene === 'wall' && s.name === 'center');
+  expect(wallLeft?.cpuInside).toBe(true);
+  expect(wallMid?.cpuInside).toBe(false);
+  expect((wallLeft?.gpuJfa ?? 1) < 0 && (wallMid?.gpuJfa ?? -1) > 0).toBe(true);
+});

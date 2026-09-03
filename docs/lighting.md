@@ -33,3 +33,8 @@ The 4 ms integrated-GPU budget and 60 fps / 1080p / 4-player feel check
 are hardware / human sign-off. `LIGHTING_BUDGET_MS` only gates the settings
 toggle against CPU `performance.now()` of the render function. CI does not
 claim a 4 ms GPU time.
+
+`readIdentity` (GPU e2e via `window.__floppy.readJfaIdentity`) runs JFA and
+`textureLoad`s the field without the budget gate. It compares signs with the
+CPU Jump Flood / classify stand-in. If JFA cannot be bound, the report is
+`jfaBound: false` — not a fake cascade pass.

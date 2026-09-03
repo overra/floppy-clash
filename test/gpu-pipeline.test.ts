@@ -25,6 +25,7 @@ import {
   resolveCascadeSdfWgsl,
   resolveClassifyWgsl,
   resolveGlowWgsl,
+  resolveIdentityWgsl,
 } from '../src/render/gpu/lighting';
 import { packGroups } from '../src/render/gpu/pack';
 import { PRIM_DISK } from '../src/render/sdf/primitives';
@@ -71,6 +72,7 @@ describe('TypeGPU live SDF draw path (PLAN §4.11)', () => {
     resolveClassifyWgsl();
     resolveCascadeSdfWgsl();
     resolveCascadeBlitWgsl();
+    resolveIdentityWgsl();
     resolvePostWgsl();
     resolveBgWgsl();
     spy.mockRestore();
@@ -182,6 +184,8 @@ describe('PLAN §6 GPU e2e gate', () => {
     expect(spec).toContain('readFramebuffer');
     expect(spec).toContain('webgpu-copy');
     expect(spec).not.toMatch(/if \(canvas\.getContext\('webgpu'\)\)/);
+    expect(spec).toContain('readJfaIdentity');
+    expect(spec).not.toContain('LIGHTING_BUDGET_MS');
   });
 
   it('applies lighting on the framebuffer-copy return path', () => {
@@ -215,5 +219,9 @@ describe('TypeGPU GI classify / cascades (PLAN 4.11)', () => {
     const blit = resolveCascadeBlitWgsl();
     expect(blit).toMatch(/@vertex/);
     expect(blit).toMatch(/@fragment/);
+    const ident = resolveIdentityWgsl();
+    expect(ident).toMatch(/textureLoad/);
+    expect(ident).toMatch(/jfaIdentityCompute|fn jfaIdentityCompute/);
+    expect(ident).not.toMatch(/cascadeSceneSdfGpu/);
   });
 });

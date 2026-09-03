@@ -180,9 +180,12 @@ class Reader {
 
 function num(rec: Record<string, number | boolean | string> | undefined, key: string, fallback = 0): number {
   const v = rec?.[key];
-  if (typeof v === 'number') return v;
+  if (typeof v === 'number') return Number.isFinite(v) ? v : fallback;
   if (typeof v === 'boolean') return v ? 1 : 0;
-  if (typeof v === 'string') return Number(v) || fallback;
+  if (typeof v === 'string') {
+    const n = Number(v);
+    return Number.isFinite(n) ? n : fallback;
+  }
   return fallback;
 }
 
@@ -205,10 +208,14 @@ function writeTrait(w: Writer, name: string, rec: Record<string, number | boolea
       w.i16q(num(rec, 'omega'));
       return;
     case 'Health':
-    case 'Destructible':
-      w.u16(Math.max(0, Math.round(num(rec, 'hp'))));
-      w.u16(Math.max(0, Math.round(num(rec, 'maxHp') || num(rec, 'hp'))));
+    case 'Destructible': {
+      const hp = num(rec, 'hp');
+      const hasMax = rec.maxHp !== undefined && rec.maxHp !== null && rec.maxHp !== '';
+      const maxHp = hasMax ? num(rec, 'maxHp') : hp;
+      w.u16(Math.max(0, Math.round(hp)));
+      w.u16(Math.max(0, Math.round(maxHp)));
       return;
+    }
     case 'Player':
       w.u8w(num(rec, 'slot'));
       w.u8w(num(rec, 'color'));

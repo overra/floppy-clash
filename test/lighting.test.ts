@@ -10,6 +10,11 @@ import {
   cascadeSceneSdf,
   classifyLiveSolidAt,
   emitterContribution,
+  IDENTITY_CAM,
+  IDENTITY_LEFT_WALL,
+  IDENTITY_PROBES,
+  identityCpuAt,
+  identityUv,
   jumpFloodSdf,
   lightingCameraFromFrame,
   lightingEnabled,
@@ -18,6 +23,7 @@ import {
   occludedEmitterContribution,
   resolveCascadeSdfWgsl,
   resolveClassifyWgsl,
+  resolveIdentityWgsl,
   sampleJumpFlood,
   sceneSolidSdf,
   solidRectsFromFrame,
@@ -162,5 +168,43 @@ describe('2D lighting', () => {
     expect(src).toMatch(/if \(jfaReady && cascades\)/);
     expect(src).toMatch(/let cascades = root && jfa && jfaBind \? tryCreateCascades/);
     expect(src).not.toMatch(/return cascadeSceneSdfGpu\(uv\)/);
+  });
+
+  it('CPU identity probes: wall left is inside, center/right outside; empty is never inside', () => {
+    const left = identityCpuAt([IDENTITY_LEFT_WALL], IDENTITY_PROBES[0]!.ux, IDENTITY_PROBES[0]!.uy);
+    const mid = identityCpuAt([IDENTITY_LEFT_WALL], IDENTITY_PROBES[1]!.ux, IDENTITY_PROBES[1]!.uy);
+    const right = identityCpuAt([IDENTITY_LEFT_WALL], IDENTITY_PROBES[2]!.ux, IDENTITY_PROBES[2]!.uy);
+    expect(left.inside).toBe(true);
+    expect(left.jfa).toBeLessThan(0);
+    expect(left.cascade).toBeLessThan(0);
+    expect(mid.inside).toBe(false);
+    expect(mid.jfa).toBeGreaterThan(0);
+    expect(right.inside).toBe(false);
+    const emptyMid = identityCpuAt([], IDENTITY_PROBES[1]!.ux, IDENTITY_PROBES[1]!.uy);
+    expect(emptyMid.inside).toBe(false);
+    expect(emptyMid.jfa).toBeGreaterThan(0);
+    expect(emptyMid.cascade).toBeGreaterThan(0);
+    const uv = identityUv(38, 72);
+    expect(classifyLiveSolidAt([IDENTITY_LEFT_WALL], IDENTITY_CAM, 38, 72, 256, 144)).toBe(true);
+    expect(uv.uvx).toBeCloseTo(38.5 / 256, 5);
+  });
+
+  it('resolves identity compute DualFn (textureLoad + cascadeJfaSdfGpu, no 4 ms gate)', () => {
+    const wgsl = resolveIdentityWgsl();
+    expect(wgsl).toMatch(/jfaIdentityCompute|fn jfaIdentityCompute/);
+    expect(wgsl).toMatch(/textureLoad/);
+    expect(wgsl).toMatch(/cascadeJfaSdfGpu|fn cascadeJfaSdfGpu/);
+    expect(wgsl).not.toMatch(/cascadeSceneSdfGpu/);
+    const src = readFileSync(resolve(process.cwd(), 'src/render/gpu/lighting.ts'), 'utf8');
+    expect(src).toContain('readIdentity');
+    expect(src).toContain('jfaIdentityCompute');
+    const applyIdx = src.indexOf('apply(frame, lastGpuMs, enabled)');
+    const identIdx = src.indexOf('async readIdentity');
+    expect(identIdx).toBeGreaterThan(-1);
+    expect(identIdx).toBeLessThan(applyIdx);
+    const identBody = src.slice(identIdx, applyIdx);
+    expect(identBody).not.toContain('LIGHTING_BUDGET_MS');
+    expect(identBody).not.toContain('lightingEnabled');
+    expect(identBody).not.toContain('lastGpuMs');
   });
 });

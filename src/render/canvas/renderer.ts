@@ -1,6 +1,10 @@
 import { worldToScreen, type CameraState } from '../camera';
 import type { RenderFrame, ShapeGroup } from '../frame';
 import {
+  emptyJfaIdentityReport,
+  type JfaIdentityReport,
+} from '../gpu/lighting';
+import {
   emptyReadback,
   inspectMappedRgba,
   PIXEL_BYTES,
@@ -27,6 +31,9 @@ export type Renderer = {
   decalUploads: number;
   /** PLAN §6: pixels from the live framebuffer (WebGPU copy or Canvas 2D). */
   readFramebuffer(): Promise<FramebufferReadback>;
+  lightingKind?: 'cascades' | 'glow' | 'off' | 'none';
+  jfaBound?: boolean;
+  readJfaIdentity?: () => Promise<JfaIdentityReport>;
 };
 
 export function createCanvasRenderer(canvas: HTMLCanvasElement): Renderer {
@@ -46,6 +53,9 @@ export function createCanvasRenderer(canvas: HTMLCanvasElement): Renderer {
     canvas,
     lastGpuMs: 0,
     decalUploads: 0,
+    lightingKind: 'none',
+    jfaBound: false,
+    readJfaIdentity: async () => emptyJfaIdentityReport('none', 'canvas-renderer'),
     async readFramebuffer() {
       const w = Math.min(READBACK_W, canvas.width);
       const h = Math.min(READBACK_H, canvas.height);

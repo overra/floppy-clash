@@ -66,6 +66,45 @@ describe('M8 netcode', () => {
     expect(decoded.scoreboardTicks).toBe(90);
   });
 
+  it('binary snapshot keeps authored Health.maxHp 0 and HazardPath.dir 0 (no || fallback)', () => {
+    const host = makeSim({ settings: { playerCount: 1 } });
+    const snap = host.snapshot();
+    const rec = snap.entities.find((e) => e.traits.Health);
+    expect(rec).toBeTruthy();
+    rec!.traits.Health = { hp: 10, maxHp: 0 };
+    const pathEnt = snap.entities.find((e) => e.traits.HazardPath) ?? snap.entities[0]!;
+    pathEnt.traits.HazardPath = {
+      index: 0,
+      mode: 0,
+      dir: 0,
+      accum: 0,
+      speed: 0,
+      points: '0,0;1,0',
+    };
+    const decoded = decodeSnapshotBinary(encodeSnapshotBinary(snap));
+    const health = decoded.entities.find((e) => e.netId === rec!.netId)?.traits.Health;
+    expect(health?.hp).toBe(10);
+    expect(health?.maxHp).toBe(0);
+    expect(Number(decoded.entities.find((e) => e.netId === pathEnt.netId)?.traits.HazardPath?.dir)).toBe(
+      0,
+    );
+
+    rec!.traits.Health = { hp: 10, maxHp: '0' };
+    pathEnt.traits.HazardPath = {
+      index: '0',
+      mode: '0',
+      dir: '0',
+      accum: '0',
+      speed: '0',
+      points: '0,0;1,0',
+    };
+    const decodedStr = decodeSnapshotBinary(encodeSnapshotBinary(snap));
+    expect(decodedStr.entities.find((e) => e.netId === rec!.netId)?.traits.Health?.maxHp).toBe(0);
+    expect(
+      Number(decodedStr.entities.find((e) => e.netId === pathEnt.netId)?.traits.HazardPath?.dir),
+    ).toBe(0);
+  });
+
   it('binary snapshot carries a non-default host scoreboardTicks', () => {
     const host = makeSim({ settings: { playerCount: 2 } });
     host.ctx.tuning.scoreboardTicks = 120;

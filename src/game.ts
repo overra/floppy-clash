@@ -46,6 +46,7 @@ import { getLevel, gymLevel, matchLevelPool } from './levels/catalog';
 import { addShake, createCamera } from './render/camera';
 import { buildFrame } from './render/buildFrame';
 import { createCanvasRenderer, type Renderer } from './render/canvas/renderer';
+import { emptyJfaIdentityReport, type JfaIdentityReport } from './render/gpu/lighting';
 import { emptyReadback, type FramebufferReadback } from './render/gpu/readback';
 import { getLastGpuInitError, tryCreateGpuRenderer } from './render/gpu/renderer';
 import { createDecalLayer, stampFxDecals, type PersistentDecalLayer } from './render/fx/decals';
@@ -169,6 +170,9 @@ type FloppyDebug = {
   gpuPipelineResourceType: string;
   gpuInitError: string;
   readFramebuffer: () => Promise<FramebufferReadback>;
+  lightingKind: 'cascades' | 'glow' | 'off' | 'none';
+  jfaBound: boolean;
+  readJfaIdentity: () => Promise<JfaIdentityReport>;
   playerColors: number[];
   pausedBy: string | null;
   playerGrounded: boolean[];
@@ -1048,7 +1052,8 @@ export function createGame(root: HTMLElement): Game {
         }
         if (events.some((e) => e.type === 'round-phase' && e.phase === 'match-over')) {
           const ms = viewSim.ecs.get(MatchState);
-          stats = recordMatch((ms?.wins0 ?? 0) >= (ms?.firstTo || 1));
+          const need = ms?.firstTo ?? 0;
+          stats = recordMatch(need > 0 && (ms?.wins0 ?? 0) >= need);
         }
         if (
           events.some((e) => e.type === 'explosion' || e.type === 'kill') &&
@@ -1284,6 +1289,11 @@ export function createGame(root: HTMLElement): Game {
       gpuInitError: getLastGpuInitError(),
       readFramebuffer: () =>
         renderer?.readFramebuffer() ?? Promise.resolve(emptyReadback('unavailable', 'no-renderer')),
+      lightingKind: renderer?.lightingKind ?? 'none',
+      jfaBound: renderer?.jfaBound ?? false,
+      readJfaIdentity: () =>
+        renderer?.readJfaIdentity?.() ??
+        Promise.resolve(emptyJfaIdentityReport('none', 'no-renderer')),
       inspect:
         (sim ?? clientView?.sim)
           ? formatInspect(inspectWorld((sim ?? clientView!.sim).ecs, 12))

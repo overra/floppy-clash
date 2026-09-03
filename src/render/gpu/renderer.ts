@@ -317,6 +317,16 @@ async function createGpuRenderer(
     canvas,
     lastGpuMs: 0,
     decalUploads: 0,
+    lightingKind: lighting?.kind ?? 'none',
+    jfaBound: lighting?.jfaBound ?? false,
+    readJfaIdentity: () =>
+      lighting?.readIdentity() ??
+      Promise.resolve({
+        lightingKind: 'none' as const,
+        jfaBound: false,
+        error: 'lighting-pass-not-created',
+        samples: [],
+      }),
     readFramebuffer() {
       if (inflightRead) return inflightRead;
       inflightRead = (async () => {

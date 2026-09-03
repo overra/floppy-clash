@@ -398,6 +398,19 @@ test('local 10-round fists-only match (PLAN M2 stand-in)', async ({ page }) => {
     .poll(async () => page.evaluate(() => window.__floppy?.scoreboardWindow ?? 0), { timeout: 15_000 })
     .toBe(90);
   await expect
+    .poll(async () => page.evaluate(() => window.__floppy?.phase ?? 0), { timeout: 20_000 })
+    .toBe(2);
+  await page.evaluate(() => {
+    const pads = (window as unknown as { __e2ePads: Gamepad[] }).__e2ePads;
+    window.dispatchEvent(Object.assign(new Event('gamepaddisconnected'), { gamepad: pads[0] }));
+  });
+  await expect(page.getByRole('heading', { name: 'Controller disconnected' })).toBeVisible();
+  await page.evaluate(() => {
+    const pads = (window as unknown as { __e2ePads: Gamepad[] }).__e2ePads;
+    window.dispatchEvent(Object.assign(new Event('gamepadconnected'), { gamepad: pads[0] }));
+  });
+  await expect(page.getByRole('heading', { name: 'Controller disconnected' })).toHaveCount(0);
+  await expect
     .poll(async () => page.evaluate(() => window.__floppy?.matchRound ?? 0), { timeout: 160_000 })
     .toBeGreaterThanOrEqual(10);
   await expect
@@ -1031,6 +1044,20 @@ test('editor starting-weapon and decor use roster/kind dropdowns', async ({ page
   await expect(kindSel).toContainText('vine');
   await kindSel.selectOption('vine');
   await expect(page.locator('#edjson')).toContainText('"kind": "vine"');
+});
+
+test('editor trigger.drop uses the weapon roster dropdown', async ({ page }) => {
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Level Editor' }).click();
+  await expect(page.locator('text=Level Editor')).toBeVisible();
+  await page.getByRole('button', { name: 'trigger.drop' }).click();
+  await page.getByRole('button', { name: 'Add at 12,6' }).click();
+  const weaponSel = page.locator('#edfields select[name="weapon"]');
+  await expect(weaponSel).toBeVisible();
+  await expect(weaponSel).toContainText('Pistol');
+  await weaponSel.selectOption('revolver');
+  await expect(page.locator('#edjson')).toContainText('"weapon": "revolver"');
+  await expect(page.locator('#edjson')).toContainText('"type": "trigger.drop"');
 });
 
 test('editor property panel edits laser.reach into the draft JSON', async ({ page }) => {

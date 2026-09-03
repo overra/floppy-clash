@@ -17,6 +17,7 @@ type BodyMaterial = {
   type: string;
   density: number;
   friction: number;
+  restitution: number;
   circle: boolean;
 };
 
@@ -30,6 +31,7 @@ function materialOf(sim: SimHandle, entity: Entity): BodyMaterial {
     type: body?.getType() ?? 'missing',
     density: fixture?.getDensity() ?? -1,
     friction: fixture?.getFriction() ?? -1,
+    restitution: fixture?.getRestitution() ?? -1,
     circle: fixture?.getShape() instanceof Circle,
   };
 }
@@ -105,6 +107,7 @@ describe('lateJoinBodySpec Appendix D materials', () => {
     bodyType: LateJoinExpect;
     density: number;
     friction: number;
+    restitution?: number;
     shape?: 'box' | 'circle';
     hx?: number;
     hy?: number;
@@ -154,6 +157,16 @@ describe('lateJoinBodySpec Appendix D materials', () => {
       bodyType: 'static',
       density: 0,
       friction: 0.4,
+    },
+    {
+      name: 'bounce',
+      kind: HazardKind.Bounce,
+      hz: { param0: 4, param1: 16, param2: 0, param3: 0 },
+      flags: { isStatic: true, chainDeck: false, spikeStyle: 0 },
+      bodyType: 'static',
+      density: 0,
+      friction: 0.1,
+      restitution: 1.2,
     },
     { name: 'momentum', kind: HazardKind.Momentum, bodyType: 'dynamic', density: 0.35, friction: 0.8 },
     { name: 'collapsing', kind: HazardKind.Collapsing, bodyType: 'dynamic', density: 0, friction: 0.8 },
@@ -241,6 +254,7 @@ describe('lateJoinBodySpec Appendix D materials', () => {
     expect(spec.bodyType).toBe(row.bodyType);
     expect(spec.density).toBeCloseTo(row.density, 5);
     expect(spec.friction).toBeCloseTo(row.friction, 5);
+    if (row.restitution != null) expect(spec.restitution).toBeCloseTo(row.restitution, 5);
     if (row.shape) expect(spec.shape).toBe(row.shape);
     if (row.hx != null) {
       expect(spec.hx).toBeCloseTo(row.hx, 5);
@@ -676,6 +690,21 @@ describe('spawnMissing restores host hazard density/type', () => {
     });
     expect(joints).toBeGreaterThanOrEqual(1);
     expect(Math.abs(anchorX)).toBeLessThan(0.08);
+  });
+
+  it('bounce pad stays static with host friction / restitution after spawnMissing', () => {
+    const host = makeSim({ level: getLevel('test-bounce'), seed: 465, settings: { playerCount: 1 } });
+    const rows = stealAndRestore(host, 'test-bounce', (hz) => hz.kind === HazardKind.Bounce);
+    expect(rows.length).toBeGreaterThan(0);
+    for (const row of rows) {
+      expect(row.host.type).toBe('static');
+      expect(row.restored.type).toBe('static');
+      expect(row.restored.density).toBeCloseTo(0, 5);
+      expect(row.restored.friction).toBeCloseTo(0.1, 5);
+      expect(row.restored.restitution).toBeCloseTo(1.2, 5);
+      expect(row.restored.type).not.toBe('dynamic');
+      expect(row.restored.type).not.toBe('kinematic');
+    }
   });
 
   it('destructible / ice stay static with host friction after spawnMissing', () => {

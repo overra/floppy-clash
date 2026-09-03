@@ -8,10 +8,12 @@
  * fails (SwiftShader, missing features), cascades are skipped and glow may
  * still run. CPU Jump Flood remains the automated stand-in. The 4 ms iGPU
  * budget is a settings gate on CPU `performance.now()`, not a claimed GPU time.
+ * GPU identity (`readIdentity`) runs JFA + `textureLoad` without that gate
+ * and never reports a millisecond budget.
  */
 import { createJumpFlood } from '@typegpu/sdf';
 import { createRadianceCascades, getCascadeDim } from '@typegpu/radiance-cascades';
-import tgpu, { isRenderPipeline, type TgpuRoot } from 'typegpu';
+import tgpu, { isComputePipeline, isRenderPipeline, type TgpuRoot } from 'typegpu';
 import * as d from 'typegpu/data';
 import * as std from 'typegpu/std';
 import type { RenderFrame } from '../frame';
@@ -37,6 +39,26 @@ export const MAX_GI_SOLIDS = 32;
 export const MAX_GI_LIGHTS = 16;
 export const GI_SDF_WIDTH = 256;
 export const GI_SDF_HEIGHT = 144;
+
+/** Fixed camera for GPU ↔ CPU JFA / cascade identity (matches `test/lighting.test.ts`). */
+export const IDENTITY_CAM: LightingCamera = {
+  x: 16,
+  y: 9,
+  zoom: 40,
+  viewX: 1280,
+  viewY: 720,
+};
+
+export const IDENTITY_LEFT_WALL: SolidRect = { minX: 0, minY: 0, maxX: 8, maxY: 18 };
+
+/** Texels used by classify / `textureLoad` (UV = (coord + 0.5) / size). */
+export const IDENTITY_PROBES = [
+  { name: 'left', ux: 38, uy: 72 },
+  { name: 'center', ux: 128, uy: 72 },
+  { name: 'right', ux: 217, uy: 72 },
+] as const;
+
+export const IDENTITY_PROBE_COUNT = IDENTITY_PROBES.length;
 
 export function lightingEnabled(opts: LightingOpts, lastGpuMs: number): boolean {
   return opts.enabled && lastGpuMs < opts.budgetMs;
@@ -188,6 +210,53 @@ export function cascadeSdfFromJfa(
     best = Math.min(best, ed * toUv);
   }
   return best;
+}
+
+export type JfaIdentitySample = {
+  name: string;
+  scene: 'wall' | 'empty';
+  ux: number;
+  uy: number;
+  gpuJfa: number;
+  gpuCascade: number;
+  cpuInside: boolean;
+  cpuJfa: number;
+  cpuCascade: number;
+};
+
+export type JfaIdentityReport = {
+  lightingKind: 'cascades' | 'glow' | 'off' | 'none';
+  jfaBound: boolean;
+  error: string;
+  samples: JfaIdentitySample[];
+};
+
+export function identityUv(ux: number, uy: number): { uvx: number; uvy: number } {
+  return { uvx: (ux + 0.5) / GI_SDF_WIDTH, uvy: (uy + 0.5) / GI_SDF_HEIGHT };
+}
+
+/** CPU reference for one identity texel (classify + Jump Flood sample + cascade-from-JFA). */
+export function identityCpuAt(
+  solids: SolidRect[],
+  ux: number,
+  uy: number,
+): { inside: boolean; jfa: number; cascade: number } {
+  const inside = classifyLiveSolidAt(solids, IDENTITY_CAM, ux, uy, GI_SDF_WIDTH, GI_SDF_HEIGHT);
+  const field = jumpFloodSdf(solids, lightingViewBounds(IDENTITY_CAM), 64, 36);
+  const { uvx, uvy } = identityUv(ux, uy);
+  const world = lightingWorldFromUv(uvx, uvy, IDENTITY_CAM);
+  return {
+    inside,
+    jfa: sampleJumpFlood(field, world.x, world.y),
+    cascade: cascadeSdfFromJfa(field, [], uvx, uvy, IDENTITY_CAM),
+  };
+}
+
+export function emptyJfaIdentityReport(
+  lightingKind: JfaIdentityReport['lightingKind'],
+  error: string,
+): JfaIdentityReport {
+  return { lightingKind, jfaBound: false, error, samples: [] };
 }
 
 function pixelInside(solids: SolidRect[], wx: number, wy: number): boolean {
@@ -360,6 +429,8 @@ export type LightingPass = {
   apply: (frame: RenderFrame, lastGpuMs: number, enabled: boolean) => boolean;
   destroy: () => void;
   kind: 'cascades' | 'glow' | 'off';
+  jfaBound: boolean;
+  readIdentity: () => Promise<JfaIdentityReport>;
 };
 
 const GlowEmitter = d.struct({
@@ -416,6 +487,20 @@ export const jfaSdfLayout = tgpu
     jfaSdf: { texture: d.texture2d(d.f32), sampleType: 'unfilterable-float' },
   })
   .$idx(2);
+
+const IdentityProbeGpu = d.struct({
+  ux: d.u32,
+  uy: d.u32,
+  jfa: d.f32,
+  cascade: d.f32,
+});
+
+/** Compute writes `textureLoad` + `cascadeJfaSdfGpu` — same sampling as live cascades. */
+export const identityLayout = tgpu
+  .bindGroupLayout({
+    probes: { storage: d.arrayOf(IdentityProbeGpu, IDENTITY_PROBE_COUNT), access: 'mutable' },
+  })
+  .$idx(3);
 
 export const glowLayout = tgpu
   .bindGroupLayout({
@@ -564,6 +649,30 @@ export const cascadeJfaSdfGpu = tgpu
   })
   .$name('cascadeJfaSdfGpu');
 
+/** Read JFA texels + cascade DualFn into a MAP_READ buffer (no 4 ms gate). */
+export const jfaIdentityCompute = tgpu
+  .computeFn({
+    in: { gid: d.builtin.globalInvocationId },
+    workgroupSize: [IDENTITY_PROBE_COUNT],
+  })((input) => {
+    'use gpu';
+    const i = input.gid.x;
+    const p = identityLayout.$.probes[i]!;
+    const sample = std.textureLoad(jfaSdfLayout.$.jfaSdf, d.vec2i(d.i32(p.ux), d.i32(p.uy)), 0);
+    const uv = d.vec2f(
+      (d.f32(p.ux) + d.f32(0.5)) / d.f32(GI_SDF_WIDTH),
+      (d.f32(p.uy) + d.f32(0.5)) / d.f32(GI_SDF_HEIGHT),
+    );
+    const casc = cascadeJfaSdfGpu(uv);
+    identityLayout.$.probes[i] = IdentityProbeGpu({
+      ux: p.ux,
+      uy: p.uy,
+      jfa: sample.x,
+      cascade: casc,
+    });
+  })
+  .$name('jfaIdentityCompute');
+
 export const cascadeSceneColorGpu = tgpu
   .fn(
     [d.vec2f],
@@ -696,6 +805,10 @@ export function resolveCascadeSdfWgsl(): string {
 
 export function resolveCascadeBlitWgsl(): string {
   return tgpu.resolve([cascadeBlitVertex, cascadeBlitFragment]);
+}
+
+export function resolveIdentityWgsl(): string {
+  return tgpu.resolve([jfaIdentityCompute]);
 }
 
 function emptySolid(): { minX: number; minY: number; maxX: number; maxY: number } {
@@ -848,6 +961,37 @@ function tryCreateCascades(root: TgpuRoot) {
   }
 }
 
+function tryCreateIdentity(root: TgpuRoot) {
+  try {
+    const pipeline = root.createComputePipeline({ compute: jfaIdentityCompute }).$name('jfa-identity');
+    if (!isComputePipeline(pipeline)) return null;
+    pipeline.initSync();
+    const probes = root
+      .createBuffer(d.arrayOf(IdentityProbeGpu, IDENTITY_PROBE_COUNT))
+      .$usage('storage');
+    const bind = root.createBindGroup(identityLayout, { probes });
+    return { pipeline, probes, bind };
+  } catch {
+    return null;
+  }
+}
+
+function identityFrame(): RenderFrame {
+  return {
+    groups: [],
+    camera: {
+      x: IDENTITY_CAM.x,
+      y: IDENTITY_CAM.y,
+      zoom: IDENTITY_CAM.zoom,
+      ppm: IDENTITY_CAM.zoom,
+      shakeX: 0,
+      shakeY: 0,
+    },
+    theme: { top: '#000', bottom: '#000', solid: '#000' },
+    hud: { slowmo: false, countdown: 0 },
+  };
+}
+
 function tryCreateCascadeBlit(root: TgpuRoot, format: GPUTextureFormat, output: unknown) {
   if (!output) return null;
   try {
@@ -938,9 +1082,63 @@ export function createLightingPass(
     root && cascades
       ? tryCreateCascadeBlit(root, format as GPUTextureFormat, cascades.output)
       : null;
+  const identity = root && jfa && jfaBind && sceneBind ? tryCreateIdentity(root) : null;
+  const kind: LightingPass['kind'] = cascades ? 'cascades' : glow ? 'glow' : 'off';
+  const jfaBound = !!(jfa && jfaBind && sceneBind);
 
   return {
-    kind: cascades ? 'cascades' : glow ? 'glow' : 'off',
+    kind,
+    jfaBound,
+    async readIdentity() {
+      if (!root || !jfa || !jfaBind || !sceneBind || !sceneCam || !sceneSolids || !sceneLights) {
+        return emptyJfaIdentityReport(kind === 'off' ? 'off' : kind, 'jfa-not-bound');
+      }
+      if (!identity) {
+        return { lightingKind: kind, jfaBound: true, error: 'identity-compute-failed', samples: [] };
+      }
+      const samples: JfaIdentitySample[] = [];
+      const scenes: { name: 'wall' | 'empty'; solids: SolidRect[] }[] = [
+        { name: 'wall', solids: [IDENTITY_LEFT_WALL] },
+        { name: 'empty', solids: [] },
+      ];
+      try {
+        for (const scene of scenes) {
+          sceneCam.write(cameraPayload(identityFrame(), IDENTITY_CAM.viewX, IDENTITY_CAM.viewY));
+          sceneSolids.write(solidsPayload(scene.solids));
+          sceneLights.write(lightsPayload([]));
+          identity.probes.write(
+            IDENTITY_PROBES.map((p) => ({ ux: p.ux, uy: p.uy, jfa: 0, cascade: 0 })),
+          );
+          jfa.run();
+          identity.pipeline.with(sceneBind).with(jfaBind).with(identity.bind).dispatchWorkgroups(1);
+          const rows = await identity.probes.read();
+          for (let i = 0; i < IDENTITY_PROBE_COUNT; i++) {
+            const spec = IDENTITY_PROBES[i]!;
+            const row = rows[i]!;
+            const cpu = identityCpuAt(scene.solids, spec.ux, spec.uy);
+            samples.push({
+              name: spec.name,
+              scene: scene.name,
+              ux: spec.ux,
+              uy: spec.uy,
+              gpuJfa: row.jfa,
+              gpuCascade: row.cascade,
+              cpuInside: cpu.inside,
+              cpuJfa: cpu.jfa,
+              cpuCascade: cpu.cascade,
+            });
+          }
+        }
+      } catch (err) {
+        return {
+          lightingKind: kind,
+          jfaBound: true,
+          error: err instanceof Error ? err.message : String(err),
+          samples,
+        };
+      }
+      return { lightingKind: kind, jfaBound: true, error: '', samples };
+    },
     apply(frame, lastGpuMs, enabled) {
       if (!lightingEnabled({ enabled, budgetMs: LIGHTING_BUDGET_MS }, lastGpuMs)) return false;
       const viewX = canvas?.width || 1280;
