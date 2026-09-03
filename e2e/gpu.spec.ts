@@ -28,19 +28,40 @@ test('GPU renderer initialises and PLAN §6 reads framebuffer pixels', async ({ 
   expect(frame.groups + frame.cpuColored).toBeGreaterThan(0);
   expect(frame.hasRead).toBe(true);
 
-  const rb = await page.evaluate(async () => {
+  await page.evaluate(() => {
+    const empty = {
+      source: 'unavailable' as const,
+      width: 0,
+      height: 0,
+      colored: 0,
+      samples: [] as Array<{ x: number; y: number; r: number; g: number; b: number; a: number }>,
+      error: 'no-readFramebuffer',
+    };
+    const slot = window as unknown as { __gpuReadback?: typeof empty | { status: 'pending' } };
     const fn = window.__floppy?.readFramebuffer;
     if (!fn) {
-      return {
-        source: 'unavailable' as const,
-        width: 0,
-        height: 0,
-        colored: 0,
-        samples: [],
-        error: 'no-readFramebuffer',
-      };
+      slot.__gpuReadback = empty;
+      return;
     }
-    return fn();
+    slot.__gpuReadback = { status: 'pending' };
+    void fn().then((r) => {
+      slot.__gpuReadback = r;
+    });
+  });
+  await page.waitForFunction(
+    () => {
+      const slot = window as unknown as { __gpuReadback?: { status?: string; source?: string } };
+      return slot.__gpuReadback && slot.__gpuReadback.status !== 'pending';
+    },
+    null,
+    { timeout: 15_000 },
+  );
+  const rb = await page.evaluate(() => {
+    return (
+      window as unknown as {
+        __gpuReadback: Awaited<ReturnType<NonNullable<typeof window.__floppy>['readFramebuffer']>>;
+      }
+    ).__gpuReadback;
   });
 
   if (frame.kind === 'gpu') {
