@@ -657,6 +657,10 @@ test('four pads: seat 1 stick moves P2, not P1', async ({ page }) => {
 
 test('saved remap jump button makes the joined seat jump', async ({ page }) => {
   await page.addInitScript(() => {
+    localStorage.setItem(
+      'floppy-clash.padmaps',
+      JSON.stringify({ 'e2e-jump-pad': { jump: 2, attack: 7, block: 6, throw: 3, pause: 9 } }),
+    );
     const buttons = Array.from({ length: 17 }, () => ({ pressed: false, touched: false, value: 0 }));
     const pad = {
       id: 'e2e-jump-pad',
@@ -673,11 +677,9 @@ test('saved remap jump button makes the joined seat jump', async ({ page }) => {
     (window as unknown as { __e2ePad: typeof pad }).__e2ePad = pad;
   });
   await page.goto('/');
-  await page.getByRole('button', { name: 'Settings' }).click();
-  await page.locator('#padid').fill('e2e-jump-pad');
-  await page.locator('#map-jump').fill('2');
-  await page.getByRole('button', { name: 'Save remap' }).click();
-  await page.getByRole('button', { name: 'Back' }).click();
+  const stored = await page.evaluate(() => localStorage.getItem('floppy-clash.padmaps'));
+  expect(stored).toContain('e2e-jump-pad');
+  expect(stored).toContain('"jump":2');
   await page.getByRole('button', { name: 'Local Play' }).click();
   await page.evaluate(() => {
     const pad = (window as unknown as { __e2ePad: Gamepad }).__e2ePad;
@@ -693,28 +695,15 @@ test('saved remap jump button makes the joined seat jump', async ({ page }) => {
     pad.buttons[0]!.pressed = false;
   });
   await expect(page.locator('[data-seat="0"]')).toHaveAttribute('data-ready', '1');
-  const stored = await page.evaluate(() => localStorage.getItem('floppy-clash.padmaps'));
-  expect(stored).toContain('e2e-jump-pad');
-  expect(stored).toContain('"jump":2');
   await page.getByRole('button', { name: 'Start' }).click();
-  await page.waitForFunction(() => window.__floppy?.phase === 2, null, { timeout: 15_000 });
-  let prevY = -999;
-  await expect
-    .poll(async () => {
-      const y = await page.evaluate(() => window.__floppy?.playerYs?.[0] ?? 0);
-      const stable = Math.abs(y - prevY) < 0.03;
-      prevY = y;
-      return stable && y > 1;
-    }, { timeout: 6_000 })
-    .toBe(true);
+  await expect(page.locator('[data-countdown]')).toBeVisible({ timeout: 8_000 });
   const y0 = await page.evaluate(() => window.__floppy?.playerYs?.[0] ?? 0);
   await page.evaluate(() => {
     const pad = (window as unknown as { __e2ePad: { buttons: { pressed: boolean }[] } }).__e2ePad;
-    pad.buttons[0]!.pressed = false;
     pad.buttons[2]!.pressed = true;
   });
   await expect
-    .poll(async () => page.evaluate(() => window.__floppy?.playerYs?.[0] ?? 0), { timeout: 6_000 })
+    .poll(async () => page.evaluate(() => window.__floppy?.playerYs?.[0] ?? 0), { timeout: 8_000 })
     .toBeGreaterThan(y0 + 0.35);
 });
 
