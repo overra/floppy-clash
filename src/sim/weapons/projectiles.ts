@@ -194,7 +194,7 @@ function explode(world: World, x: number, y: number, defId: number, owner?: Enti
   const impulse = authored(def.projectile.explodeImpulse, 8);
   const reported =
     def.projectile.explodeDamageMax ??
-    (def.projectile.explodeDamage || rolledDamage || def.projectile.damage);
+    (def.projectile.explodeDamage ?? rolledDamage ?? def.projectile.damage);
   emit(world, { type: 'explosion', x, y, radius, damage: reported });
   applyExplosion(world, x, y, radius, impulse, (body, falloff) => {
     const data = body.getUserData() as FixtureUserData | undefined;

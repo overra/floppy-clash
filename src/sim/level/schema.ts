@@ -22,6 +22,7 @@ export const LevelObjectSchema = z
     onTicks: z.number().optional(),
     offTicks: z.number().optional(),
     warningTicks: z.number().optional(),
+    reach: z.number().optional(),
     angle: z.number().optional(),
     omega: z.number().optional(),
     links: z.number().optional(),

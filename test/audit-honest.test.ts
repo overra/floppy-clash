@@ -1225,6 +1225,39 @@ describe('honest PLAN stand-ins (no pin/pred OR, no scoreboard shrink)', () => {
     expect(p.get(Health)?.hp ?? 1).toBeGreaterThan(0);
   });
 
+  it('laser with reach = 0 at create stays zero-length', () => {
+    const sim = makeSim({
+      level: {
+        ...getLevel('test-laser'),
+        id: 'laser-zero-reach-create',
+        objects: [
+          { type: 'solid' as const, x: 12, y: 1, w: 24, h: 2 },
+          {
+            type: 'laser' as const,
+            x: 2,
+            y: 7,
+            onTicks: 80,
+            offTicks: 1,
+            warningTicks: 0,
+            reach: 0,
+          },
+        ],
+      },
+      seed: 183,
+      settings: { playerCount: 1 },
+    });
+    let reach = -1;
+    sim.ecs.query(Hazard).updateEach(([hz]) => {
+      if (hz.kind === HazardKind.Laser) reach = hz.param3;
+    });
+    expect(reach).toBe(0);
+    const p = playerOf(sim);
+    pin(sim, p, 8, 7);
+    sim.step([hold({}), hold({}), hold({}), hold({})]);
+    expect(p.has(Dead)).toBe(false);
+    expect(p.get(Health)?.hp ?? 1).toBeGreaterThan(0);
+  });
+
   it('an omitted laser length still defaults to 14 at create', () => {
     const sim = makeSim({
       level: {

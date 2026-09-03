@@ -41,7 +41,8 @@ export function paramsFromObject(obj: LevelObject): {
         param0: obj.onTicks ?? 40,
         param1: obj.offTicks ?? 50,
         param2: obj.warningTicks ?? 12,
-        param3: 14,
+        // Omitted reach defaults to 14 m; live/create 0 stays 0 (not hardcoded 14).
+        param3: obj.reach ?? 14,
       };
     case 'ice':
       return { param0: obj.w ?? 2, param1: 0, param2: 0, param3: 0 };
