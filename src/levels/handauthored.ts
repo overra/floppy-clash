@@ -86,6 +86,48 @@ export const factoryLine: LevelDef = {
   ],
 };
 
+/** Compact flat floor for fists-only couch / bot stand-ins. */
+export const fistPit: LevelDef = {
+  id: 'fist-pit',
+  name: 'Fist Pit',
+  theme: 'woods',
+  bounds: { x: 0, y: 0, w: 32, h: 18 },
+  killMargin: 6,
+  spawns: [
+    { x: 8, y: 4 },
+    { x: 16, y: 4 },
+    { x: 12, y: 4 },
+    { x: 20, y: 4 },
+  ],
+  drops: { enabled: false, xMin: 4, xMax: 28, intervalScale: 1 },
+  objects: [
+    { type: 'solid', x: 16, y: 1, w: 32, h: 2 },
+    { type: 'solid', x: 0.5, y: 9, w: 1, h: 18 },
+    { type: 'solid', x: 31.5, y: 9, w: 1, h: 18 },
+  ],
+};
+
+export const fistPitB: LevelDef = {
+  id: 'fist-pit-b',
+  name: 'Fist Pit B',
+  theme: 'woods',
+  bounds: { x: 0, y: 0, w: 36, h: 16 },
+  killMargin: 6,
+  spawns: [
+    { x: 8, y: 4 },
+    { x: 18, y: 4 },
+    { x: 13, y: 4 },
+    { x: 24, y: 4 },
+  ],
+  drops: { enabled: false, xMin: 4, xMax: 32, intervalScale: 1 },
+  objects: [
+    { type: 'solid', x: 18, y: 1, w: 36, h: 2 },
+    { type: 'solid', x: 0.5, y: 8, w: 1, h: 16 },
+    { type: 'solid', x: 35.5, y: 8, w: 1, h: 16 },
+    { type: 'solid', x: 18, y: 8, w: 4, h: 0.6 },
+  ],
+};
+
 export const castleKeep: LevelDef = {
   id: 'castle-01',
   name: 'Keep',

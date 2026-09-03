@@ -1,5 +1,13 @@
 import { gymLevel, runTrack } from './gym';
-import { castleKeep, desertStack, factoryLine, woodsClearing, woodsRidge } from './handauthored';
+import {
+  castleKeep,
+  desertStack,
+  factoryLine,
+  fistPit,
+  fistPitB,
+  woodsClearing,
+  woodsRidge,
+} from './handauthored';
 import { GENERATED_LEVELS } from './generated';
 import type { LevelDef } from '../sim/level/schema';
 import { parseLevel } from '../sim/level/schema';
@@ -10,6 +18,8 @@ export const HAND_AUTHORED: LevelDef[] = [
   desertStack,
   factoryLine,
   castleKeep,
+  fistPit,
+  fistPitB,
 ];
 
 function uniquify(levels: LevelDef[]): LevelDef[] {

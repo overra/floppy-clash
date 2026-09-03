@@ -1,10 +1,12 @@
 import { universe } from 'koota';
 import { gymLevel, runTrack } from '../src/levels/gym';
-import { woodsClearing } from '../src/levels/handauthored';
+import { fistPit, woodsClearing } from '../src/levels/handauthored';
 import { getLevel } from '../src/levels/catalog';
 import { blankInputs, type PlayerInput } from '../src/sim/input';
 import { createSimWorld, type CreateSimOptions, type SimHandle } from '../src/sim/world';
-import { Controller, Health, Player, Transform } from '../src/sim/traits';
+import { Controller, Health, Player, PrevTransform, Transform } from '../src/sim/traits';
+
+export const fistArena = fistPit;
 
 export function makeSim(partial?: Partial<CreateSimOptions>): SimHandle {
   universe.reset();
@@ -34,6 +36,13 @@ export function pin(sim: SimHandle, entity: ReturnType<typeof playerOf>, x: numb
   sim.ctx.bodies.get(entity)?.setPosition({ x, y });
   sim.ctx.bodies.get(entity)?.setLinearVelocity({ x: 0, y: 0 });
   entity.set(Transform, { x, y, angle: 0 });
+  entity.set(PrevTransform, { x, y, angle: 0 });
+}
+
+export function speedRounds(sim: SimHandle): void {
+  sim.ctx.tuning.countdownTicks = 3;
+  sim.ctx.tuning.slowmoTicks = 2;
+  sim.ctx.tuning.scoreboardTicks = 2;
 }
 
 export function pos(sim: SimHandle, slot = 0) {

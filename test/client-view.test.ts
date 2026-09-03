@@ -3,7 +3,6 @@ import { applyLateJoinSnapshot, createClientView, worldFromSnapshot } from '../s
 import { createInterpBuffer } from '../src/net/interp';
 import { decode, encode } from '../src/net/protocol';
 import { netShapeFromSearch } from '../src/net/shape';
-import { woodsClearing } from '../src/levels/handauthored';
 import { parseLevel } from '../src/sim/level/schema';
 import { spawnWeapon } from '../src/sim/systems/weapons';
 import {
@@ -21,7 +20,7 @@ import {
   Transform,
   Weapon,
 } from '../src/sim/traits';
-import { hold, makeSim, pin, playerOf, pos } from './helpers';
+import { getLevel, hold, makeSim, playerOf, pos, speedRounds, woodsClearing } from './helpers';
 
 describe('client interpolation view', () => {
   it('restoreWorld drives a client view from late-join snapshots', () => {
@@ -189,17 +188,19 @@ describe('client interpolation view', () => {
 
   it('rebuilds the client world when the host rotates levels', () => {
     const host = makeSim({
-      level: woodsClearing,
+      level: getLevel('fist-pit'),
       seed: 88,
       settings: {
-        playerCount: 2,
+        playerCount: 0,
+        bots: 2,
         rotation: 'ordered',
         firstTo: 0,
         maxHp: 1,
         enabledWeapons: [],
-        enabledLevels: ['woods-01', 'woods-02'],
+        enabledLevels: ['fist-pit', 'fist-pit-b'],
       },
     });
+    speedRounds(host);
     host.ctx.tuning.countdownTicks = 2;
     host.ctx.tuning.slowmoTicks = 1;
     host.ctx.tuning.scoreboardTicks = 1;
@@ -207,20 +208,8 @@ describe('client interpolation view', () => {
     const view = createClientView(first);
     expect(view.sim.ctx.level.id).toBe(first.levelId);
     let kills = 0;
-    for (let i = 0; i < 800; i++) {
-      const fighting = host.ecs.get(RoundState)?.phase === RoundPhase.Fighting;
-      if (fighting) {
-        const a = playerOf(host, 0);
-        const victim = playerOf(host, 1);
-        pin(host, a, 10, 4);
-        if ((victim.get(Health)?.hp ?? 0) > 0) pin(host, victim, 10.55, 4);
-      }
-      const ev = host.step([
-        hold({ moveX: 0.2, attack: fighting && i % 8 === 0, aimX: 1, aimY: 0 }),
-        hold({}),
-        hold({}),
-        hold({}),
-      ]);
+    for (let i = 0; i < 4000; i++) {
+      const ev = host.step();
       const fists = ev.some((e) => e.type === 'shot' && e.weaponId === 'fists');
       const tickKills = ev.filter((e) => e.type === 'kill').length;
       if (tickKills > 0) expect(fists).toBe(true);

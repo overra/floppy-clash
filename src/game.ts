@@ -55,8 +55,6 @@ import { blankInputs, EMPTY_INPUT, type PlayerInput } from './sim/input';
 import { inspectWorld, formatInspect } from './sim/inspect';
 import { primitiveSdf } from './render/sdf/primitives';
 import {
-  Aim,
-  Combat,
   Controller,
   Dead,
   Health,
@@ -67,10 +65,10 @@ import {
   Transform,
   Weapon,
 } from './sim/traits';
-import { createPlayerCapsule } from './sim/physics/bodies';
 import { createClientView, type ClientView } from './net/clientView';
 import { createSimWorld, type SimHandle } from './sim/world';
 import { spawnWeapon } from './sim/systems/weapons';
+import { applyFistDriveAll } from './sim/ai/fistDrive';
 import { tuning } from './sim/tuning';
 import { loadSettings, saveSettings, type UserSettings } from './ui/settingsStore';
 import { loadStats, recordKos, recordMatch } from './ui/statsStore';
@@ -110,6 +108,7 @@ type FloppyDebug = {
   forceLastStand: () => void;
   armLiveFists: () => void;
   disarmLiveFists: () => void;
+  configureMatch: (partial: { maxHp?: number; enabledWeapons?: string[] | 'all' }) => void;
   fistKills: number;
   liveFists: boolean;
   speedRounds: () => void;
@@ -221,6 +220,7 @@ export function createGame(root: HTMLElement): Game {
   let inputSeq = 0;
   let heldNetInput: PlayerInput | null = null;
   let liveFists = false;
+  let liveFistsApplied = false;
   let fistKills = 0;
   let rendererSwitches = 0;
   let netName = 'guest';
@@ -645,6 +645,7 @@ export function createGame(root: HTMLElement): Game {
     mixer.startMusic();
     const seed = (Math.random() * 1e9) | 0;
     recorder = createRecorder(seed, level.id);
+    liveFistsApplied = false;
     routeByJoinSeats = Boolean(opts.seats?.length);
     sim = createSimWorld({
       level,
@@ -827,70 +828,24 @@ export function createGame(root: HTMLElement): Game {
 
   function applyLiveFists(sampled: PlayerInput[]): PlayerInput[] {
     if (!liveFists || !sim || menus.netRole === 'client') return sampled;
-    sim.ctx.holdBots = true;
-    sim.ctx.holdHazards = true;
     sim.ctx.settings.enabledWeapons = [];
-    sim.ctx.settings.enabledLevels = [sim.ctx.level.id];
-    const ms = sim.ecs.get(MatchState);
-    if (ms) {
-      ms.firstTo = 0;
-      sim.ecs.set(MatchState, ms);
-    }
-    const spawn = sim.ctx.level.spawns[0] ?? { x: 10, y: 4 };
-    const x0 = spawn.x;
-    const y = spawn.y + 1;
-    let punchIndex = 0;
-    sim.ecs.query(Player).updateEach(([p], entity) => {
-      if (p.slot !== 0) return;
-      punchIndex = p.inputIndex;
-      if (entity.has(Dead)) entity.remove(Dead);
-      if (!entity.get(Combat)) {
-        entity.add(
-          Combat({
-            punchCooldown: 0,
-            punchActive: 0,
-            blockMeter: 1,
-            blockStartTick: -999,
-            blocking: false,
-            refillDelay: 0,
-          }),
-        );
-      } else {
-        const c = entity.get(Combat)!;
-        entity.set(Combat, { ...c, punchCooldown: 0, blocking: false });
+    if (!liveFistsApplied) {
+      liveFistsApplied = true;
+      sim.ctx.settings.maxHp = 1;
+      const ms = sim.ecs.get(MatchState);
+      if (ms) {
+        ms.maxHp = 1;
+        ms.firstTo = 0;
+        sim.ecs.set(MatchState, ms);
       }
-      const hp = entity.get(Health);
-      if (hp) entity.set(Health, { hp: hp.maxHp, maxHp: hp.maxHp });
-      if (!sim!.ctx.bodies.get(entity)) createPlayerCapsule(sim!.ecs, entity, x0, y);
-      const aim = entity.get(Aim);
-      if (aim) entity.set(Aim, { x: 1, y: 0, holdTicks: 30 });
-      else entity.add(Aim({ x: 1, y: 0, holdTicks: 30 }));
-    });
+      sim.ecs.query(Player).updateEach((_, entity) => {
+        const hp = entity.get(Health);
+        if (hp) entity.set(Health, { hp: Math.min(hp.hp, 1), maxHp: 1 });
+      });
+    }
     const phase = sim.ecs.get(RoundState)?.phase;
     if (phase !== RoundPhase.Fighting) return sampled;
-    const next = sampled.map((s) => ({ ...s }));
-    sim.ecs.query(Player, Transform).updateEach(([p], entity) => {
-      if (entity.has(Dead)) return;
-      const x = p.slot === 0 ? x0 : x0 + 0.4;
-      sim!.ctx.bodies.get(entity)?.setPosition({ x, y });
-      sim!.ctx.bodies.get(entity)?.setLinearVelocity({ x: 0, y: 0 });
-      entity.set(Transform, { x, y, angle: 0 });
-      if (p.slot !== 0) {
-        const h = entity.get(Health);
-        if (h && h.hp > 1) entity.set(Health, { hp: 1, maxHp: h.maxHp });
-      }
-    });
-    const punch = {
-      ...EMPTY_INPUT,
-      attack: sim.ctx.tick % 8 === 0,
-      aimX: 1,
-      aimY: 0,
-      moveX: 0.2,
-    };
-    for (let s = 0; s < 4; s++) next[s] = { ...EMPTY_INPUT };
-    next[punchIndex] = punch;
-    next[0] = punch;
-    return next;
+    return applyFistDriveAll(sampled, sim.ecs, sim.ctx.tick);
   }
 
   function applyPauseHotkey(): void {
@@ -1147,16 +1102,31 @@ export function createGame(root: HTMLElement): Game {
       },
       armLiveFists: () => {
         liveFists = true;
-        if (sim) {
-          sim.ctx.holdBots = true;
-          sim.ctx.holdHazards = true;
-        }
       },
       disarmLiveFists: () => {
         liveFists = false;
-        if (sim) {
-          sim.ctx.holdBots = false;
-          sim.ctx.holdHazards = false;
+        liveFistsApplied = false;
+      },
+      configureMatch: (partial) => {
+        if (partial.maxHp != null) {
+          settings.maxHp = partial.maxHp;
+          menus.maxHp = partial.maxHp;
+          if (sim) {
+            sim.ctx.settings.maxHp = partial.maxHp;
+            const ms = sim.ecs.get(MatchState);
+            if (ms) {
+              ms.maxHp = partial.maxHp;
+              sim.ecs.set(MatchState, ms);
+            }
+            sim.ecs.query(Player).updateEach((_, entity) => {
+              const hp = entity.get(Health);
+              if (hp) entity.set(Health, { hp: Math.min(hp.hp, partial.maxHp!), maxHp: partial.maxHp! });
+            });
+          }
+        }
+        if (partial.enabledWeapons !== undefined) {
+          settings.enabledWeapons = partial.enabledWeapons;
+          if (sim) sim.ctx.settings.enabledWeapons = partial.enabledWeapons;
         }
       },
       fistKills,

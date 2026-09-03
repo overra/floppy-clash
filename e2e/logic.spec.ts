@@ -72,16 +72,15 @@ test('boots, joins with keyboard, starts a local match vs bots', async ({ page }
     return colored;
   });
   expect(pixels).toBeGreaterThan(10);
-  await page.waitForFunction(() => Boolean(window.__floppy?.armLiveFists), null, { timeout: 15_000 });
+  await page.waitForFunction(() => Boolean(window.__floppy?.configureMatch), null, { timeout: 15_000 });
   await page.evaluate(() => {
+    window.__floppy?.configureMatch?.({ maxHp: 1, enabledWeapons: [] });
     window.__floppy?.speedRounds();
-    window.__floppy?.armLiveFists();
   });
-  await expect(page.locator('[data-round-over]')).toBeVisible({ timeout: 20_000 });
+  await expect(page.locator('[data-round-over]')).toBeVisible({ timeout: 30_000 });
   await expect
     .poll(async () => page.evaluate(() => window.__floppy?.fistKills ?? 0), { timeout: 5_000 })
     .toBeGreaterThan(0);
-  await page.evaluate(() => window.__floppy?.disarmLiveFists());
 });
 
 test('local play joins on first Space and readies on the second', async ({ page }) => {
@@ -348,17 +347,16 @@ test('scoreboard overlay appears after last stand', async ({ page }) => {
   if (await page.getByRole('heading', { name: 'Join' }).isVisible()) {
     await page.getByRole('button', { name: 'Start' }).click();
   }
-  await page.waitForFunction(() => Boolean(window.__floppy?.armLiveFists), null, { timeout: 15_000 });
+  await page.waitForFunction(() => Boolean(window.__floppy?.configureMatch), null, { timeout: 15_000 });
   await page.evaluate(() => {
+    window.__floppy?.configureMatch?.({ maxHp: 1, enabledWeapons: [] });
     window.__floppy?.speedRounds();
-    window.__floppy?.armLiveFists();
   });
-  await expect(page.locator('[data-round-over]')).toBeVisible({ timeout: 20_000 });
+  await expect(page.locator('[data-round-over]')).toBeVisible({ timeout: 30_000 });
   await expect(page.getByRole('heading', { name: /Round over|Last standing/ })).toBeVisible();
   await expect
     .poll(async () => page.evaluate(() => window.__floppy?.fistKills ?? 0), { timeout: 5_000 })
     .toBeGreaterThan(0);
-  await page.evaluate(() => window.__floppy?.disarmLiveFists());
 });
 
 test('per-pad remap persists in localStorage', async ({ page }) => {

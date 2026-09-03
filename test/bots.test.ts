@@ -21,7 +21,7 @@ import {
   Transform,
   Weapon,
 } from '../src/sim/traits';
-import { gymLevel, hold, makeSim, pin, playerOf, woodsClearing } from './helpers';
+import { fistArena, gymLevel, hold, makeSim, pin, playerOf, woodsClearing } from './helpers';
 
 describe('M9 bots', () => {
   it('a human seat past playerCount is not tagged as a bot', () => {
@@ -274,12 +274,12 @@ describe('M9 bots', () => {
     const human = playerOf(sim, 0);
     const bot = playerOf(sim, 1);
     pin(sim, bot, 4.7, 3.2);
+    pin(sim, human, 5.5, 15.1);
     const y0 = bot.get(Transform)?.y ?? 3.2;
     let apex = y0;
     let wallJumps = 0;
     let prevLock = 0;
     for (let i = 0; i < 360; i++) {
-      pin(sim, human, 4.9, 12);
       sim.step();
       apex = Math.max(apex, bot.get(Transform)?.y ?? apex);
       const lock = bot.get(Controller)?.lockTicks ?? 0;
@@ -290,6 +290,32 @@ describe('M9 bots', () => {
     expect(apex).toBeGreaterThan(y0 + 4);
     expect(apex).toBeGreaterThanOrEqual(8.5);
     expect(wallJumps).toBeGreaterThanOrEqual(2);
+  });
+
+  it('stacked bots sidestep and land a live fist (seed-99 stall)', () => {
+    const sim = makeSim({
+      level: fistArena,
+      seed: 99,
+      settings: { playerCount: 0, bots: 2, maxHp: 1, enabledWeapons: [] },
+    });
+    const a = playerOf(sim, 0);
+    const b = playerOf(sim, 1);
+    pin(sim, a, 16.5, 3.0);
+    pin(sim, b, 16.6, 4.6);
+    sim.step();
+    const mx0 = sim.ctx.inputs[0]?.moveX ?? 0;
+    const mx1 = sim.ctx.inputs[1]?.moveX ?? 0;
+    expect(mx0 * mx1).toBeLessThan(0);
+    let kills = 0;
+    for (let i = 0; i < 720; i++) {
+      const ev = sim.step();
+      const fists = ev.some((e) => e.type === 'shot' && e.weaponId === 'fists');
+      const tickKills = ev.filter((e) => e.type === 'kill').length;
+      if (tickKills > 0) expect(fists).toBe(true);
+      kills += tickKills;
+      if (kills > 0) break;
+    }
+    expect(kills).toBeGreaterThan(0);
   });
 
   it('holdBots leaves scripted victim inputs in place', () => {
@@ -332,12 +358,9 @@ describe('M9 bots', () => {
     const hp0 = bot.get(Health)?.hp ?? 100;
     let blocked = false;
     for (let i = 0; i < 20; i++) {
-      pin(sim, human, 2, 4);
-      pin(sim, bot, 14, 4);
       const ev = sim.step();
       if (ev.some((e) => e.type === 'block')) blocked = true;
     }
-    expect(bot.get(Combat)?.blocking || blocked).toBe(true);
     expect(blocked).toBe(true);
     expect(bot.get(Health)?.hp ?? 100).toBe(hp0);
     expect(bot.has(Dead)).toBe(false);

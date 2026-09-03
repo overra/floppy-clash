@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { woodsClearing } from '../src/levels/handauthored';
 import { spawnWeapon } from '../src/sim/systems/weapons';
-import { Combat, Dead, Health, Held, HeldBy, Loose, Player, PrevTransform, Transform, Weapon } from '../src/sim/traits';
+import { Combat, Dead, Health, Held, HeldBy, Loose, Player, Transform, Weapon } from '../src/sim/traits';
 import { weaponIndex } from '../src/sim/weapons/defs';
 import { damageMultiplier, takeDamage } from '../src/sim/player/health';
 import { applyExplosion } from '../src/sim/physics/queries';
@@ -172,7 +172,7 @@ describe('M3 weapons', () => {
     expect(bb.get(Health)?.hp ?? 100).toBe(hp0);
   });
 
-  it('does not tunnel a player through an on lava-stream in one tick (PLAN M6 sweep)', () => {
+  it('does not tunnel a player through an on lava-stream (PLAN M6 live velocity)', () => {
     expect(playerCrossesBeam(14, 1, 14, 8, 10, 4, 50, 4)).toBeTruthy();
     expect(playerCrossesBeam(14, 1, 14, 2, 10, 4, 50, 4)).toBeNull();
 
@@ -184,17 +184,21 @@ describe('M3 weapons', () => {
     gun.remove(Loose);
     pin(sim, a, 10, 4);
     pin(sim, b, 14, 1);
-    b.set(PrevTransform, { x: 14, y: 1, angle: 0 });
     sim.step([hold({ attack: true, aimX: 1, aimY: 0 }), hold({}), hold({}), hold({})]);
-    expect(b.has(Dead) || (b.get(Health)?.hp ?? 100) < 100).toBe(false);
+    expect(b.has(Dead)).toBe(false);
+    expect(b.get(Health)?.hp ?? 100).toBe(100);
     pin(sim, a, 10, 4);
-    pin(sim, b, 14, 8);
-    b.set(PrevTransform, { x: 14, y: 1, angle: 0 });
-    sim.step([hold({ attack: true, aimX: 1, aimY: 0 }), hold({}), hold({}), hold({})]);
-    expect(b.has(Dead) || (b.get(Health)?.hp ?? 100) < 100).toBe(true);
+    pin(sim, b, 14, 1);
+    sim.ctx.bodies.get(b)?.setLinearVelocity({ x: 0, y: 420 });
+    const hp0 = b.get(Health)?.hp ?? 100;
+    for (let i = 0; i < 4; i++) {
+      pin(sim, a, 10, 4);
+      sim.step([hold({ attack: true, aimX: 1, aimY: 0 }), hold({}), hold({}), hold({})]);
+    }
+    expect(b.get(Health)?.hp ?? 100).toBeLessThan(hp0);
   });
 
-  it('lava-beam warning skip is safe; after warning a one-tick skip hits', () => {
+  it('lava-beam warning skip is safe; after warning a live velocity skip kills', () => {
     const sim = makeSim({ level: woodsClearing, seed: 22, settings: { playerCount: 2 } });
     const a = playerOf(sim, 0);
     const b = playerOf(sim, 1);
@@ -203,26 +207,32 @@ describe('M3 weapons', () => {
     gun.remove(Loose);
     pin(sim, a, 10, 4);
     pin(sim, b, 14, 1);
-    b.set(PrevTransform, { x: 14, y: 1, angle: 0 });
     sim.step([hold({ attack: true, aimX: 1, aimY: 0 }), hold({}), hold({}), hold({})]);
     pin(sim, a, 10, 4);
-    pin(sim, b, 14, 8);
-    b.set(PrevTransform, { x: 14, y: 1, angle: 0 });
+    pin(sim, b, 14, 1);
+    sim.ctx.bodies.get(b)?.setLinearVelocity({ x: 0, y: 420 });
     sim.step([hold({ aimX: 1, aimY: 0 }), hold({}), hold({}), hold({})]);
-    expect(b.has(Dead) || (b.get(Health)?.hp ?? 100) < 100).toBe(false);
+    expect(b.has(Dead)).toBe(false);
+    expect(b.get(Health)?.hp ?? 100).toBe(100);
 
     pin(sim, a, 10, 4);
     pin(sim, b, 14, 1);
-    b.set(PrevTransform, { x: 14, y: 1, angle: 0 });
     for (let i = 0; i < 24; i++) {
+      pin(sim, a, 10, 4);
+      pin(sim, b, 14, 1);
       sim.step([hold({ aimX: 1, aimY: 0 }), hold({}), hold({}), hold({})]);
     }
-    expect(b.has(Dead) || (b.get(Health)?.hp ?? 100) < 100).toBe(false);
+    expect(b.has(Dead)).toBe(false);
+    expect(b.get(Health)?.hp ?? 100).toBe(100);
     pin(sim, a, 10, 4);
-    pin(sim, b, 14, 8);
-    b.set(PrevTransform, { x: 14, y: 1, angle: 0 });
-    sim.step([hold({ aimX: 1, aimY: 0 }), hold({}), hold({}), hold({})]);
-    expect(b.has(Dead) || (b.get(Health)?.hp ?? 100) < 100).toBe(true);
+    pin(sim, b, 14, 1);
+    sim.ctx.bodies.get(b)?.setLinearVelocity({ x: 0, y: 420 });
+    for (let i = 0; i < 4; i++) {
+      pin(sim, a, 10, 4);
+      sim.step([hold({ aimX: 1, aimY: 0 }), hold({}), hold({}), hold({})]);
+    }
+    expect(b.has(Dead)).toBe(true);
+    expect(b.get(Health)?.hp ?? 1).toBeLessThanOrEqual(0);
   });
 
   it('lava-beam capsule graze hits after warning (point-radius 0.35 misses)', () => {
@@ -236,19 +246,19 @@ describe('M3 weapons', () => {
     gun.remove(Loose);
     pin(sim, a, 10, 4);
     pin(sim, b, 14, 1);
-    b.set(PrevTransform, { x: 14, y: 1, angle: 0 });
     sim.step([hold({ attack: true, aimX: 1, aimY: 0 }), hold({}), hold({}), hold({})]);
     for (let i = 0; i < 24; i++) {
       pin(sim, a, 10, 4);
       pin(sim, b, 14, 1);
       sim.step([hold({ aimX: 1, aimY: 0 }), hold({}), hold({}), hold({})]);
     }
-    expect(b.has(Dead) || (b.get(Health)?.hp ?? 100) < 100).toBe(false);
+    expect(b.has(Dead)).toBe(false);
+    expect(b.get(Health)?.hp ?? 100).toBe(100);
     pin(sim, a, 10, 4);
     pin(sim, b, 14, 3.2);
-    b.set(PrevTransform, { x: 14, y: 3.2, angle: 0 });
     sim.step([hold({ aimX: 1, aimY: 0 }), hold({}), hold({}), hold({})]);
-    expect(b.has(Dead) || (b.get(Health)?.hp ?? 100) < 100).toBe(true);
+    expect(b.has(Dead)).toBe(true);
+    expect(b.get(Health)?.hp ?? 1).toBeLessThanOrEqual(0);
   });
 });
 

@@ -153,9 +153,15 @@ export function thinkBots(world: World): void {
       const hp = entity.get(Health)?.hp ?? 100;
       const maxHp = entity.get(Health)?.maxHp ?? 100;
       const retreat = (armed && dist < 2.15) || hp < maxHp * 0.35;
-      input.moveX = retreat
-        ? -(Math.sign(dx) || 1)
-        : Math.max(-1, Math.min(1, dx * 0.35 || Math.sign(dx)));
+      // Vertical stack (dx≈0, dy≈1.6) is outside punchRadius; sidestep so the
+      // 0.9+0.45 fist sphere can connect instead of bouncing in place.
+      const stacked = !retreat && Math.abs(dx) < 0.65 && dist < 2.8;
+      if (retreat) input.moveX = -(Math.sign(dx) || 1);
+      else if (stacked) {
+        input.moveX = Math.abs(dx) < 0.05 ? (bot.slot % 2 === 0 ? 1 : -1) : tr.x >= target.cur.x ? 1 : -1;
+      } else {
+        input.moveX = Math.max(-1, Math.min(1, dx * 0.35 || Math.sign(dx)));
+      }
       const len = dist || 1;
       const noise = ctx.rng.range(-0.12, 0.12);
       const noiseY = ctx.rng.range(-0.12, 0.12);

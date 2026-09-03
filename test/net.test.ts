@@ -24,22 +24,18 @@ import { createLocalLoopback, PUBLIC_ICE_SERVERS } from '../src/net/transport';
 import { drainChangeTrackers } from '../src/sim/snapshot';
 import { spawnWeapon } from '../src/sim/systems/weapons';
 import {
-  Dead,
-  Health,
   Held,
   HeldBy,
   Loose,
   MatchState,
   NetId,
-  RoundPhase,
-  RoundState,
   Weapon,
 } from '../src/sim/traits';
 import { createClientView } from '../src/net/clientView';
 import { parseLevel } from '../src/sim/level/schema';
 import { SeededRng } from '../src/core/rng';
 import { blankInputs } from '../src/sim/input';
-import { hold, makeSim, pin, playerOf, pos, woodsClearing } from './helpers';
+import { fistArena, hold, makeSim, playerOf, pos, speedRounds, woodsClearing } from './helpers';
 
 describe('M8 netcode', () => {
   it('configures public STUN (PLAN 4.13)', () => {
@@ -146,44 +142,27 @@ describe('M8 netcode', () => {
     const rng = new SeededRng(99);
     const link = createSimulatedLink({ latencyMs: 100, loss: 0.02, rng: () => rng.next() });
     const host = makeSim({
-      level: woodsClearing,
+      level: fistArena,
       seed: 99,
       settings: {
-        playerCount: 4,
+        playerCount: 0,
+        bots: 4,
         firstTo: 0,
         maxHp: 1,
         enabledWeapons: [],
-        enabledLevels: ['woods-01'],
+        enabledLevels: ['fist-pit'],
         rotation: 'ordered',
       },
     });
-    host.ctx.tuning.countdownTicks = 3;
-    host.ctx.tuning.slowmoTicks = 2;
-    host.ctx.tuning.scoreboardTicks = 2;
+    speedRounds(host);
     const delay = 6;
     const q: ReturnType<typeof blankInputs>[] = [];
     let bytes = 0;
     let kills = 0;
     let view: ReturnType<typeof createClientView> | null = null;
     let lastLevelId = host.ctx.level.id;
-    for (let i = 0; i < 6000; i++) {
-      const phase = host.ecs.get(RoundState)?.phase;
-      const fighting = phase === RoundPhase.Fighting;
-      if (fighting) {
-        const a = playerOf(host, 0);
-        pin(host, a, 10, 4);
-        for (let s = 1; s < 4; s++) {
-          const p = playerOf(host, s);
-          if (p.has(Dead) || (p.get(Health)?.hp ?? 0) <= 0) continue;
-          pin(host, p, 10.55, 4);
-        }
-      }
-      const raw = [
-        hold({ moveX: 0.2, attack: fighting && i % 8 === 0, aimX: 1, aimY: 0 }),
-        hold({}),
-        hold({}),
-        hold({}),
-      ];
+    for (let i = 0; i < 36_000; i++) {
+      const raw = blankInputs(4);
       q.push(raw);
       link.advance(1000 / 60);
       const dropped = rng.next() < 0.02;
