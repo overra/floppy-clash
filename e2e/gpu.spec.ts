@@ -29,39 +29,40 @@ test('GPU renderer initialises and PLAN §6 reads framebuffer pixels', async ({ 
   expect(frame.hasRead).toBe(true);
 
   await page.evaluate(() => {
-    const empty = {
-      source: 'unavailable' as const,
-      width: 0,
-      height: 0,
-      colored: 0,
-      samples: [] as Array<{ x: number; y: number; r: number; g: number; b: number; a: number }>,
-      error: 'no-readFramebuffer',
-    };
-    const slot = window as unknown as { __gpuReadback?: typeof empty | { status: 'pending' } };
+    const w = window as unknown as { __gpuReadback?: Record<string, unknown> };
     const fn = window.__floppy?.readFramebuffer;
     if (!fn) {
-      slot.__gpuReadback = empty;
+      w.__gpuReadback = {
+        source: 'unavailable',
+        error: 'no-readFramebuffer',
+        colored: 0,
+        samples: [],
+      };
       return;
     }
-    slot.__gpuReadback = { status: 'pending' };
+    w.__gpuReadback = { status: 'pending' };
     void fn().then((r) => {
-      slot.__gpuReadback = r;
+      w.__gpuReadback = { ...r };
     });
   });
   await page.waitForFunction(
     () => {
-      const slot = window as unknown as { __gpuReadback?: { status?: string; source?: string } };
-      return slot.__gpuReadback && slot.__gpuReadback.status !== 'pending';
+      const slot = (window as unknown as { __gpuReadback?: { status?: string } }).__gpuReadback;
+      return !!slot && slot.status !== 'pending';
     },
     null,
     { timeout: 15_000 },
   );
   const rb = await page.evaluate(() => {
-    return (
-      window as unknown as {
-        __gpuReadback: Awaited<ReturnType<NonNullable<typeof window.__floppy>['readFramebuffer']>>;
-      }
-    ).__gpuReadback;
+    const raw = (window as unknown as { __gpuReadback: Record<string, unknown> }).__gpuReadback;
+    return {
+      source: String(raw.source ?? 'unavailable'),
+      width: Number(raw.width ?? 0),
+      height: Number(raw.height ?? 0),
+      colored: Number(raw.colored ?? 0),
+      samples: Array.isArray(raw.samples) ? raw.samples : [],
+      error: String(raw.error ?? ''),
+    };
   });
 
   if (frame.kind === 'gpu') {
