@@ -34,11 +34,14 @@
   levels, and sounds are all procedural — every visible shape is an SDF.
 - **Core architectural rule**: a DOM-free `sim/` package (a Koota world + systems) runs identically in the
   browser and in Node (headless tests, bots, and later an authoritative server). `render/` only reads
-  from it. Every player — keyboard, gamepad, remote peer, or bot — is driven through one `PlayerInput`
-  struct per tick.
+  from it. Every player — gamepad, keyboard fallback, remote peer, or bot — is driven through one
+  `PlayerInput` struct per tick.
+- **Scope for v1**: local couch play with 2–4 gamepads. Keyboard/mouse is a development fallback, not a
+  design target. Online multiplayer is post-v1 (M8); the architecture stays network-ready from M0 so it
+  is an addition, not a rewrite.
 - **Order of work** (each milestone is playable on its own):
   scaffold → movement feel → local versus with fists → weapons → hazards & levels → feel/polish →
-  online → full arsenal → level editor → bots & release.
+  full arsenal + **v1 couch release** → level editor → online → bots & v2.
 
 ---
 
@@ -48,7 +51,7 @@
 
 1. Recreate the *feel* of Stick Fight: floppy physics characters, big knockback, recoil you can fly with,
    instant-death hazards, and 20–60 second rounds that end in chaos.
-2. Couch multiplayer first (1 keyboard/mouse + up to 3 gamepads), online multiplayer second.
+2. Couch multiplayer with gamepads first (2–4 controllers, one per player); online multiplayer later.
 3. Data-driven content: weapons and levels are tables/JSON so that adding content never touches engine code.
 4. Zero-install: runs from a static URL at 60 fps on integrated graphics in current desktop browsers
    with WebGPU; stays playable (plain look) through the Canvas 2D fallback where WebGPU is missing.
@@ -57,9 +60,13 @@
 ### Non-goals (v1)
 
 - Steam features (Workshop, lobbies, achievements), consoles, native builds.
+- Online multiplayer in v1. It is designed for (section 4.13) and scheduled as M8, after the couch release.
+- Keyboard/mouse as a balanced, first-class player input. It exists as a development fallback and can
+  fill a seat when a pad is missing, but it is not tuned against gamepads in v1.
 - Mobile/touch controls (the input model should not preclude them, but they are not designed for).
 - Pixel-exact recreation of the original's levels, art, or audio (see [Legal / IP](#9-legal--ip)).
-- Rollback/lockstep netcode. Online play is host-authoritative with interpolation (section 4.13).
+- Rollback/lockstep netcode. Online play, when it comes, is host-authoritative with interpolation
+  (section 4.13).
 
 ### Principles
 
@@ -150,7 +157,7 @@ decals that persist for the round, small screen shakes, a short slow-mo on the w
 
 | Area | Original | Clone target | Milestone |
 | --- | --- | --- | --- |
-| Players | 2–4 local or online | 1–4 local (M2), 2–4 online (M6) | M2 / M6 |
+| Players | 2–4 local or online | 2–4 local with gamepads (M2); 2–4 online (M8); solo vs bots (M9) | M2 / M8 |
 | Movement | run, jump, duck, wall jump, punch/block-punch jumps | same, tuned to comparable heights | M1 |
 | Melee | fists 22 dmg, disarm, recoil | same | M2 |
 | Block / parry | meter, deflect, timed reflect | same | M3 |
@@ -158,17 +165,18 @@ decals that persist for the round, small screen shakes, a short slow-mo on the w
 | Death | ragdoll, blood, corpses solid | same | M2 |
 | Rounds | 3 s countdown, last standing, slow-mo, crown, endless | same + optional "first to N" | M2 |
 | Weapon drops | sky drops, physics pickups, throw, ammo | same | M3 |
-| Weapons | ≈45 in 7 categories | 8 core (M3) → full roster (M7) | M3 / M7 |
+| Weapons | ≈45 in 7 categories | 8 core (M3) → full roster (M6) | M3 / M6 |
 | Hazards | spikes, lava, saws, lasers, platforms, chains, crates, barrels, conveyors, ice, crushers, disappearing | same catalog | M4 |
 | Levels | ≈120 across 10 themes | 30 built-in across 6 themes at M4, 60+ by release | M4 / M9 |
 | Camera | dynamic framing, shake | same | M1 / M5 |
 | Look | flat colors, thick-lined stick figures, blood decals | SDF-rendered figures with smooth joints, outlines/glow, persistent decal texture; optional 2D lighting | M0 / M5 |
 | Audio | SFX + music | synthesized SFX, optional music | M5 |
 | Settings | HP, weapon toggles, level toggles/order, win counter | same + input remapping, accessibility | M5 |
-| Level editor | in-game + Workshop | in-browser editor, JSON import/export, share by URL | M8 |
-| Online | Steam P2P lobbies, chat | WebRTC host-authoritative, room codes, chat | M6 |
+| Input | keyboard/mouse or controller | gamepads (1 per player); keyboard/mouse as dev fallback | M2 |
+| Level editor | in-game + Workshop | in-browser editor, JSON import/export, share by URL | M7 |
+| Online | Steam P2P lobbies, chat | WebRTC host-authoritative, room codes, chat (post-v1) | M8 |
 | Bots | none (mods only) | simple bots for solo play and soak tests | M9 |
-| Snakes (AI creatures) | from snake weapons and Western barrels | same | M7 |
+| Snakes (AI creatures) | from snake weapons and Western barrels | same | M6 |
 | Bosses | Halloween boss levels | stretch goal | — |
 
 ---
@@ -249,7 +257,7 @@ deliberately with a changelog read; the `render/gpu/` adapter is the only place 
 │   │   ├── hazards/           # one module per hazard type (Appendix D)
 │   │   ├── level/             # zod schema, loader (JSON → entities + bodies), themes
 │   │   ├── rules/             # round/match state machine, spawner, scoring
-│   │   ├── ai/                # (M9) bots, snakes (M7)
+│   │   ├── ai/                # snakes (M6), bots (M9)
 │   │   └── snapshot.ts        # serialize/restore traits for net + late join
 │   ├── render/
 │   │   ├── frame.ts           # RenderFrame: plain shape lists built from sim traits (+ interpolation)
@@ -258,13 +266,13 @@ deliberately with a changelog read; the `render/gpu/` adapter is the only place 
 │   │   ├── fx/                # particles, decals, slow-mo/shake state (render-side Koota world)
 │   │   ├── gpu/               # TypeGPU renderer: shaders ('use gpu'), buffers, passes, post FX
 │   │   └── canvas/            # Canvas 2D fallback + debug draw (wireframes, hit zones, rays)
-│   ├── input/                 # keyboard/mouse/gamepad → PlayerInput; remapping; device→player assignment
+│   ├── input/                 # gamepads (primary) + keyboard/mouse (fallback) → PlayerInput; remapping; pad→player assignment
 │   ├── audio/                 # synth SFX, mixer, music (optional)
 │   ├── ui/                    # DOM: main menu, join screen, settings, pause, scoreboard, lobby
-│   ├── net/                   # (M6) transport (WebRTC), signaling client, host/client roles
-│   ├── editor/                # (M8) level editor
+│   ├── net/                   # (M8) transport (WebRTC), signaling client, host/client roles
+│   ├── editor/                # (M7) level editor
 │   └── levels/                # built-in levels as typed TS/JSON
-├── server/                    # (M6) tiny signaling server (Node + ws); later optional dedicated host
+├── server/                    # (M8) tiny signaling server (Node + ws); later optional dedicated host
 ├── test/                      # vitest: unit + headless sim tests
 └── e2e/                       # playwright smoke tests
 ```
@@ -395,7 +403,8 @@ This is isolated to `player/` + `render/` and does not change the controller.
   refills when released. Projectile hits inside the first `perfectBlockTicks` reflect (velocity mirrored
   along its own direction, owner = blocker); later hits are absorbed with small knockback. Melee and
   thrown weapons bounce. You cannot fire while blocking, but you can punch (block punch jump).
-- **Facing**: derived from aim, not movement, so players can run backwards while shooting.
+- **Facing**: follows aim while the right stick is active, so players can run backwards while shooting;
+  when the stick is idle, facing follows movement and aim falls back to facing (section 4.12).
 
 ### 4.8 Combat, health, rounds
 
@@ -439,7 +448,7 @@ This is isolated to `player/` + `render/` and does not change the controller.
 - Levels are JSON (schema in [Appendix B](#appendix-b-data-formats)): bounds, kill bounds, spawn points,
   theme, drop settings, decorations (render-only), and a list of objects with `type` + typed props.
   Built-in levels are authored as typed TS modules so the compiler and zod both check them; the editor
-  (M8) exports the same shape.
+  (M7) exports the same shape.
 - Hazards are small modules registered by `type` string: `create(world, def)` builds bodies/joints,
   `step(tick)` drives kinematics, and contact callbacks apply effects. The catalog and physics
   implementation notes are in [Appendix D](#appendix-d-hazard-catalog).
@@ -494,16 +503,55 @@ round-capped strokes and filled shapes; also provides debug draw (physics wirefr
 contact points, entity ids) toggled with a key. Kept deliberately plain — polish work targets the SDF
 renderer only.
 
-### 4.12 Input
+### 4.12 Input (gamepad-first)
 
-- Device → player assignment on a join screen ("press jump to join"): keyboard+mouse is one device;
-  each gamepad is another. A second keyboard-only player is supported with aim = facing/arrow keys.
-- Keyboard/mouse aim: `normalize(mouseWorld − playerPos)`. Gamepad aim: right stick, falling back to
-  left stick direction when idle (dead zones and stick-release aim-hold in ticks).
-- Remappable bindings stored in `localStorage`; Gamepad API polling each frame; input is sampled into
-  `PlayerInput` at each sim tick (edge detection happens in the sim so replays/netcode work).
+One gamepad per player is the v1 input model. All four seats are symmetric — no mouse-aim vs stick-aim
+balance problem, and the join flow is the console-style "press a button to join".
 
-### 4.13 Networking (M6)
+**Default bindings** (W3C Gamepad API `standard` mapping; Xbox / PlayStation names):
+
+| Action | Binding | Notes |
+| --- | --- | --- |
+| Move | Left stick X (d-pad as digital fallback) | Radial dead zone 0.2, then linear |
+| Duck | Left stick down beyond 0.5, or d-pad down | Also "anchors" on conveyors |
+| Jump | A / Cross (also LB / L1) | Second binding keeps the thumb free for the right stick |
+| Aim | Right stick | Dead zone 0.25; while idle, aim holds its last direction for 12 ticks, then falls back to facing (left stick sign) |
+| Attack | RT / R2 (also RB / R1) | Punch when unarmed, fire when armed; triggers read as buttons at 0.5 |
+| Block | LT / L2 | Hold |
+| Throw | Y / Triangle (also X / Square) | |
+| Pause | Start / Options | Any pad can pause; the pausing pad or seat 1 resumes |
+
+Per-pad remapping in settings, stored in `localStorage` keyed by the pad's `id` string. No aim assist
+(the original has none); a mild stick smoothing constant lives in `tuning.ts`.
+
+**Join and seats**: the join screen lists connected pads; pressing A joins the pad into the next free seat,
+left/right picks a color, A again readies, Start on any readied pad starts. Seats are remembered by pad
+`id` for the session so a rejoin after disconnect returns to the same color and score.
+
+**Sampling**: `navigator.getGamepads()` is polled every rendered frame; buttons are latched ("pressed at any
+time since the last sim tick") so a tap between two 60 Hz ticks is not lost on high-refresh displays.
+Sticks take the most recent value. The latched state is written into `PlayerInput` once per tick; edge
+detection stays inside the sim so replays and, later, netcode see identical inputs.
+
+**Disconnects**: a joined pad disconnecting mid-round pauses with a "controller disconnected" overlay
+(the original just leaves the player standing). Reconnecting a pad with the same `id` resumes; otherwise
+the first newly connected pad may claim the seat.
+
+**Browser realities to design for**: pads only appear after the user presses a button (all browsers), and
+some need a page gesture first (Safari); non-`standard` mappings exist (offer the remap screen when
+detected); haptics are optional (`vibrationActuator` when present, for hits and explosions); Bluetooth
+pads add ~10–20 ms — acceptable, but the 60 Hz latch matters more there.
+
+**Keyboard/mouse fallback**: a single optional device mapped to the same `PlayerInput` (WASD/arrows,
+mouse aim `normalize(mouseWorld − playerPos)`, LMB attack, RMB block, F throw). It exists for development
+and to fill one seat when a pad is missing; it is not balanced against pads in v1. Debug keys
+(overlay, tuning panel, cheats) are keyboard-only and never bound on pads.
+
+### 4.13 Networking (M8, post-v1)
+
+Deferred by decision until the couch version has shipped. The rules below are the design that M0–M7 must
+not make harder — concretely: seeded RNG, tick-based timing, `PlayerInput` indirection, `NetId` on
+anything that moves, and each trait declared as `replicated` or `local` in `traits.ts` as it is added.
 
 - **Model**: host-authoritative. The host runs the sim; clients send `PlayerInput` every tick over an
   unreliable/unordered channel with the last 3 inputs bundled for loss tolerance. The host broadcasts
@@ -521,9 +569,10 @@ renderer only.
   snapshot. Budget: < 30 KB/s per client with 4 players.
 - **Prediction**: none for v1 (matches the original's feel and avoids physics rollback). Local input
   latency mitigation later, if needed: predict only the local capsule's horizontal movement and jump.
-- Prepared from M0: seeded RNG, tick-based timing, `PlayerInput` indirection, stable ids, snapshot API.
+- Prepared from M0: seeded RNG, tick-based timing, `PlayerInput` indirection, stable ids, trait
+  replication classes. The snapshot API itself is built in M8.
 
-### 4.14 Bots (M9) and snakes (M7)
+### 4.14 Bots (M9) and snakes (M6)
 
 - Snakes: small AI bodies that pathfind trivially (move toward nearest player, hop), have HP scaled to
   the match HP, bite on contact, take head/neck multipliers.
@@ -531,7 +580,7 @@ renderer only.
   bullet approaches, avoid hazards using short raycasts and level kill zones, jump/wall-jump heuristics).
   Bots are also the engine of headless soak tests.
 
-### 4.15 Level editor (M8)
+### 4.15 Level editor (M7)
 
 In-browser: object palette, grid snapping, drag/rotate/resize, property panel generated from each
 hazard's zod schema, spawn points and drop range tools, one-click playtest, undo/redo, import/export
@@ -550,6 +599,10 @@ determinism checks; input recorder that saves seed + inputs to a JSON replay.
 
 Sizes are relative engineering effort (S < M < L < XL) by number of subsystems touched and how invasive
 the changes are. Each milestone lists its deliverables and acceptance criteria.
+
+**Release checkpoints**: **v1 (couch)** ships at the end of M6 — local gamepad play, full arsenal,
+30 levels, polish. The editor (M7) is a v1.x update. Online (M8) is v2. Bots and the remaining content
+(M9) follow. v1 needs two or more pads to play; solo play arrives with bots.
 
 ### M0 — Scaffold and renderer spike (M)
 
@@ -576,8 +629,9 @@ the changes are. Each milestone lists its deliverables and acceptance criteria.
 ### M1 — Movement prototype (M)
 
 - Player capsule controller (`Controller`, `Aim` traits + systems): run, jump (coyote/buffer), duck,
-  wall slide + wall jump, punch self-impulse (punch jump / slam), block pose (no combat effect yet), aim
-  from mouse and gamepad.
+  wall slide + wall jump, punch self-impulse (punch jump / slam), block pose (no combat effect yet).
+- Gamepad input layer (section 4.12): standard mapping, dead zones, latched buttons, right-stick aim with
+  hold/facing fallback; keyboard/mouse fallback device for development.
 - `figure.ts`: procedural stick-figure pose → SDF primitives with secondary motion, rendered by both
   renderers; dynamic camera; tuning panel; input replay recorder.
 - Test level "gym": shafts to wall-climb, gaps calibrated to normal / punch / block-punch jumps.
@@ -587,13 +641,15 @@ the changes are. Each milestone lists its deliverables and acceptance criteria.
 
 ### M2 — Local versus with fists (L)
 
-- Join screen (up to 4 devices), player colors, pause. Punch damage/knockback/disarm hooks, HP, death →
-  ragdoll + blood events, out-of-bounds death, solid corpses.
+- Join screen (press A on any pad, up to 4 seats, color pick, ready/start), pause, controller-disconnect
+  handling. Punch damage/knockback/disarm hooks, HP, death → ragdoll + blood events, out-of-bounds death,
+  solid corpses.
 - Round/match state machine: countdown, last-standing detection, slow-mo, scoreboard overlay, crown,
   random/ordered rotation, optional first-to-N.
 - 5 hand-authored flat-ish levels in 2 themes; level JSON schema v1 + loader.
-- **Accept**: four local players complete a 10-round session with fists only without a crash; a headless
-  bot-vs-bot fuzz run of 20 000 ticks produces no exceptions or NaNs.
+- **Accept**: four players on four pads complete a 10-round session with fists only without a crash,
+  including one mid-round pad disconnect/reconnect; a headless scripted-input fuzz run of 20 000 ticks
+  produces no exceptions or NaNs.
 
 ### M3 — Weapons (L)
 
@@ -623,57 +679,65 @@ the changes are. Each milestone lists its deliverables and acceptance criteria.
   kill slow-mo polish, camera tuning, crown/scoreboard art, theme decorations; SDF effects pass
   (outlines, glow, soft shadows, noise-displaced lava, black-hole distortion).
 - Full SFX set and optional procedural music; audio mixer settings.
-- Settings: HP, weapon/level toggles, win counter, first-to-N, input remapping, colorblind palette,
-  reduce-shake/blood toggles, renderer selection. PWA manifest for offline play.
+- Settings: HP, weapon/level toggles, win counter, first-to-N, per-pad remapping, haptics toggle,
+  colorblind palette, reduce-shake/blood toggles, renderer selection. PWA manifest for offline play.
 - Optional: physics arms on alive players if the feel review calls for it (see 4.6 upgrade path).
 - Stretch: 2D lighting with `@typegpu/radiance-cascades` (lava, muzzle flashes and explosions as
   emitters), behind a settings toggle with a GPU-time budget check.
 - **Accept**: side-by-side feel review with the original passes the checklist in `docs/feel-checklist.md`
   (created in M1); 60 fps on an integrated-GPU laptop at 1080p with 4 players and 200 bodies.
 
-### M6 — Online multiplayer (XL)
-
-- `server/` signaling (rooms, SDP/ICE relay); `net/` WebRTC transport, host/client roles, input
-  bundling, binary snapshots with quantization, interpolation buffer, event channel, late join,
-  disconnect handling, text chat, lobby UI with room codes and host-only settings.
-- Snapshot API in `sim/` (serialize/restore) and net ids for all replicated entities.
-- **Accept**: 4 players at simulated 100 ms / 2 % loss (Playwright + network shaping or a local proxy)
-  finish a 10-round match; client bandwidth < 30 KB/s; no visible desync on kills; reflect/parry works
-  within the interpolation delay (documented limitation, as in the original).
-
-### M7 — Full arsenal and creatures (L)
+### M6 — Full arsenal, creatures, v1 couch release (L)
 
 - Remaining categories from Appendix C: Deagle, God Pistol, M16 (bursts), M1, Military Shotgun, Bouncer;
   Thruster; Snake weapons + snake AI; Lava weapons (spike ball, spike gun, spray, beam, stream);
   Melee (sword, spear, blink dagger); Other (time bubble, laser, ice gun, black hole, glue gun, minigun,
   flamethrower + burn status).
 - New projectile kinds: `beam`, `melee`, `field`, `creature`, `burst-into`; status effects (burning,
-  slowed, glued, bubbled).
-- **Accept**: roster parity table fully checked; each new kind has a headless test; net replication
-  covers new entity types (fields, creatures) with no new special cases in the transport.
+  slowed, glued, bubbled). Every new trait declares its replication class in `traits.ts`.
+- **v1 release**: README with controller setup notes, static hosting deploy, PWA install, name/logo
+  distinct from the original, a couch-play test matrix (Chrome/Edge/Firefox/Safari × Xbox/PS/Switch Pro
+  pads) recorded in `docs/`.
+- **Accept**: roster parity table fully checked; each new kind has a headless test; a full evening
+  session (4 pads, 30+ rounds, all weapons enabled) on the release build with no crash or soft-lock;
+  release build deployed and linked from the README.
 
-### M8 — Level editor (L)
+### M7 — Level editor (L, v1.x)
 
-- Editor described in 4.15; user levels in IndexedDB; import/export/share; user levels in rotation.
-- **Accept**: build a level with every hazard type in the editor, export it, reload it, play it locally
-  and online (host sends custom level JSON to clients).
+- Editor described in 4.15; user levels in IndexedDB; import/export/share by URL; user levels in
+  rotation. Editor UI is pad-navigable for placement basics, with keyboard/mouse as the precision path.
+- **Accept**: build a level with every hazard type in the editor, export it, reload it, play it locally.
 
-### M9 — Bots, content, release (M)
+### M8 — Online multiplayer (XL, v2)
 
-- Bots for solo/local fill and soak tests; 60+ built-in levels (remaining themes: Laser, Western,
-  Halloween); README, contributor docs, itch.io/static hosting release, name/logo distinct from the
-  original.
+- `server/` signaling (rooms, SDP/ICE relay); `net/` WebRTC transport, host/client roles, input
+  bundling, binary snapshots with quantization, interpolation buffer, event channel, late join,
+  disconnect handling, text chat, lobby UI with room codes and host-only settings; custom level JSON is
+  sent by the host to clients.
+- Snapshot API in `sim/` (serialize/restore over the traits marked `replicated`) and `NetId` assignment
+  for all replicated entities.
+- **Accept**: 4 players at simulated 100 ms / 2 % loss (Playwright + network shaping or a local proxy)
+  finish a 10-round match; client bandwidth < 30 KB/s; no visible desync on kills; reflect/parry works
+  within the interpolation delay (documented limitation, as in the original).
+
+### M9 — Bots, content, v2.x (M)
+
+- Bots for solo play, seat filling and soak tests; 60+ built-in levels (remaining themes: Laser,
+  Western, Halloween).
 - Stretch: replays (seed + inputs, local only), boss levels, local stats/achievements.
-- **Accept**: a solo player can start a match against 3 bots from the main menu; release build deployed
-  and linked from the README.
+- **Accept**: a solo player can start a match against 3 bots from the main menu with one pad.
+- Bots can be pulled forward to any point after M3 if solo testing of the couch build needs them; the
+  bot only produces `PlayerInput`, so nothing else moves.
 
 ---
 
 ## 6. Testing and quality
 
 - **Unit (Vitest)**: RNG determinism, vec math, damage multipliers, weapon/level schema validation,
-  round/match state machine, input edge detection, snapshot round-trip, SDF primitive math (the
-  `'use gpu'` functions are called on the CPU), `figure.ts` pose → primitives.
+  round/match state machine, input edge detection, gamepad mapping (recorded `Gamepad` fixtures per
+  browser/pad → expected `PlayerInput`, dead zones, latching, aim hold/fallback), snapshot round-trip
+  (M8), SDF primitive math (the `'use gpu'` functions are called on the CPU), `figure.ts` pose →
+  primitives.
 - **Headless sim tests (Vitest, Node)**: `createSimWorld({ level, seed })`, script `PlayerInput`
   sequences, assert trait values/events/tick counts (jump heights, wall-jump climb, bullet hit point,
   parry window, hazard effects). A **golden determinism test** runs a fixed seed + scripted inputs for
@@ -702,9 +766,10 @@ the changes are. Each milestone lists its deliverables and acceptance criteria.
 | Movement/combat does not "feel like Stick Fight" | Core value of the game | M1 is dedicated to feel with a written checklist, reference footage comparison, live tuning panel, and headless tests that pin the tuned numbers |
 | Ragdoll instability (jitter, explosions, joint stretching) | Ugly deaths, physics blow-ups | Keep mass ratios < 10:1, joint limits, low restitution, 8/3 iterations, cap impulses, clamp velocities; corpses despawn to particles if they leave bounds |
 | Fast projectiles tunnel through thin geometry or moving hazards | Unfair deaths/misses | Bullets are swept rays; grenades/rockets use `bullet` bodies; moving hazards are kinematic with per-tick sweep tests for players |
-| Networking complexity and desync | Online unplayable | Host-authoritative + interpolation (no rollback); sim/net boundary built from M0; simulated latency/loss tests; dedicated-server fallback |
-| Scope creep from the 45-weapon roster | Never finishing | 8 archetypes in M3 define all projectile kinds; the rest is data + a few new kinds in M7 |
-| Browser input limitations (keyboard ghosting, gamepad quirks, pointer lock) | Couch play frustration | Remappable bindings, per-browser gamepad mapping table, no reliance on pointer lock |
+| Networking complexity and desync (M8) | Online unplayable | Host-authoritative + interpolation (no rollback); sim/net boundary built from M0; simulated latency/loss tests; dedicated-server fallback |
+| Deferring online lets net-hostile designs creep in (wall-clock timers, unreplicable state, ids leaking into gameplay) | M8 becomes a rewrite | Trait replication classes declared as traits are added; golden determinism test; `PlayerInput` is the only way to influence the sim; review checklist item on every PR touching `sim/` |
+| Scope creep from the 45-weapon roster | Never finishing | 8 archetypes in M3 define all projectile kinds; the rest is data + a few new kinds in M6 |
+| Gamepad API quirks (non-`standard` mappings, pads invisible until a button press, Safari gestures, Bluetooth latency, disconnects mid-round) | Couch play frustration; the whole v1 input surface | Per-pad remap screen offered automatically on unknown mappings; join screen doubles as a "press any button" detector; latched sampling; disconnect pause + seat memory; recorded-fixture unit tests and a browser × pad test matrix before v1 |
 | WebGPU unavailable (Linux Firefox, macOS before Tahoe, blocklisted drivers, GPU-less VMs) | Game will not start for some players | Boot-time adapter probe; Canvas fallback renders the same `RenderFrame`; the fallback is exercised in CI on every PR |
 | TypeGPU pre-1.0 churn (breaking changes between minors, `~unstable` encoder APIs) | Renderer breaks on upgrade | Exact version pins; all TypeGPU calls inside `render/gpu/`; upgrade in a dedicated PR with the GPU smoke test; Canvas renderer keeps the game shippable meanwhile |
 | Koota pre-1.0 churn or non-deterministic iteration order | Sim refactors; replays and golden tests break | Exact version pin; systems only use `query`/`updateEach`/`useStores`/relations; golden determinism test in CI; thin `sim/world.ts` wrapper so a swap to another archetype ECS is contained |
@@ -725,24 +790,28 @@ the changes are. Each milestone lists its deliverables and acceptance criteria.
    with a Canvas 2D fallback/debug renderer; the choice is confirmed by the M0 spike. (4.1, 4.11, M0)
 4. Alive player = controlled capsule + cosmetic limbs; dead player = true ragdoll. (4.6)
 5. Bullets are swept rays; explosives are bodies. (4.6, 4.9)
-6. Local multiplayer before online; online is host-authoritative with interpolation, no rollback. (4.13)
+6. v1 is local couch play with one gamepad per player; keyboard/mouse is a development fallback that can
+   fill a seat, not a balanced input. Online is post-v1 (M8), host-authoritative with interpolation, no
+   rollback; the sim stays network-ready throughout. (4.12, 4.13, section 5)
 7. Endless matches by default with an optional first-to-N, as a quality-of-life addition. (4.8)
 8. Faithful quirks kept as tunables: ammo refills on pickup, empty weapon is flung. (4.9)
 9. No binary assets; synthesized audio. (1)
 
 ### Open questions (answers change scope, defaults apply otherwise)
 
-1. Is online play required for the first public release, or can it ship after local play? Default: after.
+1. Should keyboard/mouse be promoted to a supported, balanced player input before v1, or stay a dev
+   fallback? Default: dev fallback (it can still fill a seat when a pad is missing).
 2. Faithful weapon roster and names vs. an original arsenal? Default: faithful mechanics, renamed where a
    name is distinctive (e.g. "God Pistol") before public release.
 3. Desktop browsers only? Default: yes; touch controls are out of scope.
-4. Level count target for release and whether the editor should come before online. Default: 60+, editor
-   after online.
+4. Level count target for v1 and for v2. Default: 30 at v1, 60+ by M9.
 5. Is the Canvas fallback worth keeping past M0, or should the game be WebGPU-only with a clear "needs
    WebGPU" screen? Default: keep it — it doubles as the debug renderer and the CI logic-test renderer, so
    its marginal cost is small.
 6. Should 2D lighting (radiance cascades) be a release feature or a toggle-off stretch goal? Default:
    stretch goal in M5.
+7. Should bots be pulled forward (after M3) to make solo testing of the couch build easier? Default: no,
+   scripted inputs and a second pad cover testing; revisit if it slows M4–M6.
 
 ---
 
@@ -898,47 +967,47 @@ export const coverage = tgpu.fn([d.f32], d.f32)((dist) => {
 ## Appendix C. Weapon roster
 
 Damage/ammo from community-compiled stats for the original; used as parity defaults. Rare = lower drop
-weight. Milestone column shows when each lands (M3 core archetypes, M7 everything else).
+weight. Milestone column shows when each lands (M3 core archetypes, M6 everything else).
 
 | Category | Weapon | Damage | Ammo | Behavior notes | Kind | M |
 | --- | --- | --- | --- | --- | --- | --- |
 | Melee | Fists | 22 | ∞ | Default; forward self-impulse; disarms | melee | M2 |
 | Pistols | Pistol | 32 | 15 | Low knockback, slight inaccuracy | bullet | M3 |
 | Pistols | Revolver | 44 | 6 | High upward recoil; accurate if fired slowly | bullet | M3 |
-| Pistols | Deagle | 56 | 15 | Very high knockback, high recoil | bullet | M7 |
+| Pistols | Deagle | 56 | 15 | Very high knockback, high recoil | bullet | M6 |
 | Pistols | Uzi | 14 | 40 | Auto, medium knockback | bullet | M3 |
-| Pistols | God Pistol (rare) | 30–60 | ∞ | Big slow shots | bullet | M7 |
+| Pistols | God Pistol (rare) | 30–60 | ∞ | Big slow shots | bullet | M6 |
 | Rifles | AK-47 | 23 | 30 | Auto | bullet | M3 |
-| Rifles | M16 | 20 | 30 bursts | 3-round bursts | bullet | M7 |
-| Rifles | M1 | 35 | 8 | Semi, medium knockback | bullet | M7 |
+| Rifles | M16 | 20 | 30 bursts | 3-round bursts | bullet | M6 |
+| Rifles | M1 | 35 | 8 | Semi, medium knockback | bullet | M6 |
 | Rifles | Sniper | 75 | 5 | Laser sight; headshot = kill at 100 HP | bullet | M3 |
 | Rifles | Sawed-Off | 10–30 ×5 | 10 | Wide spread, very high backward recoil (boosting) | pellets | M3 |
-| Rifles | Military Shotgun | 5–6 ×5 | 10 | Tight spread, medium recoil | pellets | M7 |
-| Rifles | Bouncer | 45 | 30 | Bullets bounce 6× | bullet | M7 |
+| Rifles | Military Shotgun | 5–6 ×5 | 10 | Tight spread, medium recoil | pellets | M6 |
+| Rifles | Bouncer | 45 | 30 | Bullets bounce 6× | bullet | M6 |
 | Explosives | Grenade Launcher | 50–80 | 5 | Bouncing grenade, short fuse | grenade | M3 |
-| Explosives | Thruster | 0 / 15 | 20 | Pushes target, then pops | rocket | M7 |
+| Explosives | Thruster | 0 / 15 | 20 | Pushes target, then pops | rocket | M6 |
 | Explosives | RPG (rare) | 300+ | 3 | Rocket, explode on contact, high recoil | rocket | M3 |
-| Snake | Snake Gun | 5/bite | 6 | Snakes have player HP | creature | M7 |
-| Snake | Snake Shotgun | 5/bite | 10 | 3 snakes per shot | creature | M7 |
-| Snake | Snake Grenade Launcher | 5/bite | 5 | Grenade bursts into 4 snakes | burst-into | M7 |
-| Snake | Snake Launcher | 25/bite | 3 | Giant snake, 2× HP | creature | M7 |
-| Snake | Snake Minigun | 5/bite | 40 | Rapid snakes | creature | M7 |
-| Snake | Flying Snake Launcher | 25/bite | 3 | Giant snake ignoring gravity | creature | M7 |
-| Lava | Lava Spike Ball Gun | 20–40/spike | 5 | Ball splits into 25 spikes | burst-into | M7 |
-| Lava | Lava Beam | 215 | 25 | Warning sight, then damaging beam | beam | M7 |
-| Lava | Lava Stream | ~60/s | 10 s | Continuous beam, high knockback | beam | M7 |
-| Lava | Lava Spray | 5–20 | 40 | Droplets, high knockback | grenade (no fuse) | M7 |
-| Lava | Lava Spike Gun | 10–15 + 3×(5–10) | 25 | Shot spawns 3 spikes on impact | burst-into | M7 |
-| Melee | Sword | 68 | ∞ | Stab + forward lunge | melee | M7 |
-| Melee | Spear | 20 | ∞ | Long reach, high knockback, usable as mobile cover | melee | M7 |
-| Melee | Blink Dagger | 22–50 | 25 | Teleport forward, damage at destination | melee | M7 |
-| Other | Time Bubble | 12.5 / 200 | 5 | Freezes what it hits, then explodes | field | M7 |
-| Other | Laser | 10 | 60 | Very high knockback; vanishes if knocked from hand | bullet | M7 |
-| Other | Ice Gun | 7.7 | 40 | Slows | bullet + status | M7 |
-| Other | Black Hole (rare) | ∞ | 1 | Expanding attractor, kills what it swallows | field | M7 |
-| Other | Glue Gun | 5 | 40 | Pins players in place | field | M7 |
-| Other | Minigun | 5 | 200 | Auto, backward recoil = jetpack | bullet | M7 |
-| Other | Flamethrower | 5/s burn, 6 s | ~5 s | Ignites | field + status | M7 |
+| Snake | Snake Gun | 5/bite | 6 | Snakes have player HP | creature | M6 |
+| Snake | Snake Shotgun | 5/bite | 10 | 3 snakes per shot | creature | M6 |
+| Snake | Snake Grenade Launcher | 5/bite | 5 | Grenade bursts into 4 snakes | burst-into | M6 |
+| Snake | Snake Launcher | 25/bite | 3 | Giant snake, 2× HP | creature | M6 |
+| Snake | Snake Minigun | 5/bite | 40 | Rapid snakes | creature | M6 |
+| Snake | Flying Snake Launcher | 25/bite | 3 | Giant snake ignoring gravity | creature | M6 |
+| Lava | Lava Spike Ball Gun | 20–40/spike | 5 | Ball splits into 25 spikes | burst-into | M6 |
+| Lava | Lava Beam | 215 | 25 | Warning sight, then damaging beam | beam | M6 |
+| Lava | Lava Stream | ~60/s | 10 s | Continuous beam, high knockback | beam | M6 |
+| Lava | Lava Spray | 5–20 | 40 | Droplets, high knockback | grenade (no fuse) | M6 |
+| Lava | Lava Spike Gun | 10–15 + 3×(5–10) | 25 | Shot spawns 3 spikes on impact | burst-into | M6 |
+| Melee | Sword | 68 | ∞ | Stab + forward lunge | melee | M6 |
+| Melee | Spear | 20 | ∞ | Long reach, high knockback, usable as mobile cover | melee | M6 |
+| Melee | Blink Dagger | 22–50 | 25 | Teleport forward, damage at destination | melee | M6 |
+| Other | Time Bubble | 12.5 / 200 | 5 | Freezes what it hits, then explodes | field | M6 |
+| Other | Laser | 10 | 60 | Very high knockback; vanishes if knocked from hand | bullet | M6 |
+| Other | Ice Gun | 7.7 | 40 | Slows | bullet + status | M6 |
+| Other | Black Hole (rare) | ∞ | 1 | Expanding attractor, kills what it swallows | field | M6 |
+| Other | Glue Gun | 5 | 40 | Pins players in place | field | M6 |
+| Other | Minigun | 5 | 200 | Auto, backward recoil = jetpack | bullet | M6 |
+| Other | Flamethrower | 5/s burn, 6 s | ~5 s | Ignites | field + status | M6 |
 
 ## Appendix D. Hazard catalog
 
