@@ -123,19 +123,34 @@ describe('gamepad mapping', () => {
   });
 
   it('reads analog triggers at tuning.triggerThreshold', () => {
-    const pad = fakePad({ buttons: [] });
-    pad.buttons[7] = { pressed: false, touched: true, value: 0.6 };
-    pad.buttons[6] = { pressed: false, touched: true, value: 0.6 };
-    const down = readPad(pad, emptyLatch(), { x: 1, y: 0 });
+    const analog = (value: number): Gamepad => {
+      const buttons = Array.from({ length: 17 }, () => ({
+        pressed: false,
+        touched: false,
+        value: 0,
+      }));
+      buttons[6] = { pressed: false, touched: value >= 0.5, value };
+      buttons[7] = { pressed: false, touched: value >= 0.5, value };
+      return {
+        id: 'Xbox 360 Controller (XInput STANDARD GAMEPAD)',
+        index: 0,
+        connected: true,
+        mapping: 'standard',
+        axes: [0, 0, 0, 0],
+        buttons,
+        timestamp: 1,
+        hapticActuators: [],
+        vibrationActuator: null,
+      } as unknown as Gamepad;
+    };
+    const down = readPad(analog(0.6), emptyLatch(), { x: 1, y: 0 });
     expect(down.attack).toBe(true);
     expect(down.block).toBe(true);
     expect(buttonOn({ pressed: false, touched: false, value: 0.49 } as GamepadButton)).toBe(false);
     expect(buttonOn({ pressed: false, touched: true, value: tuning.triggerThreshold } as GamepadButton)).toBe(
       true,
     );
-    pad.buttons[7] = { pressed: false, touched: false, value: 0.2 };
-    pad.buttons[6] = { pressed: false, touched: false, value: 0.2 };
-    const up = readPad(pad, emptyLatch(), { x: 1, y: 0 });
+    const up = readPad(analog(0.2), emptyLatch(), { x: 1, y: 0 });
     expect(up.attack).toBe(false);
     expect(up.block).toBe(false);
   });
