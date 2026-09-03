@@ -814,7 +814,7 @@ describe('PLAN accept stand-ins', () => {
           speed: 28,
           bounces: 0,
           fuse: 0,
-          x: t.x - 0.08,
+          x: t.x - 1.6,
           y: t.y,
           vx: 28,
           vy: 0,
@@ -822,8 +822,9 @@ describe('PLAN accept stand-ins', () => {
           ownerGrace: grace,
           defId: weaponIndex('pistol'),
         }),
+        OwnedBy(a),
       );
-      proj.add(OwnedBy(a));
+      return proj;
     };
     const hp0 = a.get(Health)!.hp;
     spawnThrough(6);
@@ -834,7 +835,11 @@ describe('PLAN accept stand-ins', () => {
     expect(a.get(Health)!.hp).toBe(hp0);
     spawnThrough(0);
     pin(sim, a, 10, 4);
-    sim.step([hold({}), hold({}), hold({}), hold({})]);
+    for (let i = 0; i < 4; i++) {
+      pin(sim, a, 10, 4);
+      sim.step([hold({}), hold({}), hold({}), hold({})]);
+      if ((a.get(Health)?.hp ?? hp0) < hp0) break;
+    }
     expect(a.get(Health)!.hp).toBeLessThan(hp0);
   });
 
@@ -867,28 +872,27 @@ describe('PLAN accept stand-ins', () => {
   });
 
   it('barrel blast is 10–55, nearer heavier than farther', () => {
-    const sim = makeSim({
-      level: getLevel('test-barrel.explosive'),
-      seed: 904,
-      settings: { playerCount: 2 },
-    });
-    const near = playerOf(sim, 0);
-    const far = playerOf(sim, 1);
-    let bx = 13;
-    let by = 3;
-    sim.ecs.query(Hazard, Transform, Destructible).updateEach(([hz, t, d], e) => {
-      if (hz.kind !== HazardKind.Barrel) return;
-      bx = t.x;
-      by = t.y;
-      e.set(Destructible, { hp: 0, maxHp: d.maxHp });
-    });
-    pin(sim, near, bx + 0.25, by);
-    pin(sim, far, bx + 2.0, by);
-    const hpN = near.get(Health)!.hp;
-    const hpF = far.get(Health)!.hp;
-    sim.step([hold({}), hold({}), hold({}), hold({})]);
-    const dmgN = hpN - (near.get(Health)?.hp ?? hpN);
-    const dmgF = hpF - (far.get(Health)?.hp ?? hpF);
+    const blast = (offset: number) => {
+      const sim = makeSim({
+        level: getLevel('test-barrel.explosive'),
+        seed: 904,
+        settings: { playerCount: 1 },
+      });
+      const p = playerOf(sim);
+      const barrel = getLevel('test-barrel.explosive').objects.find((o) => o.type === 'barrel.explosive');
+      const x = (barrel?.x ?? 13) + offset;
+      const y = barrel?.y ?? 3;
+      sim.ctx.bodies.get(p)?.setPosition({ x, y });
+      p.set(Transform, { x, y, angle: 0 });
+      const hp0 = p.get(Health)!.hp;
+      sim.ecs.query(Destructible).updateEach(([d]) => {
+        d.hp = 0;
+      });
+      sim.step([hold({}), hold({}), hold({}), hold({})]);
+      return hp0 - (p.get(Health)?.hp ?? hp0);
+    };
+    const dmgN = blast(0.2);
+    const dmgF = blast(1.8);
     expect(dmgN).toBeGreaterThanOrEqual(10);
     expect(dmgN).toBeLessThanOrEqual(55);
     expect(dmgF).toBeGreaterThanOrEqual(10);

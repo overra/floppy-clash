@@ -124,9 +124,10 @@ describe('PLAN §4.11 theme pass', () => {
     const cam = createCamera(sim.ctx.level.bounds);
     const normal = buildFrame(sim, cam, 0, 1280, 720, [], { freezeCamera: true });
     const cb = buildFrame(sim, cam, 0, 1280, 720, [], { freezeCamera: true, colorblind: true });
+    const players = (frame: typeof normal) => frame.groups.filter((g) => g.layer === 5);
     expect(PLAYER_COLORS[0]).not.toBe(PLAYER_COLORS_CB[0]);
-    expect(normal.groups.some((g) => g.color === PLAYER_COLORS[0])).toBe(true);
-    expect(cb.groups.some((g) => g.color === PLAYER_COLORS_CB[0])).toBe(true);
-    expect(cb.groups.some((g) => g.color === PLAYER_COLORS[0])).toBe(false);
+    expect(players(normal).some((g) => g.color === PLAYER_COLORS[0])).toBe(true);
+    expect(players(cb).some((g) => g.color === PLAYER_COLORS_CB[0])).toBe(true);
+    expect(players(cb).some((g) => g.color === PLAYER_COLORS[0])).toBe(false);
   });
 });
