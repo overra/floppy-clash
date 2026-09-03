@@ -10,7 +10,7 @@ import {
   PRIM_TRIANGLE,
 } from '../src/render/sdf/primitives';
 import { lerpHex, themePassGroups } from '../src/render/themeDecor';
-import { Combat, Crown, Held, HeldBy, Loose, Transform } from '../src/sim/traits';
+import { Combat, Crown, Held, HeldBy, Loose, PrevTransform, Transform } from '../src/sim/traits';
 import { spawnWeapon } from '../src/sim/systems/weapons';
 import { themeOf } from '../src/sim/level/themes';
 import { hold, makeSim, playerOf } from './helpers';
@@ -69,6 +69,7 @@ describe('PLAN §4.11 theme pass', () => {
     const sim = makeSim({ level: woodsClearing, seed: 2, settings: { playerCount: 1 } });
     const gun = spawnWeapon(sim.ecs, 'ak47', 16, 8);
     gun.set(Transform, { x: 16, y: 8, angle: 0.6 });
+    gun.set(PrevTransform, { x: 16, y: 8, angle: 0.6 });
     const frame = buildFrame(sim, createCamera(sim.ctx.level.bounds), 0, 1280, 720, [], {
       freezeCamera: true,
     });
