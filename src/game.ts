@@ -434,21 +434,21 @@ export function createGame(root: HTMLElement): Game {
     if (pendingClientSnaps.length > 8) pendingClientSnaps.splice(0, pendingClientSnaps.length - 8);
   }
 
-  function tryOpenClientView(snap: WorldSnapshot): boolean {
-    if (clientView) return true;
+  function tryOpenClientView(snap: WorldSnapshot): ClientView | null {
+    if (clientView) return clientView;
     if (!snapshotCanOpenClientView(snap, pendingLevel)) {
       enqueuePendingSnap(snap);
-      return false;
+      return null;
     }
     try {
       const override =
         pendingLevel && (!snap.levelId || snap.levelId === pendingLevel.id) ? pendingLevel : undefined;
       clientView = createClientView(snap, 120, override);
       pendingClientSnaps = [];
-      return true;
+      return clientView;
     } catch {
       enqueuePendingSnap(snap);
-      return false;
+      return null;
     }
   }
 
@@ -457,18 +457,20 @@ export function createGame(root: HTMLElement): Game {
     const queued = pendingClientSnaps;
     pendingClientSnaps = [];
     let opened: WorldSnapshot | undefined;
+    let view: ClientView | null = null;
     for (const snap of queued) {
-      if (tryOpenClientView(snap)) {
+      view = tryOpenClientView(snap);
+      if (view) {
         opened = snap;
         break;
       }
     }
-    if (!clientView || !opened) return;
+    if (!view || !opened) return;
     for (const extra of queued) {
       if (extra === opened || extra.tick < opened.tick) continue;
       try {
-        clientView.push(performance.now(), extra);
-        clientView.apply(performance.now());
+        view.push(performance.now(), extra);
+        view.apply(performance.now());
       } catch {
         /* later snap */
       }
