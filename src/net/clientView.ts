@@ -2,7 +2,7 @@ import { gymLevel } from '../levels/gym';
 import { findLevel } from '../levels/catalog';
 import type { LevelDef } from '../sim/level/schema';
 import { NetId, Player, PrevTransform, Transform } from '../sim/traits';
-import { mergeSnapshot, restoreWorld, type WorldSnapshot } from '../sim/snapshot';
+import { applyInterpolatedBodyVel, mergeSnapshot, restoreWorld, type WorldSnapshot } from '../sim/snapshot';
 import { createSimWorld, type SimHandle } from '../sim/world';
 import { createInterpBuffer } from './interp';
 
@@ -85,6 +85,9 @@ export function createClientView(first: WorldSnapshot, delayMs = 120, level?: Le
       if (!snap) return null;
       if (pair?.from && pair.from !== pair.to) applyPrevFromSnap(sim.ecs, pair.from);
       restoreWorld(sim.ecs, snap);
+      if (pair?.from && pair.from !== pair.to) {
+        applyInterpolatedBodyVel(sim.ecs, pair.from, pair.to, pair.alpha);
+      }
       view.alpha = pair?.alpha ?? 1;
       view.appliedTick = snap.tick;
       view.restored = true;

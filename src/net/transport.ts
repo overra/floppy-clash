@@ -3,6 +3,14 @@ import { netShapeFromSearch, type NetShape } from './shape';
 
 export type PeerRole = 'host' | 'client';
 
+/** PLAN 4.13: public STUN; TURN stays optional and is not bundled. */
+export const PUBLIC_ICE_SERVERS: RTCIceServer[] = [
+  { urls: 'stun:stun.l.google.com:19302' },
+  { urls: 'stun:stun1.l.google.com:19302' },
+];
+
+const rtcConfig: RTCConfiguration = { iceServers: PUBLIC_ICE_SERVERS };
+
 export type NetSession = {
   role: PeerRole;
   room: string;
@@ -85,7 +93,7 @@ export async function createWebRtcSession(
   let selfId = '';
   let reliable: RTCDataChannel | null = null;
   let unreliable: RTCDataChannel | null = null;
-  const clientPc = role === 'client' ? new RTCPeerConnection({ iceServers: [] }) : null;
+  const clientPc = role === 'client' ? new RTCPeerConnection(rtcConfig) : null;
 
   const session: NetSession = {
     role,
@@ -150,7 +158,7 @@ export async function createWebRtcSession(
 
   const addPeer = async (id: string) => {
     if (role !== 'host' || peers.has(id)) return;
-    const pc = new RTCPeerConnection({ iceServers: [] });
+    const pc = new RTCPeerConnection(rtcConfig);
     const rel = pc.createDataChannel('reliable', { ordered: true });
     const unrel = pc.createDataChannel('unreliable', { ordered: false, maxRetransmits: 0 });
     peers.set(id, { pc, reliable: rel, unreliable: unrel });

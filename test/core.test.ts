@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { inspectWorld } from '../src/sim/inspect';
-import { add, clamp, length, normalize, vec2 } from '../src/core/math';
+import { add, clamp, length, lerpAngle, normalize, vec2 } from '../src/core/math';
 import { makeSim } from './helpers';
 import { SeededRng } from '../src/core/rng';
 import { fnv1a, hashToHex } from '../src/core/hash';
@@ -27,6 +27,12 @@ describe('vec math', () => {
     const n = normalize(vec2(3, 4));
     expect(length(n)).toBeCloseTo(1);
     expect(clamp(12, 0, 10)).toBe(10);
+  });
+
+  it('lerpAngle takes the short way around ±π', () => {
+    expect(lerpAngle(3, -3, 0.5)).toBeCloseTo(Math.PI, 5);
+    expect(lerpAngle(-3, 3, 0.5)).toBeCloseTo(-Math.PI, 5);
+    expect(lerpAngle(0.1, 0.5, 0.5)).toBeCloseTo(0.3, 5);
   });
 });
 

@@ -119,6 +119,8 @@ export function serializeWorld(world: World, opts?: { skipOwnedByCache?: boolean
     const snap: TraitSnapshot = { netId: net.id, traits: {} };
     const t = entity.get(Transform);
     if (t) snap.traits.Transform = { x: t.x, y: t.y, angle: t.angle };
+    const bv = readBodyVel(world, entity);
+    if (bv) snap.traits.BodyVel = bv;
     const h = entity.get(Health);
     if (h) snap.traits.Health = { hp: h.hp, maxHp: h.maxHp };
     const p = entity.get(Player);
@@ -371,6 +373,30 @@ function applyLinearVelocity(world: World, entity: Entity, vx: number, vy: numbe
   getContext(world).bodies.get(entity)?.setLinearVelocity({ x: vx, y: vy });
 }
 
+/**
+ * PLAN 4.13: dynamic bodies (loose weapons, projectile bodies, props, ragdolls)
+ * replicate linear + angular velocity. PhysBody itself stays `local`.
+ */
+function readBodyVel(
+  world: World,
+  entity: Entity,
+): { vx: number; vy: number; omega: number } | undefined {
+  const body = getContext(world).bodies.get(entity);
+  if (!body || !body.isActive()) return undefined;
+  if (body.getType() === 'static') return undefined;
+  const v = body.getLinearVelocity();
+  return { vx: v.x, vy: v.y, omega: body.getAngularVelocity() };
+}
+
+function writeBodyVel(world: World, entity: Entity, rec: TraitSnapshot): void {
+  const bv = rec.traits.BodyVel;
+  if (!bv) return;
+  const body = getContext(world).bodies.get(entity);
+  if (!body || !body.isActive()) return;
+  body.setLinearVelocity({ x: Number(bv.vx ?? 0), y: Number(bv.vy ?? 0) });
+  body.setAngularVelocity(Number(bv.omega ?? 0));
+}
+
 function applyRecord(world: World, entity: Entity, rec: TraitSnapshot, full: boolean): void {
   const ctx = getContext(world);
   const t = rec.traits.Transform;
@@ -568,6 +594,7 @@ function applyRecord(world: World, entity: Entity, rec: TraitSnapshot, full: boo
       entity.remove(Dead);
     }
   }
+  writeBodyVel(world, entity, rec);
 }
 
 function applyHeldFlags(
@@ -761,6 +788,7 @@ function spawnMissing(world: World, rec: TraitSnapshot, newRootNetIds: Set<numbe
     });
     registerBody(world, entity, body);
     if (Number(w.held) === 1) body.setActive(false);
+    writeBodyVel(world, entity, rec);
     return;
   }
 
@@ -802,6 +830,7 @@ function spawnMissing(world: World, rec: TraitSnapshot, newRootNetIds: Set<numbe
       body.setGravityScale(gravity > 0 ? gravity / ctx.tuning.gravity : 0);
       registerBody(world, entity, body);
     }
+    writeBodyVel(world, entity, rec);
     return;
   }
 
@@ -833,6 +862,7 @@ function spawnMissing(world: World, rec: TraitSnapshot, newRootNetIds: Set<numbe
     );
     if (Number(sn.flying) === 1) body.setGravityScale(0);
     registerBody(world, entity, body);
+    writeBodyVel(world, entity, rec);
     return;
   }
 
@@ -857,6 +887,7 @@ function spawnMissing(world: World, rec: TraitSnapshot, newRootNetIds: Set<numbe
           fixedRotation: false,
         });
     registerBody(world, entity, body);
+    writeBodyVel(world, entity, rec);
     const rootId = Number(rp.rootNetId);
     if (rootId >= 0) newRootNetIds.add(rootId);
     return;
@@ -887,6 +918,7 @@ function spawnMissing(world: World, rec: TraitSnapshot, newRootNetIds: Set<numbe
       fixedRotation: false,
     });
     registerBody(world, entity, body);
+    writeBodyVel(world, entity, rec);
     return;
   }
 
@@ -903,6 +935,7 @@ function spawnMissing(world: World, rec: TraitSnapshot, newRootNetIds: Set<numbe
       fixedRotation: false,
     });
     registerBody(world, entity, body);
+    writeBodyVel(world, entity, rec);
   }
 }
 
@@ -918,6 +951,34 @@ function pruneMissingFromFull(world: World, snap: WorldSnapshot): void {
   for (const entity of kill) {
     destroyBody(world, entity);
     entity.destroy();
+  }
+}
+
+/** Interp: write lerped BodyVel onto live bodies after `restoreWorld(to)`. */
+export function applyInterpolatedBodyVel(
+  world: World,
+  from: WorldSnapshot,
+  to: WorldSnapshot,
+  alpha: number,
+): void {
+  const fromBy = new Map(from.entities.map((e) => [e.netId, e.traits.BodyVel]));
+  for (const rec of to.entities) {
+    const a = fromBy.get(rec.netId);
+    const b = rec.traits.BodyVel;
+    if (!a && !b) continue;
+    const entity = entityByNetId(world, rec.netId);
+    if (!entity) continue;
+    const t = Math.min(1, Math.max(0, alpha));
+    writeBodyVel(world, entity, {
+      netId: rec.netId,
+      traits: {
+        BodyVel: {
+          vx: Number(a?.vx ?? b?.vx ?? 0) * (1 - t) + Number(b?.vx ?? 0) * t,
+          vy: Number(a?.vy ?? b?.vy ?? 0) * (1 - t) + Number(b?.vy ?? 0) * t,
+          omega: Number(a?.omega ?? b?.omega ?? 0) * (1 - t) + Number(b?.omega ?? 0) * t,
+        },
+      },
+    });
   }
 }
 

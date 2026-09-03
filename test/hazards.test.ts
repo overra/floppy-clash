@@ -2,9 +2,19 @@ import { describe, expect, it } from 'vitest';
 import { getLevel } from '../src/levels/catalog';
 import { createCamera } from '../src/render/camera';
 import { buildFrame } from '../src/render/buildFrame';
-import { PRIM_CAPSULE, PRIM_PIE, PRIM_TRIANGLE } from '../src/render/sdf/primitives';
+import { PRIM_CAPSULE, PRIM_DISK, PRIM_PIE, PRIM_TRIANGLE } from '../src/render/sdf/primitives';
 import { APPENDIX_D_TYPE_IDS, HAZARDS_BY_TYPE, HAZARD_MODULES } from '../src/sim/hazards';
-import { Controller, Dead, Destructible, Hazard, HazardKind, Health, Transform } from '../src/sim/traits';
+import {
+  Controller,
+  Dead,
+  Destructible,
+  Hazard,
+  HazardKind,
+  Health,
+  PrevTransform,
+  RagdollPart,
+  Transform,
+} from '../src/sim/traits';
 import { crusherOverlaps } from '../src/sim/hazards/crusher';
 import { hold, makeSim, playerOf } from './helpers';
 
@@ -166,6 +176,28 @@ describe('M4 hazards', () => {
     const cracked = frame.groups.filter((g) => g.blend === 'subtract');
     expect(cracked.length).toBeGreaterThan(0);
     expect(cracked.some((g) => g.primitives.some((p) => p.kind === PRIM_CAPSULE))).toBe(true);
+  });
+
+  it('ragdoll primitives follow interpolated part angle', () => {
+    const sim = makeSim({ seed: 210, settings: { playerCount: 1 } });
+    playerOf(sim).set(Health, { hp: 0, maxHp: 100 });
+    sim.step([hold({}), hold({}), hold({}), hold({})]);
+    let angled = false;
+    sim.ecs.query(RagdollPart, Transform, PrevTransform).updateEach(([_r, t, prev]) => {
+      t.angle = Math.PI / 2;
+      prev.angle = Math.PI / 2;
+      angled = true;
+    });
+    expect(angled).toBe(true);
+    const frame = buildFrame(sim, createCamera(sim.ctx.level.bounds), 1, 1280, 720, [], {
+      freezeCamera: true,
+    });
+    const ragdoll = frame.groups.filter((g) => g.layer === 4);
+    expect(ragdoll.some((g) => g.primitives.some((p) => p.kind === PRIM_DISK))).toBe(true);
+    const cap = ragdoll.flatMap((g) => g.primitives).find((p) => p.kind === PRIM_CAPSULE);
+    expect(cap).toBeTruthy();
+    expect(Math.abs((cap?.ay ?? 0) - (cap?.by ?? 0))).toBeLessThan(0.08);
+    expect(Math.abs((cap?.ax ?? 0) - (cap?.bx ?? 0))).toBeGreaterThan(0.15);
   });
 
   it('registers one module file per Appendix D type id', () => {

@@ -1,7 +1,16 @@
 import { describe, expect, it } from 'vitest';
 import { createInterpBuffer } from '../src/net/interp';
 import { applyInputBundle, bundleInputs, createSimulatedLink } from '../src/net/simnet';
-import { decode, encode, hostContentMessages, lateJoinSnapshotMessage, snapshotBytes } from '../src/net/protocol';
+import {
+  decode,
+  decodeSnapshotBinary,
+  encode,
+  encodeSnapshotBinary,
+  hostContentMessages,
+  lateJoinSnapshotMessage,
+  snapshotBytes,
+} from '../src/net/protocol';
+import { PUBLIC_ICE_SERVERS } from '../src/net/transport';
 import { parseLevel } from '../src/sim/level/schema';
 import { SeededRng } from '../src/core/rng';
 import { blankInputs } from '../src/sim/input';
@@ -9,6 +18,23 @@ import { Health, MatchState, RoundPhase, RoundState } from '../src/sim/traits';
 import { hold, makeSim, playerOf, pos } from './helpers';
 
 describe('M8 netcode', () => {
+  it('configures public STUN (PLAN 4.13)', () => {
+    expect(PUBLIC_ICE_SERVERS.some((s) => String(s.urls).startsWith('stun:'))).toBe(true);
+  });
+
+  it('binary snapshot round-trips quantized BodyVel', () => {
+    const host = makeSim({ settings: { playerCount: 2 } });
+    const snap = host.snapshot();
+    const rec = snap.entities.find((e) => e.traits.Player);
+    if (rec) rec.traits.BodyVel = { vx: 6.25, vy: -2.5, omega: 1.3 };
+    const decoded = decodeSnapshotBinary(encodeSnapshotBinary(snap));
+    const got = decoded.entities.find((e) => e.netId === rec?.netId);
+    expect(Number(got?.traits.BodyVel?.vx)).toBeCloseTo(6.25, 2);
+    expect(Number(got?.traits.BodyVel?.vy)).toBeCloseTo(-2.5, 2);
+    expect(Number(got?.traits.BodyVel?.omega)).toBeCloseTo(1.3, 2);
+    expect(decoded.tick).toBe(snap.tick);
+  });
+
   it('bundles the last 3 inputs and interpolates snapshots', () => {
     const a = hold({ moveX: 1 });
     const b = hold({ moveX: -1 });

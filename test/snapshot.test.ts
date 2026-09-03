@@ -3,6 +3,7 @@ import type { World as PhysicsWorld } from 'planck';
 import { createClientView } from '../src/net/clientView';
 import { getLevel } from '../src/levels/catalog';
 import {
+  applyInterpolatedBodyVel,
   drainChangeTrackers,
   hashWorld,
   mergeSnapshot,
@@ -277,6 +278,109 @@ describe('M8 snapshot', () => {
       if (path.points.length >= 2) pathOk = true;
     });
     expect(pathOk).toBe(true);
+  });
+
+  it('late-join restores loose-weapon and ragdoll BodyVel (PLAN 4.13)', () => {
+    const host = makeSim({ seed: 201, settings: { playerCount: 2 } });
+    const gun = spawnWeapon(host.ecs, 'pistol', 10, 8);
+    const victim = playerOf(host, 1);
+    host.ctx.bodies.get(victim)?.setLinearVelocity({ x: 5, y: 8 });
+    victim.set(Health, { hp: 0, maxHp: 100 });
+    host.step([hold({}), hold({}), hold({}), hold({})]);
+    const gbody = host.ctx.bodies.get(gun)!;
+    gbody.setLinearVelocity({ x: 11.5, y: -3.25 });
+    gbody.setAngularVelocity(2.4);
+    const gunNet = gun.get(NetId)!.id;
+    const partVels = new Map<number, { x: number; y: number; w: number }>();
+    host.ecs.query(RagdollPart, NetId).updateEach(([_rp, n], e) => {
+      const b = host.ctx.bodies.get(e);
+      if (b) partVels.set(n.id, { x: b.getLinearVelocity().x, y: b.getLinearVelocity().y, w: b.getAngularVelocity() });
+    });
+    expect(partVels.size).toBeGreaterThanOrEqual(8);
+    const snap = serializeWorld(host.ecs);
+    const gunRec = snap.entities.find((e) => e.netId === gunNet);
+    expect(Number(gunRec?.traits.BodyVel?.vx)).toBeCloseTo(11.5, 1);
+    expect(Number(gunRec?.traits.BodyVel?.vy)).toBeCloseTo(-3.25, 1);
+    expect(Number(gunRec?.traits.BodyVel?.omega)).toBeCloseTo(2.4, 1);
+    expect(snap.entities.filter((e) => e.traits.RagdollPart && e.traits.BodyVel).length).toBe(
+      partVels.size,
+    );
+
+    const view = createClientView(snap);
+    let clientGun = { x: 0, y: 0, w: 0, found: false };
+    view.sim.ecs.query(Weapon, NetId).updateEach(([_w, n], e) => {
+      if (n.id !== gunNet) return;
+      const b = view.sim.ctx.bodies.get(e);
+      if (!b) return;
+      clientGun = { x: b.getLinearVelocity().x, y: b.getLinearVelocity().y, w: b.getAngularVelocity(), found: true };
+    });
+    expect(clientGun.found).toBe(true);
+    expect(clientGun.x).toBeCloseTo(11.5, 1);
+    expect(clientGun.y).toBeCloseTo(-3.25, 1);
+    expect(clientGun.w).toBeCloseTo(2.4, 1);
+    let matched = 0;
+    view.sim.ecs.query(RagdollPart, NetId).updateEach(([_rp, n], e) => {
+      const want = partVels.get(n.id);
+      const b = view.sim.ctx.bodies.get(e);
+      if (!want || !b) return;
+      if (
+        Math.abs(b.getLinearVelocity().x - want.x) < 0.15 &&
+        Math.abs(b.getLinearVelocity().y - want.y) < 0.15 &&
+        Math.abs(b.getAngularVelocity() - want.w) < 0.15
+      ) {
+        matched += 1;
+      }
+    });
+    expect(matched).toBe(partVels.size);
+  });
+
+  it('restores crate / debris dynamic-prop BodyVel', () => {
+    const host = makeSim({
+      level: getLevel('test-crate'),
+      seed: 202,
+      settings: { playerCount: 1 },
+    });
+    let crateNet = -1;
+    host.ecs.query(Hazard, NetId).updateEach(([hz, n], e) => {
+      if (hz.kind !== HazardKind.Crate) return;
+      crateNet = n.id;
+      host.ctx.bodies.get(e)?.setLinearVelocity({ x: 4.2, y: 1.1 });
+    });
+    expect(crateNet).toBeGreaterThanOrEqual(0);
+    const snap = serializeWorld(host.ecs);
+    const rec = snap.entities.find((e) => e.netId === crateNet);
+    expect(Number(rec?.traits.BodyVel?.vx)).toBeCloseTo(4.2, 1);
+    const view = createClientView(snap, 120, getLevel('test-crate'));
+    let vx = 0;
+    view.sim.ecs.query(Hazard, NetId).updateEach(([hz, n], e) => {
+      if (hz.kind === HazardKind.Crate && n.id === crateNet) {
+        vx = view.sim.ctx.bodies.get(e)?.getLinearVelocity().x ?? 0;
+      }
+    });
+    expect(vx).toBeCloseTo(4.2, 1);
+  });
+
+  it('interpolates BodyVel between from/to snapshots', () => {
+    const host = makeSim({ seed: 204, settings: { playerCount: 1 } });
+    const gun = spawnWeapon(host.ecs, 'pistol', 10, 8);
+    host.ctx.bodies.get(gun)?.setLinearVelocity({ x: 0, y: 0 });
+    const from = serializeWorld(host.ecs);
+    host.ctx.bodies.get(gun)?.setLinearVelocity({ x: 10, y: 4 });
+    host.ctx.bodies.get(gun)?.setAngularVelocity(2);
+    const to = serializeWorld(host.ecs);
+    const client = makeSim({ seed: 205, settings: { playerCount: 1 } });
+    restoreWorld(client.ecs, to);
+    applyInterpolatedBodyVel(client.ecs, from, to, 0.5);
+    let vx = 0;
+    let omega = 0;
+    client.ecs.query(Weapon, NetId).updateEach(([_w, n], e) => {
+      if (n.id !== gun.get(NetId)!.id) return;
+      const b = client.ctx.bodies.get(e);
+      vx = b?.getLinearVelocity().x ?? 0;
+      omega = b?.getAngularVelocity() ?? 0;
+    });
+    expect(vx).toBeCloseTo(5, 1);
+    expect(omega).toBeCloseTo(1, 1);
   });
 
   it('restores player body velocity from Controller (PLAN 4.13)', () => {

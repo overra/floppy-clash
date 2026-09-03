@@ -1,4 +1,5 @@
-import { lerp } from '../core/math';
+import { lerp, lerpAngle } from '../core/math';
+import { ragdollPartSpec } from '../sim/player/ragdoll';
 import { getContext } from '../sim/context';
 import { themeOf } from '../sim/level/themes';
 import {
@@ -251,7 +252,8 @@ export function buildFrame(
     const prev = e.get(PrevTransform) ?? t;
     const x = lerp(prev.x, t.x, alpha);
     const y = lerp(prev.y, t.y, alpha);
-    const prims = weaponPrimitives(x, y, def.shape.length, def.shape.kind, t.angle);
+    const angle = lerpAngle(prev.angle, t.angle, alpha);
+    const prims = weaponPrimitives(x, y, def.shape.length, def.shape.kind, angle);
     groups.push({
       ...groupBounds(prims),
       color: '#2b2b2b',
@@ -295,19 +297,35 @@ export function buildFrame(
     });
   });
 
-  world.query(RagdollPart, Transform, PrevTransform).updateEach(([_r, t, prev]) => {
+  world.query(RagdollPart, Transform, PrevTransform).updateEach(([r, t, prev]) => {
     const x = lerp(prev.x, t.x, alpha);
     const y = lerp(prev.y, t.y, alpha);
+    const angle = lerpAngle(prev.angle, t.angle, alpha);
+    const spec = ragdollPartSpec(r.part);
+    const c = Math.cos(angle);
+    const s = Math.sin(angle);
+    const primitives = spec.circle
+      ? [{ kind: PRIM_DISK, ax: x, ay: y, bx: x, by: y, r: spec.hx }]
+      : [
+          {
+            kind: PRIM_CAPSULE,
+            ax: x - spec.hy * s,
+            ay: y + spec.hy * c,
+            bx: x + spec.hy * s,
+            by: y - spec.hy * c,
+            r: spec.hx,
+          },
+        ];
     groups.push({
-      minX: x - 0.3,
-      minY: y - 0.3,
-      maxX: x + 0.3,
-      maxY: y + 0.3,
+      minX: x - 0.45,
+      minY: y - 0.45,
+      maxX: x + 0.45,
+      maxY: y + 0.45,
       color: '#d8c38a',
       blend: 'smoothUnion',
       smoothK: 0.12,
       layer: 4,
-      primitives: [{ kind: PRIM_CAPSULE, ax: x, ay: y, bx: x, by: y - 0.15, r: 0.08 }],
+      primitives,
     });
   });
 

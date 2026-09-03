@@ -19,6 +19,7 @@ import {
   RoundPhase,
   RoundState,
   Transform,
+  Weapon,
 } from '../src/sim/traits';
 import { hold, makeSim, playerOf, pos } from './helpers';
 
@@ -102,6 +103,35 @@ describe('client interpolation view', () => {
   it('parses ?net=100,2 loss shaping', () => {
     expect(netShapeFromSearch('?net=100,2')).toEqual({ latencyMs: 100, loss: 0.02 });
     expect(netShapeFromSearch('lag=40&loss=0.05')).toEqual({ latencyMs: 40, loss: 0.05 });
+  });
+
+  it('interp apply restores thrown-weapon BodyVel from the to snapshot', () => {
+    const host = makeSim({ seed: 203, settings: { playerCount: 2 } });
+    const gun = spawnWeapon(host.ecs, 'pistol', 8, 6);
+    const first = host.snapshot();
+    host.ctx.bodies.get(gun)?.setLinearVelocity({ x: 14, y: 2.5 });
+    host.ctx.bodies.get(gun)?.setAngularVelocity(-1.8);
+    const flying = host.snapshot();
+    const gunNet = gun.get(NetId)!.id;
+    expect(Number(flying.entities.find((e) => e.netId === gunNet)?.traits.BodyVel?.vx)).toBeCloseTo(
+      14,
+      1,
+    );
+
+    const view = createClientView(first, 100);
+    view.push(0, first);
+    view.push(50, flying);
+    view.apply(150);
+    let vx = 0;
+    let omega = 0;
+    view.sim.ecs.query(Weapon, NetId).updateEach(([_w, n], e) => {
+      if (n.id !== gunNet) return;
+      const b = view.sim.ctx.bodies.get(e);
+      vx = b?.getLinearVelocity().x ?? 0;
+      omega = b?.getAngularVelocity() ?? 0;
+    });
+    expect(vx).toBeCloseTo(14, 1);
+    expect(omega).toBeCloseTo(-1.8, 1);
   });
 
   it('parry inside the 100–150 ms interp buffer shows the reflected bullet', () => {
