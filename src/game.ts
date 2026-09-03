@@ -52,7 +52,7 @@ import { spawnWeapon } from './sim/systems/weapons';
 import { tuning } from './sim/tuning';
 import { loadSettings, saveSettings, type UserSettings } from './ui/settingsStore';
 import { loadStats, recordKos, recordMatch } from './ui/statsStore';
-import { hostContentMessages, lateJoinSnapshotMessage } from './net/protocol';
+import { hostContentMessages, lateJoinSnapshotMessage, snapshotBytes } from './net/protocol';
 import { drainChangeTrackers } from './sim/snapshot';
 import { applyInputBundle, bundleInputs } from './net/simnet';
 import { createEditorState, fromHash, loadLibrary, type EditorState } from './editor/editor';
@@ -89,6 +89,7 @@ type FloppyDebug = {
   netState: string;
   netReady: boolean;
   lastSnapTick: number;
+  lastSnapBytes: number;
   clientViewTick: number;
   clientAppliedX: number;
   clientRestored: boolean;
@@ -161,6 +162,7 @@ export function createGame(root: HTMLElement): Game {
   const fx = createFxWorld();
   let decalLayer: PersistentDecalLayer = createDecalLayer(gymLevel.bounds);
   let clientView: ClientView | null = null;
+  let lastSnapBytes = 0;
   let rendererSwitches = 0;
   let netName = 'guest';
   let netSlot = 0;
@@ -373,6 +375,7 @@ export function createGame(root: HTMLElement): Game {
       }
       if (msg.t === 'snapshot') {
         menus.lastSnapTick = msg.snap.tick;
+        lastSnapBytes = snapshotBytes(msg.snap);
         menus.notice = `Late-join snapshot tick ${msg.snap.tick}`;
         if (session.role === 'client') {
           if (!clientView) {
@@ -814,6 +817,7 @@ export function createGame(root: HTMLElement): Game {
       netState: menus.netState,
       netReady: net.ready,
       lastSnapTick: menus.lastSnapTick,
+      lastSnapBytes,
       lastLevelId: handle?.ctx.level.id ?? pendingLevel?.id ?? '',
       pendingLevelId: pendingLevel?.id ?? '',
       loadLevel: (raw: unknown) => {

@@ -4,13 +4,20 @@ import { applyInputBundle, bundleInputs, createSimulatedLink } from '../src/net/
 import {
   decode,
   decodeSnapshotBinary,
+  decodeWire,
   encode,
   encodeSnapshotBinary,
+  encodeWire,
   hostContentMessages,
   lateJoinSnapshotMessage,
   snapshotBytes,
+  wireBytes,
 } from '../src/net/protocol';
-import { PUBLIC_ICE_SERVERS } from '../src/net/transport';
+import { createLocalLoopback, PUBLIC_ICE_SERVERS } from '../src/net/transport';
+import { drainChangeTrackers } from '../src/sim/snapshot';
+import { spawnWeapon } from '../src/sim/systems/weapons';
+import { Held, HeldBy, Loose, NetId, Weapon } from '../src/sim/traits';
+import { createClientView } from '../src/net/clientView';
 import { parseLevel } from '../src/sim/level/schema';
 import { SeededRng } from '../src/core/rng';
 import { blankInputs } from '../src/sim/input';
@@ -22,7 +29,7 @@ describe('M8 netcode', () => {
     expect(PUBLIC_ICE_SERVERS.some((s) => String(s.urls).startsWith('stun:'))).toBe(true);
   });
 
-  it('binary snapshot round-trips quantized BodyVel', () => {
+  it('binary snapshot round-trips quantized BodyVel and world traits', () => {
     const host = makeSim({ settings: { playerCount: 2 } });
     const snap = host.snapshot();
     const rec = snap.entities.find((e) => e.traits.Player);
@@ -33,6 +40,61 @@ describe('M8 netcode', () => {
     expect(Number(got?.traits.BodyVel?.vy)).toBeCloseTo(-2.5, 2);
     expect(Number(got?.traits.BodyVel?.omega)).toBeCloseTo(1.3, 2);
     expect(decoded.tick).toBe(snap.tick);
+    expect(decoded.levelId).toBe('gym');
+    expect(decoded.full).toBe(true);
+    expect(decoded.playerCount).toBe(2);
+    expect(decoded.entities.length).toBe(snap.entities.length);
+  });
+
+  it('encodeWire puts snapshots on a binary payload, not JSON', () => {
+    const host = makeSim({ settings: { playerCount: 2 } });
+    const snap = host.snapshot();
+    const wire = encodeWire({ t: 'snapshot', snap });
+    expect(wire).toBeInstanceOf(Uint8Array);
+    expect((wire as Uint8Array)[0]).toBe(2);
+    expect(typeof encodeWire({ t: 'chat', from: 'a', text: 'hi' })).toBe('string');
+    const back = decodeWire(wire);
+    expect(back.t).toBe('snapshot');
+    if (back.t !== 'snapshot') throw new Error('expected snapshot');
+    expect(back.snap.levelId).toBe('gym');
+    expect(decodeWire(encode({ t: 'snapshot', snap })).t).toBe('snapshot');
+  });
+
+  it('loopback session encode→wire→decode restores a held weapon', () => {
+    const host = makeSim({ seed: 77, settings: { playerCount: 2 } });
+    const gun = spawnWeapon(host.ecs, 'pistol', 8, 6);
+    gun.add(Held(), HeldBy(playerOf(host, 0)));
+    gun.remove(Loose);
+    host.step([hold({ aimX: 1, aimY: 0 }), hold({}), hold({}), hold({})]);
+    const snap = host.snapshot();
+    const session = createLocalLoopback();
+    let got = snap;
+    session.onMessage((msg) => {
+      if (msg.t === 'snapshot') got = msg.snap;
+    });
+    session.send({ t: 'snapshot', snap });
+    expect(session.bytesOut).toBe(snapshotBytes(snap));
+    expect(session.bytesOut).toBeLessThan(JSON.stringify(snap).length);
+    const view = createClientView(got);
+    let held = false;
+    view.sim.ecs.query(Weapon, NetId).updateEach(([_w, n], e) => {
+      if (n.id === gun.get(NetId)!.id) held = e.has(Held);
+    });
+    expect(held).toBe(true);
+  });
+
+  it('delta snapshots keep added/removed and stay smaller than full', () => {
+    const host = makeSim({ seed: 78, settings: { playerCount: 2 } });
+    const full = host.snapshot();
+    drainChangeTrackers(host.ecs);
+    spawnWeapon(host.ecs, 'pistol', 10, 8);
+    for (let i = 0; i < 12; i++) host.step([hold({ moveX: 1 }), hold({}), hold({}), hold({})]);
+    const delta = host.snapshotDelta();
+    expect(delta.full).toBe(false);
+    const decoded = decodeSnapshotBinary(encodeSnapshotBinary(delta));
+    expect(decoded.full).toBe(false);
+    expect(decoded.added?.length).toBeGreaterThan(0);
+    expect(snapshotBytes(delta)).toBeLessThan(snapshotBytes(full));
   });
 
   it('bundles the last 3 inputs and interpolates snapshots', () => {
@@ -67,8 +129,10 @@ describe('M8 netcode', () => {
       const delayed = q[Math.max(0, q.length - 1 - delay)] ?? raw;
       host.step(dropped ? (q[Math.max(0, q.length - 2 - delay)] ?? raw) : delayed);
       if (i % 3 === 0) {
-        const snap = host.snapshot();
-        bytes += snapshotBytes(snap);
+        const full = i % 60 === 0;
+        const snap = full ? host.snapshot() : host.snapshotDelta();
+        if (full) drainChangeTrackers(host.ecs);
+        bytes += wireBytes({ t: 'snapshot', snap });
         link.send(1, { t: 'snapshot', snap });
       }
       const phase = host.ecs.get(RoundState)?.phase;

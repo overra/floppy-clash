@@ -1,4 +1,4 @@
-import { decode, encode, type NetMessage } from './protocol';
+import { decode, decodeWire, encode, encodeWire, type NetMessage, type WirePayload } from './protocol';
 import { netShapeFromSearch, type NetShape } from './shape';
 
 export type PeerRole = 'host' | 'client';
@@ -46,8 +46,10 @@ export function createLocalLoopback(): NetSession {
     ready: true,
     peerCount: 0,
     send(msg) {
-      this.bytesOut += encode(msg).length;
-      for (const h of handlers) h(msg);
+      const wire = encodeWire(msg);
+      this.bytesOut += typeof wire === 'string' ? wire.length : wire.byteLength;
+      const delivered = typeof wire === 'string' ? decode(wire) : decodeWire(wire);
+      for (const h of handlers) h(delivered);
     },
     onMessage(fn) {
       handlers.push(fn);
@@ -69,11 +71,17 @@ function readShape(): NetShape {
   return netShapeFromSearch(location.search);
 }
 
-function deliver(ch: RTCDataChannel | null, data: string, reliable: boolean, shape: NetShape): void {
+function deliver(
+  ch: RTCDataChannel | null,
+  data: WirePayload,
+  reliable: boolean,
+  shape: NetShape,
+): void {
   if (!ch || ch.readyState !== 'open') return;
   if (!reliable && shape.loss > 0 && Math.random() < shape.loss) return;
   const fire = () => {
-    if (ch.readyState === 'open') ch.send(data);
+    if (ch.readyState !== 'open') return;
+    ch.send(data);
   };
   if (shape.latencyMs > 0) setTimeout(fire, shape.latencyMs);
   else fire();
@@ -102,8 +110,8 @@ export async function createWebRtcSession(
     ready: false,
     peerCount: 0,
     send(msg, rel = true, except) {
-      const data = encode(msg);
-      session.bytesOut += data.length;
+      const data = encodeWire(msg);
+      session.bytesOut += typeof data === 'string' ? data.length : data.byteLength;
       if (role === 'host') {
         for (const [id, link] of peers) {
           if (except && id === except) continue;
@@ -126,8 +134,12 @@ export async function createWebRtcSession(
   };
 
   const onData = (peerId: string) => (ev: MessageEvent) => {
-    if (typeof ev.data !== 'string') return;
-    const msg = decode(ev.data);
+    let msg: NetMessage;
+    try {
+      msg = decodeWire(ev.data);
+    } catch {
+      return;
+    }
     if (msg.t === 'chat' && role === 'host') session.send(msg, true, peerId);
     for (const h of handlers) h(msg);
   };
@@ -142,6 +154,7 @@ export async function createWebRtcSession(
   });
 
   const bindChannel = (ch: RTCDataChannel, peerId: string) => {
+    ch.binaryType = 'arraybuffer';
     ch.onmessage = onData(peerId);
     if (ch.label === 'unreliable') {
       if (role === 'host') {

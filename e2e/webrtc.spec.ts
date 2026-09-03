@@ -60,6 +60,9 @@ test('late-join snapshot restores a client interpolation view', async ({ browser
     .poll(async () => guest.evaluate(() => window.__floppy?.lastSnapTick ?? 0), { timeout: 10_000 })
     .toBeGreaterThan(0);
   await expect
+    .poll(async () => guest.evaluate(() => window.__floppy?.lastSnapBytes ?? 0), { timeout: 10_000 })
+    .toBeGreaterThan(20);
+  await expect
     .poll(async () => guest.evaluate(() => window.__floppy?.clientViewTick ?? 0), {
       timeout: 10_000,
     })

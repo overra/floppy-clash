@@ -1,5 +1,5 @@
 import type { PlayerInput } from '../sim/input';
-import { encode, type NetMessage } from './protocol';
+import { decodeWire, encodeWire, type NetMessage } from './protocol';
 
 export type LinkOpts = {
   latencyMs: number;
@@ -32,9 +32,10 @@ export function createSimulatedLink(opts: LinkOpts) {
         dropped += 1;
         return;
       }
-      const bytes = encode(msg).length;
+      const wire = encodeWire(msg);
+      const bytes = typeof wire === 'string' ? wire.length : wire.byteLength;
       bytesOut += bytes;
-      inbox.push({ deliverAt: now + opts.latencyMs, to, msg, bytes });
+      inbox.push({ deliverAt: now + opts.latencyMs, to, msg: decodeWire(wire), bytes });
     },
     receive(to: number): NetMessage[] {
       const ready: NetMessage[] = [];
