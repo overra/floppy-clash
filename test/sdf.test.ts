@@ -5,11 +5,19 @@ import {
   opSmoothUnion,
   primitiveSdf,
   PRIM_DISK,
+  PRIM_PIE,
   PRIM_ROUNDED_BOX,
+  PRIM_TRIANGLE,
   sdCapsule,
   sdDisk,
+  sdPie,
+  sdTriangle,
 } from '../src/render/sdf/primitives';
-import { evalCoverageGpu, evalPrimitiveSdfGpu, evalSmoothUnionGpu } from '../src/render/gpu/shaders';
+import {
+  evalCoverageGpu,
+  evalPrimitiveSdfGpu,
+  evalSmoothUnionGpu,
+} from '../src/render/gpu/shaders';
 
 describe('sdf primitives', () => {
   it('disk is negative inside', () => {
@@ -32,7 +40,9 @@ describe('sdf primitives', () => {
   });
 
   it('primitiveSdf dispatches kinds', () => {
-    expect(primitiveSdf({ kind: PRIM_DISK, ax: 0, ay: 0, bx: 0, by: 0, r: 1 }, { x: 0, y: 0 })).toBeLessThan(0);
+    expect(
+      primitiveSdf({ kind: PRIM_DISK, ax: 0, ay: 0, bx: 0, by: 0, r: 1 }, { x: 0, y: 0 }),
+    ).toBeLessThan(0);
   });
 });
 
@@ -41,10 +51,25 @@ describe('TypeGPU use-gpu fns on CPU', () => {
     expect(evalCoverageGpu(-1)).toBeGreaterThan(0.5);
     const inside = evalPrimitiveSdfGpu({ kind: PRIM_DISK, ax: 0, ay: 0, bx: 0, by: 0, r: 1 }, 0, 0);
     expect(inside).toBeLessThan(0);
-    const box = evalPrimitiveSdfGpu({ kind: PRIM_ROUNDED_BOX, ax: 0, ay: 0, bx: 1, by: 1, r: 0.1 }, 0, 0);
+    const box = evalPrimitiveSdfGpu(
+      { kind: PRIM_ROUNDED_BOX, ax: 0, ay: 0, bx: 1, by: 1, r: 0.1 },
+      0,
+      0,
+    );
     expect(box).toBeLessThan(0);
     const u = evalSmoothUnionGpu(-0.2, -0.1, 0.3);
     expect(Number.isFinite(u)).toBe(true);
+    const tri = { kind: PRIM_TRIANGLE, ax: 0, ay: 0, bx: 1, by: 0, r: 0.8 };
+    expect(evalPrimitiveSdfGpu(tri, 0.4, 0.2)).toBeLessThan(0.5);
+    expect(
+      Number.isFinite(
+        evalPrimitiveSdfGpu({ kind: PRIM_PIE, ax: 0, ay: 0, bx: 0.8, by: 0, r: 1 }, 0.2, 0.1),
+      ),
+    ).toBe(true);
+    expect(
+      sdTriangle({ x: 0.2, y: 0.1 }, { x: 0, y: 0 }, { x: 1, y: 0 }, { x: 0.8, y: 0.8 }),
+    ).toBeLessThan(0.5);
+    expect(Number.isFinite(sdPie({ x: 0.2, y: 0.1 }, { x: 0, y: 0 }, 1, 0.8))).toBe(true);
   });
 });
 

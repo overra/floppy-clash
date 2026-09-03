@@ -1,7 +1,8 @@
+import { perlin2d } from '@typegpu/noise';
+import { opSmoothUnion, sdDisk, sdLine, sdPie, sdRoundedBox2d } from '@typegpu/sdf';
 import tgpu, { isTgpuFragmentFn, isTgpuVertexFn, type TgpuRoot } from 'typegpu';
 import * as d from 'typegpu/data';
 import * as std from 'typegpu/std';
-import { opSmoothUnion, sdDisk, sdLine, sdRoundedBox2d } from '@typegpu/sdf';
 import { primitiveSdf, type Primitive } from '../sdf/primitives';
 
 /** PLAN §4.11: live GPU draw is TypeGPU DualFn + `root.createRenderPipeline`. */
@@ -72,24 +73,63 @@ export const decalLayout = tgpu
   })
   .$idx(0);
 
+/** IQ-style triangle — same third-point packing as CPU `primitiveSdf` (`c = (ax+r, ay+r)`). */
+export const sdTriangleGpu = tgpu.fn(
+  [d.vec2f, d.vec2f, d.vec2f, d.vec2f],
+  d.f32,
+)((p, a, b, c) => {
+  'use gpu';
+  const e0 = d.vec2f(b.x - a.x, b.y - a.y);
+  const e1 = d.vec2f(c.x - b.x, c.y - b.y);
+  const e2 = d.vec2f(a.x - c.x, a.y - c.y);
+  const v0 = d.vec2f(p.x - a.x, p.y - a.y);
+  const v1 = d.vec2f(p.x - b.x, p.y - b.y);
+  const v2 = d.vec2f(p.x - c.x, p.y - c.y);
+  const d0 = std.max(std.dot(e0, e0), d.f32(1e-6));
+  const d1 = std.max(std.dot(e1, e1), d.f32(1e-6));
+  const d2 = std.max(std.dot(e2, e2), d.f32(1e-6));
+  const h0 = std.clamp(std.dot(v0, e0) / d0, d.f32(0), d.f32(1));
+  const h1 = std.clamp(std.dot(v1, e1) / d1, d.f32(0), d.f32(1));
+  const h2 = std.clamp(std.dot(v2, e2) / d2, d.f32(0), d.f32(1));
+  const pq0 = d.vec2f(v0.x - e0.x * h0, v0.y - e0.y * h0);
+  const pq1 = d.vec2f(v1.x - e1.x * h1, v1.y - e1.y * h1);
+  const pq2 = d.vec2f(v2.x - e2.x * h2, v2.y - e2.y * h2);
+  const s = std.sign(e0.x * e2.y - e0.y * e2.x);
+  const c0 = s * (v0.x * e0.y - v0.y * e0.x);
+  const c1 = s * (v1.x * e1.y - v1.y * e1.x);
+  const c2 = s * (v2.x * e2.y - v2.y * e2.x);
+  const md = std.min(std.dot(pq0, pq0), std.min(std.dot(pq1, pq1), std.dot(pq2, pq2)));
+  const inside = std.min(c0, std.min(c1, c2));
+  return std.select(std.sqrt(md), -std.sqrt(md), inside >= d.f32(0));
+});
+
 export const primitiveSdfGpu = tgpu.fn(
   [GpuPrimitive, d.vec2f],
   d.f32,
 )((prim, p) => {
   'use gpu';
-  if (prim.kind === 0) return sdDisk(d.vec2f(p.x - prim.ax, p.y - prim.ay), prim.r);
-  if (prim.kind === 1)
+  if (prim.kind === d.u32(0)) return sdDisk(d.vec2f(p.x - prim.ax, p.y - prim.ay), prim.r);
+  if (prim.kind === d.u32(1))
     return sdLine(p, d.vec2f(prim.ax, prim.ay), d.vec2f(prim.bx, prim.by)) - prim.r;
-  if (prim.kind === 2) {
+  if (prim.kind === d.u32(2)) {
     return sdRoundedBox2d(d.vec2f(p.x - prim.ax, p.y - prim.ay), d.vec2f(prim.bx, prim.by), prim.r);
   }
-  if (prim.kind === 3) {
-    return sdLine(p, d.vec2f(prim.ax, prim.ay), d.vec2f(prim.bx, prim.by)) - prim.r * 0.15;
+  if (prim.kind === d.u32(3)) {
+    return sdTriangleGpu(
+      p,
+      d.vec2f(prim.ax, prim.ay),
+      d.vec2f(prim.bx, prim.by),
+      d.vec2f(prim.ax + prim.r, prim.ay + prim.r),
+    );
   }
-  if (prim.kind === 4) {
-    return sdDisk(d.vec2f(p.x - prim.ax, p.y - prim.ay), prim.r);
+  if (prim.kind === d.u32(4)) {
+    return sdPie(
+      d.vec2f(p.x - prim.ax, p.y - prim.ay),
+      d.vec2f(std.sin(prim.bx), std.cos(prim.bx)),
+      prim.r,
+    );
   }
-  return 1e9;
+  return d.f32(1e9);
 });
 
 export const coverageGpu = tgpu.fn(
@@ -97,7 +137,7 @@ export const coverageGpu = tgpu.fn(
   d.f32,
 )((dist) => {
   'use gpu';
-  return dist < 0 ? 1 : 0;
+  return dist < d.f32(0) ? d.f32(1) : d.f32(0);
 });
 
 export const smoothUnionGpu = tgpu.fn(
@@ -114,11 +154,11 @@ export const worldToNdcGpu = tgpu.fn(
 )((cam, w) => {
   'use gpu';
   const ppm = cam.zoom;
-  const sx = (w.x - cam.x) * ppm + cam.view.x * 0.5 + cam.shake.x;
-  const sy = cam.view.y * 0.5 - (w.y - cam.y) * ppm + cam.shake.y;
-  const ndcX = (sx / cam.view.x) * 2.0 - 1.0;
-  const ndcY = 1.0 - (sy / cam.view.y) * 2.0;
-  return d.vec4f(ndcX, ndcY, 0, 1);
+  const sx = (w.x - cam.x) * ppm + cam.view.x * d.f32(0.5) + cam.shake.x;
+  const sy = cam.view.y * d.f32(0.5) - (w.y - cam.y) * ppm + cam.shake.y;
+  const ndcX = (sx / cam.view.x) * d.f32(2) - d.f32(1);
+  const ndcY = d.f32(1) - (sy / cam.view.y) * d.f32(2);
+  return d.vec4f(ndcX, ndcY, d.f32(0), d.f32(1));
 });
 
 export const applyGroupFxGpu = tgpu.fn(
@@ -128,16 +168,17 @@ export const applyGroupFxGpu = tgpu.fn(
   'use gpu';
   let px = p0.x;
   let py = p0.y;
-  if (g.fx === 1) {
-    px = px + std.sin(px * 9.0 + py * 3.0) * 0.05;
-    py = py + std.cos(py * 7.0) * 0.05;
+  if (g.fx === d.u32(1)) {
+    const n = perlin2d.sample(d.vec2f(px * d.f32(2.4), py * d.f32(2.4)));
+    px = px + n * d.f32(0.06);
+    py = py + n * d.f32(0.045);
   }
-  if (g.fx === 2) {
-    const ox = px - (g.minx + g.maxx) * 0.5;
-    const oy = py - (g.miny + g.maxy) * 0.5;
-    const r2 = std.max(ox * ox + oy * oy, 0.05);
-    px = px + ox * (0.12 / r2);
-    py = py + oy * (0.12 / r2);
+  if (g.fx === d.u32(2)) {
+    const ox = px - (g.minx + g.maxx) * d.f32(0.5);
+    const oy = py - (g.miny + g.maxy) * d.f32(0.5);
+    const r2 = std.max(ox * ox + oy * oy, d.f32(0.05));
+    px = px + ox * (d.f32(0.12) / r2);
+    py = py + oy * (d.f32(0.12) / r2);
   }
   return d.vec2f(px, py);
 });
@@ -148,13 +189,13 @@ export const groupSdfGpu = tgpu.fn(
 )((gid, p) => {
   'use gpu';
   const g = sdfLayout.$.groups[gid]!;
-  let dist = 1.0 * 100000.0;
-  for (let i = 0; i < 16; i += 1) {
-    if (g.count > i) {
-      const pr = sdfLayout.$.prims[g.start + i]!;
+  let dist = d.f32(100000);
+  for (const i of tgpu.unroll(std.range(16))) {
+    if (g.count > d.u32(i)) {
+      const pr = sdfLayout.$.prims[g.start + d.u32(i)]!;
       const pd = primitiveSdfGpu(pr, p);
-      if (g.blend === 1) {
-        dist = smoothUnionGpu(dist, pd, std.max(g.k, 0.05));
+      if (g.blend === d.u32(1)) {
+        dist = smoothUnionGpu(dist, pd, std.max(g.k, d.f32(0.05)));
       } else {
         dist = std.min(dist, pd);
       }
@@ -178,13 +219,21 @@ export const sdfVertex = tgpu
     'use gpu';
     const g = sdfLayout.$.groups[input.instanceIndex]!;
     const cam = sdfLayout.$.camera;
-    let wx = g.minx + 0;
-    let wy = g.miny + 0;
-    if (input.vertexIndex === 1 || input.vertexIndex === 2 || input.vertexIndex === 4) {
-      wx = g.maxx + 0;
+    let wx = g.minx;
+    let wy = g.miny;
+    if (
+      input.vertexIndex === d.u32(1) ||
+      input.vertexIndex === d.u32(2) ||
+      input.vertexIndex === d.u32(4)
+    ) {
+      wx = g.maxx;
     }
-    if (input.vertexIndex === 2 || input.vertexIndex === 4 || input.vertexIndex === 5) {
-      wy = g.maxy + 0;
+    if (
+      input.vertexIndex === d.u32(2) ||
+      input.vertexIndex === d.u32(4) ||
+      input.vertexIndex === d.u32(5)
+    ) {
+      wy = g.maxy;
     }
     return { pos: worldToNdcGpu(cam, d.vec2f(wx, wy)), gid: input.instanceIndex };
   })
@@ -205,22 +254,25 @@ export const sdfFragment = tgpu
     const ppm = cam.zoom;
     const sx = input.pos.x;
     const sy = input.pos.y;
-    const wx = ((sx / cam.view.x - 0.5) * cam.view.x) / ppm + cam.x;
-    const wy = ((0.5 - sy / cam.view.y) * cam.view.y) / ppm + cam.y;
+    const wx = ((sx / cam.view.x - d.f32(0.5)) * cam.view.x) / ppm + cam.x;
+    const wy = ((d.f32(0.5) - sy / cam.view.y) * cam.view.y) / ppm + cam.y;
     const p = applyGroupFxGpu(g, d.vec2f(wx, wy));
     const dist = groupSdfGpu(input.gid, p);
-    const aa = std.max(std.fwidth(dist), 0.002);
-    const cov = 1.0 - std.smoothstep(-aa, aa, dist);
-    const outline = 1.0 - std.smoothstep(0.0, aa * 2.4, std.abs(dist));
-    const glow = std.exp(-std.max(dist, 0.0) * 10.0);
-    const shade = 0.82 + 0.18 * std.saturate(-dist * 4.0);
+    const aa = std.max(std.fwidth(dist), d.f32(0.002));
+    const cov = d.f32(1) - std.smoothstep(-aa, aa, dist);
+    const outline = d.f32(1) - std.smoothstep(d.f32(0), aa * d.f32(2.4), std.abs(dist));
+    const glow = std.exp(-std.max(dist, d.f32(0)) * d.f32(10));
+    const shade = d.f32(0.82) + d.f32(0.18) * std.saturate(-dist * d.f32(4));
+    const shadowP = applyGroupFxGpu(g, d.vec2f(wx + d.f32(0.08), wy - d.f32(0.08)));
+    const shadowDist = groupSdfGpu(input.gid, shadowP);
+    const shadow = std.smoothstep(d.f32(0.14), d.f32(-0.02), shadowDist) * d.f32(0.22);
     const rgb = d.vec3f(
-      g.color.x * shade + glow * 0.2,
-      g.color.y * shade + glow * 0.2,
-      g.color.z * shade + glow * 0.2,
+      g.color.x * shade + glow * d.f32(0.2) - shadow,
+      g.color.y * shade + glow * d.f32(0.2) - shadow,
+      g.color.z * shade + glow * d.f32(0.2) - shadow,
     );
-    const alpha = std.max(cov, outline * 0.55);
-    if (alpha < 0.01) {
+    const alpha = std.max(cov, outline * d.f32(0.55));
+    if (alpha < d.f32(0.01)) {
       std.discard();
     }
     return d.vec4f(rgb.x, rgb.y, rgb.z, alpha);
@@ -235,17 +287,25 @@ export const decalVertex = tgpu
     'use gpu';
     const cam = decalLayout.$.camera;
     const b = decalLayout.$.bounds;
-    let wx = b.minx + 0;
-    let wy = b.maxy + 0;
-    let u = 0.0;
-    let v = 0.0;
-    if (input.vertexIndex === 1 || input.vertexIndex === 2 || input.vertexIndex === 4) {
+    let wx = b.minx;
+    let wy = b.maxy;
+    let u = d.f32(0);
+    let v = d.f32(0);
+    if (
+      input.vertexIndex === d.u32(1) ||
+      input.vertexIndex === d.u32(2) ||
+      input.vertexIndex === d.u32(4)
+    ) {
       wx = b.maxx;
-      u = 1.0;
+      u = d.f32(1);
     }
-    if (input.vertexIndex === 2 || input.vertexIndex === 4 || input.vertexIndex === 5) {
+    if (
+      input.vertexIndex === d.u32(2) ||
+      input.vertexIndex === d.u32(4) ||
+      input.vertexIndex === d.u32(5)
+    ) {
       wy = b.miny;
-      v = 1.0;
+      v = d.f32(1);
     }
     return { pos: worldToNdcGpu(cam, d.vec2f(wx, wy)), uv: d.vec2f(u, v) };
   })
@@ -258,7 +318,7 @@ export const decalFragment = tgpu
   })((input) => {
     'use gpu';
     const c = std.textureSample(decalLayout.$.decalTex, decalLayout.$.decalSamp, input.uv);
-    if (c.w < 0.01) {
+    if (c.w < d.f32(0.01)) {
       std.discard();
     }
     return c;

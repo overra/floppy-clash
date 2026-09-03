@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { getLevel } from '../src/levels/catalog';
+import { createCamera } from '../src/render/camera';
+import { buildFrame } from '../src/render/buildFrame';
+import { PRIM_PIE, PRIM_TRIANGLE } from '../src/render/sdf/primitives';
 import { APPENDIX_D_TYPE_IDS, HAZARDS_BY_TYPE, HAZARD_MODULES } from '../src/sim/hazards';
 import { Dead, Health, Transform } from '../src/sim/traits';
 import { hold, makeSim, playerOf } from './helpers';
@@ -16,14 +19,22 @@ describe('M4 hazards', () => {
   });
 
   it('moving platform exists and steps without throwing', () => {
-    const sim = makeSim({ level: getLevel('test-platform.moving'), seed: 22, settings: { playerCount: 1 } });
+    const sim = makeSim({
+      level: getLevel('test-platform.moving'),
+      seed: 22,
+      settings: { playerCount: 1 },
+    });
     expect(() => {
       for (let i = 0; i < 120; i++) sim.step();
     }).not.toThrow();
   });
 
   it('does not tunnel a player through a kinematic crusher in 60 Hz', () => {
-    const sim = makeSim({ level: getLevel('test-crusher'), seed: 24, settings: { playerCount: 1 } });
+    const sim = makeSim({
+      level: getLevel('test-crusher'),
+      seed: 24,
+      settings: { playerCount: 1 },
+    });
     const p = playerOf(sim);
     const start = p.get(Transform);
     for (let i = 0; i < 180; i++) sim.step([hold({}), hold({}), hold({}), hold({})]);
@@ -67,11 +78,39 @@ describe('M4 hazards', () => {
       'spikeball',
     ];
     for (const kind of kinds) {
-      const sim = makeSim({ level: getLevel(`test-${kind}`), seed: 30, settings: { playerCount: 1 } });
+      const sim = makeSim({
+        level: getLevel(`test-${kind}`),
+        seed: 30,
+        settings: { playerCount: 1 },
+      });
       expect(() => {
         for (let i = 0; i < 60; i++) sim.step();
       }).not.toThrow();
     }
+  });
+
+  it('buildFrame uses triangle teeth for spikes and sdPie for saws', () => {
+    const spikes = makeSim({
+      level: getLevel('test-spikes'),
+      seed: 21,
+      settings: { playerCount: 1 },
+    });
+    const saw = makeSim({ level: getLevel('test-saw'), seed: 21, settings: { playerCount: 1 } });
+    const spikeFrame = buildFrame(spikes, createCamera(spikes.ctx.level.bounds), 0, 1280, 720, [], {
+      freezeCamera: true,
+    });
+    const sawFrame = buildFrame(saw, createCamera(saw.ctx.level.bounds), 0, 1280, 720, [], {
+      freezeCamera: true,
+    });
+    expect(spikeFrame.groups.some((g) => g.primitives.some((p) => p.kind === PRIM_TRIANGLE))).toBe(
+      true,
+    );
+    expect(sawFrame.groups.some((g) => g.primitives.some((p) => p.kind === PRIM_PIE))).toBe(true);
+    const lava = makeSim({ level: getLevel('test-lava'), seed: 21, settings: { playerCount: 1 } });
+    const lavaFrame = buildFrame(lava, createCamera(lava.ctx.level.bounds), 0, 1280, 720, [], {
+      freezeCamera: true,
+    });
+    expect(lavaFrame.groups.some((g) => g.fx === 'lava')).toBe(true);
   });
 
   it('registers one module file per Appendix D type id', () => {
@@ -83,7 +122,11 @@ describe('M4 hazards', () => {
   });
 
   it('trigger.drop spawns the named weapon at atTick', () => {
-    const sim = makeSim({ level: getLevel('test-trigger.drop'), seed: 31, settings: { playerCount: 1 } });
+    const sim = makeSim({
+      level: getLevel('test-trigger.drop'),
+      seed: 31,
+      settings: { playerCount: 1 },
+    });
     let spawned = false;
     for (let i = 0; i < 220; i++) {
       const ev = sim.step([hold({}), hold({}), hold({}), hold({})]);

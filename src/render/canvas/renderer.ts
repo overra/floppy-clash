@@ -1,8 +1,17 @@
 import { worldToScreen, type CameraState } from '../camera';
 import type { RenderFrame } from '../frame';
+import {
+  emptyReadback,
+  inspectMappedRgba,
+  PIXEL_BYTES,
+  READBACK_H,
+  READBACK_W,
+  type FramebufferReadback,
+} from '../gpu/readback';
 import { coverage, opSmoothUnion, opUnion, primitiveSdf } from '../sdf/primitives';
 
 export type PipelineBackend = 'typegpu' | 'none';
+export type { FramebufferReadback };
 
 export type Renderer = {
   kind: 'canvas' | 'gpu';
@@ -16,6 +25,8 @@ export type Renderer = {
   lastGpuMs: number;
   /** Increments only when a dirty persistent decal texture is uploaded/blitted as a new stamp batch. */
   decalUploads: number;
+  /** PLAN §6: pixels from the live framebuffer (WebGPU copy or Canvas 2D). */
+  readFramebuffer(): Promise<FramebufferReadback>;
 };
 
 export function createCanvasRenderer(canvas: HTMLCanvasElement): Renderer {
@@ -35,6 +46,23 @@ export function createCanvasRenderer(canvas: HTMLCanvasElement): Renderer {
     canvas,
     lastGpuMs: 0,
     decalUploads: 0,
+    async readFramebuffer() {
+      const w = Math.min(READBACK_W, canvas.width);
+      const h = Math.min(READBACK_H, canvas.height);
+      if (w < 1 || h < 1) return emptyReadback('unavailable', 'canvas-empty');
+      try {
+        const data = ctx.getImageData(0, 0, w, h).data;
+        return inspectMappedRgba(
+          new Uint8Array(data.buffer, data.byteOffset, data.byteLength),
+          w,
+          h,
+          w * PIXEL_BYTES,
+          'canvas-2d',
+        );
+      } catch (err) {
+        return emptyReadback('unavailable', err instanceof Error ? err.message : String(err));
+      }
+    },
     resize(w: number, h: number) {
       const dpr = window.devicePixelRatio || 1;
       canvas.width = Math.floor(w * dpr);
@@ -81,6 +109,23 @@ export function createCanvasRenderer(canvas: HTMLCanvasElement): Renderer {
             ctx.moveTo(a.x, a.y);
             ctx.lineTo(b.x, b.y);
             ctx.stroke();
+          } else if (p.kind === 3) {
+            const a = worldToScreen(cam, p.ax, p.ay, w, h);
+            const b = worldToScreen(cam, p.bx, p.by, w, h);
+            const c = worldToScreen(cam, p.ax + p.r, p.ay + p.r, w, h);
+            ctx.beginPath();
+            ctx.moveTo(a.x, a.y);
+            ctx.lineTo(b.x, b.y);
+            ctx.lineTo(c.x, c.y);
+            ctx.closePath();
+            ctx.fill();
+          } else if (p.kind === 4) {
+            const s = worldToScreen(cam, p.ax, p.ay, w, h);
+            ctx.beginPath();
+            ctx.moveTo(s.x, s.y);
+            ctx.arc(s.x, s.y, p.r * cam.zoom, -p.bx, p.bx);
+            ctx.closePath();
+            ctx.fill();
           } else {
             const s = worldToScreen(cam, p.ax, p.ay, w, h);
             const rw = p.bx * 2 * cam.zoom;

@@ -12,8 +12,14 @@ interface GPUDevice {
   createCommandEncoder(): GPUCommandEncoder;
   queue: {
     writeBuffer(buf: GPUBuffer, off: number, data: BufferSource): void;
-    writeTexture(dest: unknown, data: BufferSource | Uint8ClampedArray, layout: unknown, size: unknown): void;
+    writeTexture(
+      dest: unknown,
+      data: BufferSource | Uint8ClampedArray,
+      layout: unknown,
+      size: unknown,
+    ): void;
     submit(c: unknown[]): void;
+    onSubmittedWorkDone(): Promise<void>;
   };
 }
 interface GPUShaderModule {
@@ -23,7 +29,9 @@ interface GPURenderPipeline {
   getBindGroupLayout(i: number): unknown;
 }
 interface GPUBuffer {
-  dummy?: true;
+  mapAsync(mode: number, offset?: number, size?: number): Promise<void>;
+  getMappedRange(offset?: number, size?: number): ArrayBuffer;
+  unmap(): void;
 }
 interface GPUBindGroup {
   dummy?: true;
@@ -37,6 +45,11 @@ interface GPUTexture {
 }
 interface GPUCommandEncoder {
   beginRenderPass(desc: unknown): GPURenderPass;
+  copyTextureToBuffer(
+    source: { texture: GPUTexture; origin?: { x: number; y: number; z?: number } },
+    destination: { buffer: GPUBuffer; bytesPerRow: number; rowsPerImage?: number },
+    copySize: { width: number; height: number; depthOrArrayLayers?: number },
+  ): void;
   finish(): unknown;
 }
 interface GPURenderPass {
@@ -46,8 +59,8 @@ interface GPURenderPass {
   end(): void;
 }
 interface GPUCanvasContext {
-  configure(desc: unknown): void;
-  getCurrentTexture(): { createView(): unknown };
+  configure(desc: { device: GPUDevice; format: string; alphaMode?: string; usage?: number }): void;
+  getCurrentTexture(): GPUTexture;
   canvas?: HTMLCanvasElement;
 }
 type GPUTextureFormat = string;
@@ -64,11 +77,18 @@ interface HTMLCanvasElement {
 declare const GPUBufferUsage: {
   UNIFORM: number;
   COPY_DST: number;
+  COPY_SRC: number;
   STORAGE: number;
+  MAP_READ: number;
 };
 declare const GPUTextureUsage: {
   TEXTURE_BINDING: number;
   COPY_DST: number;
+  COPY_SRC: number;
   RENDER_ATTACHMENT: number;
+};
+declare const GPUMapMode: {
+  READ: number;
+  WRITE: number;
 };
 type GPUColorDict = { r: number; g: number; b: number; a: number };

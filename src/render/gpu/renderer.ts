@@ -1,10 +1,19 @@
 import { isRenderPipeline, tgpu, type TgpuRoot } from 'typegpu';
 import * as d from 'typegpu/data';
 import type { Renderer } from '../canvas/renderer';
+import type { PersistentDecalLayer } from '../fx/decals';
 import type { RenderFrame } from '../frame';
 import { createLightingPass, type LightingPass } from './lighting';
 import { packGroups, parseHex } from './pack';
-import type { PersistentDecalLayer } from '../fx/decals';
+import {
+  alignBytesPerRow,
+  emptyReadback,
+  inspectMappedRgba,
+  PIXEL_BYTES,
+  READBACK_H,
+  READBACK_W,
+  type FramebufferReadback,
+} from './readback';
 import {
   createDecalDrawPipeline,
   createSdfDrawPipeline,
@@ -66,7 +75,20 @@ async function createGpuRenderer(
   if (!context) return failInit('no-webgpu-context');
   const device = root.device;
   const format = navigator.gpu.getPreferredCanvasFormat();
-  context.configure({ device, format, alphaMode: 'premultiplied' });
+  let readbackEnabled = false;
+  let readbackError = '';
+  try {
+    context.configure({
+      device,
+      format,
+      alphaMode: 'premultiplied',
+      usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_SRC,
+    });
+    readbackEnabled = true;
+  } catch (err) {
+    readbackError = `configure-rejected-copy-src: ${errMsg(err)}`;
+    context.configure({ device, format, alphaMode: 'premultiplied' });
+  }
 
   let pipeline;
   try {
@@ -115,6 +137,52 @@ async function createGpuRenderer(
   let decalTexH = 0;
   let decalBind: ReturnType<typeof root.createBindGroup> | null = null;
 
+  const cropW = READBACK_W;
+  const cropH = READBACK_H;
+  const bytesPerRow = alignBytesPerRow(cropW * PIXEL_BYTES);
+  const stagingSize = bytesPerRow * cropH;
+  let staging: GPUBuffer | null = null;
+  if (readbackEnabled) {
+    try {
+      staging = device.createBuffer({
+        size: stagingSize,
+        usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST,
+      });
+    } catch (err) {
+      readbackEnabled = false;
+      readbackError = `staging-buffer: ${errMsg(err)}`;
+    }
+  }
+
+  let copyThisFrame = false;
+  let pendingRead: ((value: FramebufferReadback) => void) | null = null;
+  let inflightRead: Promise<FramebufferReadback> | null = null;
+
+  function failRead(reason: string): FramebufferReadback {
+    const out = emptyReadback('unavailable', reason);
+    pendingRead?.(out);
+    pendingRead = null;
+    inflightRead = null;
+    return out;
+  }
+
+  async function finishRead(): Promise<FramebufferReadback> {
+    if (!staging) return failRead(readbackError || 'no-staging');
+    try {
+      await device.queue.onSubmittedWorkDone();
+      await staging.mapAsync(GPUMapMode.READ);
+      const mapped = new Uint8Array(staging.getMappedRange().slice(0));
+      staging.unmap();
+      const out = inspectMappedRgba(mapped, cropW, cropH, bytesPerRow, 'webgpu-copy');
+      pendingRead?.(out);
+      pendingRead = null;
+      inflightRead = null;
+      return out;
+    } catch (err) {
+      return failRead(`map: ${errMsg(err)}`);
+    }
+  }
+
   function uploadDecals(layer: PersistentDecalLayer): void {
     if (!decalTex || !decalBind || layer.dirty) {
       if (!decalTex || decalTexW !== layer.width || decalTexH !== layer.height) {
@@ -152,6 +220,17 @@ async function createGpuRenderer(
     canvas,
     lastGpuMs: 0,
     decalUploads: 0,
+    readFramebuffer() {
+      if (!readbackEnabled || !staging) {
+        return Promise.resolve(emptyReadback('unavailable', readbackError || 'copy-src-disabled'));
+      }
+      if (inflightRead) return inflightRead;
+      inflightRead = new Promise<FramebufferReadback>((resolve) => {
+        pendingRead = resolve;
+        copyThisFrame = true;
+      });
+      return inflightRead;
+    },
     resize(w: number, h: number) {
       const dpr = window.devicePixelRatio || 1;
       canvas.width = Math.floor(w * dpr);
@@ -175,10 +254,11 @@ async function createGpuRenderer(
       groupBuf.write(packed.groupBytes);
       primBuf.write(packed.primBytes);
       const encoder = device.createCommandEncoder();
+      const current = context.getCurrentTexture();
       const pass = encoder.beginRenderPass({
         colorAttachments: [
           {
-            view: context.getCurrentTexture().createView(),
+            view: current.createView(),
             clearValue: hexToRgb(frame.theme.bottom),
             loadOp: 'clear',
             storeOp: 'store',
@@ -197,7 +277,38 @@ async function createGpuRenderer(
         pipeline.with(pass).with(bind).draw(6, Math.min(frame.groups.length, MAX_GROUPS));
       }
       pass.end();
-      device.queue.submit([encoder.finish()]);
+      if (copyThisFrame && staging && readbackEnabled) {
+        if (w < 1 || h < 1) {
+          copyThisFrame = false;
+          device.queue.submit([encoder.finish()]);
+          failRead('canvas-zero-size');
+          renderer.lastGpuMs = performance.now() - t0;
+          if (opts.lighting) lighting?.apply(frame, renderer.lastGpuMs, true);
+          return;
+        }
+        const rw = Math.min(cropW, w);
+        const rh = Math.min(cropH, h);
+        const ox = Math.max(0, Math.floor(w / 2) - Math.floor(rw / 2));
+        const oy = Math.max(0, Math.floor(h / 2) - Math.floor(rh / 2));
+        try {
+          encoder.copyTextureToBuffer(
+            { texture: current, origin: { x: ox, y: oy } },
+            { buffer: staging, bytesPerRow },
+            { width: rw, height: rh },
+          );
+          copyThisFrame = false;
+          device.queue.submit([encoder.finish()]);
+          void finishRead();
+        } catch (err) {
+          readbackEnabled = false;
+          readbackError = `copyTextureToBuffer: ${errMsg(err)}`;
+          copyThisFrame = false;
+          device.queue.submit([encoder.finish()]);
+          failRead(readbackError);
+        }
+      } else {
+        device.queue.submit([encoder.finish()]);
+      }
       renderer.lastGpuMs = performance.now() - t0;
       if (opts.lighting) lighting?.apply(frame, renderer.lastGpuMs, true);
     },

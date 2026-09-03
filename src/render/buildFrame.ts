@@ -30,7 +30,13 @@ import { FxLimb, type FxWorld } from './fx/world';
 import type { Particle } from './fx/particles';
 import { groupBounds, type RenderFrame, type ShapeGroup } from './frame';
 import { poseToPrimitives, secondaryFromVelocity, type LimbState } from './figure';
-import { PRIM_CAPSULE, PRIM_DISK, PRIM_ROUNDED_BOX } from './sdf/primitives';
+import {
+  PRIM_CAPSULE,
+  PRIM_DISK,
+  PRIM_PIE,
+  PRIM_ROUNDED_BOX,
+  PRIM_TRIANGLE,
+} from './sdf/primitives';
 import { PhysArm } from '../sim/traits';
 
 const COLORS = ['#f2c14e', '#4c8dff', '#e85d4c', '#3dcf7a'];
@@ -62,6 +68,27 @@ function nextLimb(fx: FxWorld | undefined, simId: number, vx: number, vy: number
   return cur;
 }
 
+/** PLAN §4.11: spikes use triangles; saw teeth use `sdPie`; lava stays a rounded box. */
+function hazardPrimitives(kind: number, x: number, y: number) {
+  const body = { kind: PRIM_ROUNDED_BOX, ax: x, ay: y, bx: 1.2, by: 0.35, r: 0.05 };
+  if (kind === HazardKind.Spikes) {
+    return [
+      body,
+      { kind: PRIM_TRIANGLE, ax: x - 0.45, ay: y + 0.15, bx: x - 0.2, by: y + 0.15, r: 0.45 },
+      { kind: PRIM_TRIANGLE, ax: x - 0.05, ay: y + 0.15, bx: x + 0.2, by: y + 0.15, r: 0.45 },
+      { kind: PRIM_TRIANGLE, ax: x + 0.35, ay: y + 0.15, bx: x + 0.6, by: y + 0.15, r: 0.45 },
+    ];
+  }
+  if (kind === HazardKind.Saw) {
+    return [
+      { kind: PRIM_DISK, ax: x, ay: y, bx: x, by: y, r: 0.42 },
+      { kind: PRIM_PIE, ax: x, ay: y, bx: 0.55, by: 0, r: 0.62 },
+      { kind: PRIM_PIE, ax: x, ay: y + 0.02, bx: 0.55, by: 0, r: 0.62 },
+    ];
+  }
+  return [body];
+}
+
 export type BuildFrameOpts = {
   debug?: boolean;
   freezeCamera?: boolean;
@@ -87,7 +114,10 @@ export function buildFrame(
   const targets: { x: number; y: number }[] = [];
   const lights: LightEmitter[] = [];
   const palette = opts.colorblind ? COLORS_CB : COLORS;
-  const physArms = new Map<number, { left?: { x: number; y: number }; right?: { x: number; y: number } }>();
+  const physArms = new Map<
+    number,
+    { left?: { x: number; y: number }; right?: { x: number; y: number } }
+  >();
   world.query(PhysArm, Transform).updateEach(([arm, at]) => {
     const rec = physArms.get(arm.owner) ?? {};
     if (arm.side < 0) rec.left = { x: at.x, y: at.y };
@@ -102,15 +132,16 @@ export function buildFrame(
       lights.push({ x, y, radius: 4.5, r: 1, g: 0.35, b: 0.08, intensity: 0.9 });
     }
     const color = hz.kind === 4 ? theme.hazard : hz.kind === 3 ? '#222' : theme.solid;
-    const fx = hz.kind === HazardKind.Lava ? 'lava' as const : undefined;
+    const fx = hz.kind === HazardKind.Lava ? ('lava' as const) : undefined;
+    const primitives = hazardPrimitives(hz.kind, x, y);
     groups.push({
-      ...groupBounds([{ kind: PRIM_ROUNDED_BOX, ax: x, ay: y, bx: 1, by: 0.4, r: 0.08 }]),
+      ...groupBounds(primitives),
       color,
       blend: 'union',
       smoothK: 0,
       layer: 1,
       fx,
-      primitives: [{ kind: PRIM_ROUNDED_BOX, ax: x, ay: y, bx: 1.2, by: 0.35, r: 0.05 }],
+      primitives,
     });
     if (hz.kind === HazardKind.Laser && hz.armed >= 1) {
       const reach = hz.param3 || 14;
@@ -123,7 +154,16 @@ export function buildFrame(
         blend: 'union',
         smoothK: 0,
         layer: 7,
-        primitives: [{ kind: PRIM_CAPSULE, ax: x, ay: y, bx: x + reach, by: y, r: hz.armed === 2 ? 0.03 : 0.06 }],
+        primitives: [
+          {
+            kind: PRIM_CAPSULE,
+            ax: x,
+            ay: y,
+            bx: x + reach,
+            by: y,
+            r: hz.armed === 2 ? 0.03 : 0.06,
+          },
+        ],
       });
     }
   });
@@ -133,12 +173,16 @@ export function buildFrame(
     const x = lerp(prev.x, t.x, alpha);
     const y = lerp(prev.y, t.y, alpha);
     groups.push({
-      ...groupBounds([{ kind: PRIM_ROUNDED_BOX, ax: x, ay: y, bx: def.shape.length * 0.5, by: 0.08, r: 0.04 }]),
+      ...groupBounds([
+        { kind: PRIM_ROUNDED_BOX, ax: x, ay: y, bx: def.shape.length * 0.5, by: 0.08, r: 0.04 },
+      ]),
       color: '#2b2b2b',
       blend: 'union',
       smoothK: 0,
       layer: 3,
-      primitives: [{ kind: PRIM_ROUNDED_BOX, ax: x, ay: y, bx: def.shape.length * 0.5, by: 0.07, r: 0.03 }],
+      primitives: [
+        { kind: PRIM_ROUNDED_BOX, ax: x, ay: y, bx: def.shape.length * 0.5, by: 0.07, r: 0.03 },
+      ],
     });
   });
 
@@ -152,7 +196,16 @@ export function buildFrame(
       blend: 'union',
       smoothK: 0,
       layer: 3,
-      primitives: [{ kind: PRIM_CAPSULE, ax: p.x, ay: p.y, bx: p.x + p.vx * 0.02, by: p.y + p.vy * 0.02, r: 0.06 }],
+      primitives: [
+        {
+          kind: PRIM_CAPSULE,
+          ax: p.x,
+          ay: p.y,
+          bx: p.x + p.vx * 0.02,
+          by: p.y + p.vy * 0.02,
+          r: 0.06,
+        },
+      ],
     });
   });
 
@@ -172,81 +225,83 @@ export function buildFrame(
     });
   });
 
-  world.query(Player, Transform, PrevTransform, Controller, Aim, Combat).updateEach(([p, t, prev, ctrl, aim, combat], e) => {
-    const x = lerp(prev.x, t.x, alpha);
-    const y = lerp(prev.y, t.y, alpha);
-    if (!e.has(Dead)) targets.push({ x, y });
-    const next = nextLimb(opts.fxWorld, e, ctrl.vx, ctrl.vy);
-    const arms = physArms.get(p.slot);
-    const prims = poseToPrimitives(
-      {
-        x,
-        y,
-        facing: ctrl.facing,
-        ducking: ctrl.ducking,
-        grounded: ctrl.grounded,
-        wallSliding: ctrl.wallSliding,
-        vx: ctrl.vx,
-        vy: ctrl.vy,
-        aimX: aim.x,
-        aimY: aim.y,
-        punching: combat.punchActive > 0,
-        blocking: combat.blocking,
-        dead: e.has(Dead),
-        phase: ctx.tick / 60,
-        physicsArmL: arms?.left,
-        physicsArmR: arms?.right,
-      },
-      next,
-    );
-    groups.push({
-      ...groupBounds(prims, 0.5),
-      color: palette[p.color % 4] ?? palette[0]!,
-      blend: 'smoothUnion',
-      smoothK: 0.16,
-      layer: 5,
-      primitives: prims,
+  world
+    .query(Player, Transform, PrevTransform, Controller, Aim, Combat)
+    .updateEach(([p, t, prev, ctrl, aim, combat], e) => {
+      const x = lerp(prev.x, t.x, alpha);
+      const y = lerp(prev.y, t.y, alpha);
+      if (!e.has(Dead)) targets.push({ x, y });
+      const next = nextLimb(opts.fxWorld, e, ctrl.vx, ctrl.vy);
+      const arms = physArms.get(p.slot);
+      const prims = poseToPrimitives(
+        {
+          x,
+          y,
+          facing: ctrl.facing,
+          ducking: ctrl.ducking,
+          grounded: ctrl.grounded,
+          wallSliding: ctrl.wallSliding,
+          vx: ctrl.vx,
+          vy: ctrl.vy,
+          aimX: aim.x,
+          aimY: aim.y,
+          punching: combat.punchActive > 0,
+          blocking: combat.blocking,
+          dead: e.has(Dead),
+          phase: ctx.tick / 60,
+          physicsArmL: arms?.left,
+          physicsArmR: arms?.right,
+        },
+        next,
+      );
+      groups.push({
+        ...groupBounds(prims, 0.5),
+        color: palette[p.color % 4] ?? palette[0]!,
+        blend: 'smoothUnion',
+        smoothK: 0.16,
+        layer: 5,
+        primitives: prims,
+      });
+      if (e.has(Crown) && !e.has(Dead)) {
+        groups.push({
+          minX: x - 0.25,
+          minY: y + 0.85,
+          maxX: x + 0.25,
+          maxY: y + 1.2,
+          color: '#f2c14e',
+          blend: 'union',
+          smoothK: 0,
+          layer: 7,
+          primitives: [{ kind: PRIM_DISK, ax: x, ay: y + 1.02, bx: x, by: y + 1.02, r: 0.14 }],
+        });
+      }
+      if (combat.blocking && !e.has(Dead)) {
+        const arc = (ctx.tuning.blockArcDeg * Math.PI) / 180 / 2;
+        const base = Math.atan2(aim.y, aim.x);
+        const a0 = base - arc;
+        const a1 = base + arc;
+        groups.push({
+          minX: x - 1.2,
+          minY: y - 1.2,
+          maxX: x + 1.2,
+          maxY: y + 1.2,
+          color: '#c8dcff',
+          blend: 'union',
+          smoothK: 0,
+          layer: 7,
+          primitives: [
+            {
+              kind: PRIM_CAPSULE,
+              ax: x + Math.cos(a0) * 0.7,
+              ay: y + Math.sin(a0) * 0.7,
+              bx: x + Math.cos(a1) * 0.7,
+              by: y + Math.sin(a1) * 0.7,
+              r: 0.06,
+            },
+          ],
+        });
+      }
     });
-    if (e.has(Crown) && !e.has(Dead)) {
-      groups.push({
-        minX: x - 0.25,
-        minY: y + 0.85,
-        maxX: x + 0.25,
-        maxY: y + 1.2,
-        color: '#f2c14e',
-        blend: 'union',
-        smoothK: 0,
-        layer: 7,
-        primitives: [{ kind: PRIM_DISK, ax: x, ay: y + 1.02, bx: x, by: y + 1.02, r: 0.14 }],
-      });
-    }
-    if (combat.blocking && !e.has(Dead)) {
-      const arc = (ctx.tuning.blockArcDeg * Math.PI) / 180 / 2;
-      const base = Math.atan2(aim.y, aim.x);
-      const a0 = base - arc;
-      const a1 = base + arc;
-      groups.push({
-        minX: x - 1.2,
-        minY: y - 1.2,
-        maxX: x + 1.2,
-        maxY: y + 1.2,
-        color: '#c8dcff',
-        blend: 'union',
-        smoothK: 0,
-        layer: 7,
-        primitives: [
-          {
-            kind: PRIM_CAPSULE,
-            ax: x + Math.cos(a0) * 0.7,
-            ay: y + Math.sin(a0) * 0.7,
-            bx: x + Math.cos(a1) * 0.7,
-            by: y + Math.sin(a1) * 0.7,
-            r: 0.06,
-          },
-        ],
-      });
-    }
-  });
 
   world.query(Weapon, Held).updateEach(([w], e) => {
     const def = weaponByIndex(w.defId);
@@ -266,7 +321,14 @@ export function buildFrame(
       smoothK: 0,
       layer: 7,
       primitives: [
-        { kind: PRIM_CAPSULE, ax: t.x, ay: t.y, bx: t.x + aim.x * 10, by: t.y + aim.y * 10, r: 0.02 },
+        {
+          kind: PRIM_CAPSULE,
+          ax: t.x,
+          ay: t.y,
+          bx: t.x + aim.x * 10,
+          by: t.y + aim.y * 10,
+          r: 0.02,
+        },
       ],
     });
   });
@@ -298,7 +360,9 @@ export function buildFrame(
       blend: 'union',
       smoothK: 0,
       layer: 0,
-      primitives: [{ kind: PRIM_CAPSULE, ax: d.x, ay: d.y, bx: d.x, by: d.y + 1.6 * s, r: 0.12 * s }],
+      primitives: [
+        { kind: PRIM_CAPSULE, ax: d.x, ay: d.y, bx: d.x, by: d.y + 1.6 * s, r: 0.12 * s },
+      ],
     });
   }
 
@@ -333,14 +397,24 @@ export function buildFrame(
     : undefined;
   return {
     groups,
-    camera: { x: cam.x, y: cam.y, zoom: cam.zoom, ppm: cam.zoom, shakeX: cam.shakeX, shakeY: cam.shakeY },
+    camera: {
+      x: cam.x,
+      y: cam.y,
+      zoom: cam.zoom,
+      ppm: cam.zoom,
+      shakeX: cam.shakeX,
+      shakeY: cam.shakeY,
+    },
     theme: { top: theme.backgroundTop, bottom: theme.backgroundBottom, solid: theme.solid },
     lights,
     debug,
     decalLayer: opts.decalLayer,
     hud: {
       slowmo: rs?.phase === RoundPhase.LastKill,
-      countdown: rs?.phase === RoundPhase.Countdown ? Math.ceil((ctx.tuning.countdownTicks - (rs.ticks ?? 0)) / 60) : 0,
+      countdown:
+        rs?.phase === RoundPhase.Countdown
+          ? Math.ceil((ctx.tuning.countdownTicks - (rs.ticks ?? 0)) / 60)
+          : 0,
       wins: ms ? [ms.wins0, ms.wins1, ms.wins2, ms.wins3] : [0, 0, 0, 0],
       firstTo: ms?.firstTo ?? 0,
       showWins: (ms?.showWins ?? 1) === 1,

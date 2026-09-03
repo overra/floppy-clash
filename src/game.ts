@@ -19,6 +19,7 @@ import { matchLevelPool } from './levels/catalog';
 import { addShake, createCamera } from './render/camera';
 import { buildFrame } from './render/buildFrame';
 import { createCanvasRenderer, type Renderer } from './render/canvas/renderer';
+import { emptyReadback, type FramebufferReadback } from './render/gpu/readback';
 import { getLastGpuInitError, tryCreateGpuRenderer } from './render/gpu/renderer';
 import { createDecalLayer, stampFxDecals, type PersistentDecalLayer } from './render/fx/decals';
 import { emitIntoWorld, listParticles, stepFxParticles } from './render/fx/particles';
@@ -99,6 +100,7 @@ type FloppyDebug = {
   gpuPipelineApi: 'root.createRenderPipeline' | '';
   gpuPipelineResourceType: string;
   gpuInitError: string;
+  readFramebuffer: () => Promise<FramebufferReadback>;
 };
 
 declare global {
@@ -735,6 +737,8 @@ export function createGame(root: HTMLElement): Game {
       gpuPipelineApi: renderer?.pipelineApi ?? '',
       gpuPipelineResourceType: renderer?.pipelineResourceType ?? '',
       gpuInitError: getLastGpuInitError(),
+      readFramebuffer: () =>
+        renderer?.readFramebuffer() ?? Promise.resolve(emptyReadback('unavailable', 'no-renderer')),
       inspect:
         (sim ?? clientView?.sim)
           ? formatInspect(inspectWorld((sim ?? clientView!.sim).ecs, 12))

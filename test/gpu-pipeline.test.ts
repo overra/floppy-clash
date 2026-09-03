@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { isTgpuFragmentFn, isTgpuVertexFn } from 'typegpu';
 import {
   CAMERA_STRIDE,
@@ -40,10 +40,23 @@ describe('TypeGPU live SDF draw path (PLAN §4.11)', () => {
     expect(wgsl).not.toMatch(/fn sd_disk\(/);
     expect(wgsl).not.toMatch(/fn sd_rbox\(/);
     expect(wgsl).not.toMatch(/fn smin\(/);
+    // PLAN §4.11 lava is `@typegpu/noise` displacement, not sin/cos.
+    expect(wgsl).toMatch(/perlin|computeJunctionGradient|getJunctionGradient/i);
     // Pipeline factories used by the renderer are TypeGPU createRenderPipeline wrappers.
     expect(typeof createSdfDrawPipeline).toBe('function');
     expect(typeof createDecalDrawPipeline).toBe('function');
     expect(createSdfDrawPipeline.length).toBe(2);
+  });
+
+  it('compiles the live TypeGPU pipeline without implicit i32/u32/f32 conversions', () => {
+    const warns: string[] = [];
+    const spy = vi.spyOn(console, 'warn').mockImplementation((...args: unknown[]) => {
+      warns.push(args.map(String).join(' '));
+    });
+    resolveSdfDrawWgsl();
+    resolveGlowWgsl();
+    spy.mockRestore();
+    expect(warns.filter((w) => w.includes('implicit-conversion'))).toEqual([]);
   });
 
   it('packs groups to the TypeGPU d.struct strides', () => {
@@ -85,6 +98,18 @@ describe('GPU boot order (PLAN §4.11)', () => {
     const renderer = readFileSync(resolve(process.cwd(), 'src/render/gpu/renderer.ts'), 'utf8');
     expect(renderer).toContain("canvas.getContext('webgpu')");
     expect(renderer).toContain('createSdfDrawPipeline');
+    expect(renderer).toContain('copyTextureToBuffer');
+    expect(renderer).toContain('COPY_SRC');
+    expect(renderer).toContain('readFramebuffer');
+  });
+});
+
+describe('PLAN §6 GPU e2e gate', () => {
+  it('reads the WebGPU framebuffer instead of faking pixels from getContext', () => {
+    const spec = readFileSync(resolve(process.cwd(), 'e2e/gpu.spec.ts'), 'utf8');
+    expect(spec).toContain('readFramebuffer');
+    expect(spec).toContain('webgpu-copy');
+    expect(spec).not.toMatch(/if \(canvas\.getContext\('webgpu'\)\)/);
   });
 });
 

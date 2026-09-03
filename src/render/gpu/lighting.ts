@@ -90,12 +90,12 @@ export const glowVertex = tgpu
     out: { pos: d.builtin.position },
   })((input) => {
     'use gpu';
-    let x = -1.0;
-    let y = -1.0;
-    if (input.vertexIndex === 1) {
-      x = 3.0;
-    } else if (input.vertexIndex === 2) {
-      y = 3.0;
+    let x = d.f32(-1);
+    let y = d.f32(-1);
+    if (input.vertexIndex === d.u32(1)) {
+      x = d.f32(3);
+    } else if (input.vertexIndex === d.u32(2)) {
+      y = d.f32(3);
     }
     return { pos: d.vec4f(x, y, 0, 1) };
   })
@@ -110,18 +110,18 @@ export const glowFragment = tgpu
     const cam = glowLayout.$.camera;
     const lights = glowLayout.$.lights;
     const ppm = cam.zoom;
-    const wx = ((input.pos.x / cam.view.x - 0.5) * cam.view.x) / ppm + cam.x;
-    const wy = ((0.5 - input.pos.y / cam.view.y) * cam.view.y) / ppm + cam.y;
-    let accx = 0.5 * 0.0;
-    let accy = 0.5 * 0.0;
-    let accz = 0.5 * 0.0;
-    for (let i = 0; i < 16; i += 1) {
-      if (lights.count > i) {
+    const wx = ((input.pos.x / cam.view.x - d.f32(0.5)) * cam.view.x) / ppm + cam.x;
+    const wy = ((d.f32(0.5) - input.pos.y / cam.view.y) * cam.view.y) / ppm + cam.y;
+    let accx = d.f32();
+    let accy = d.f32();
+    let accz = d.f32();
+    for (const i of tgpu.unroll(std.range(16))) {
+      if (lights.count > d.u32(i)) {
         const e = lights.items[i]!;
         const dx = wx - e.pos.x;
         const dy = wy - e.pos.y;
         const dist = std.length(d.vec2f(dx, dy));
-        const t = 1.0 - std.clamp(dist / std.max(e.radius, 0.01), 0.0, 1.0);
+        const t = d.f32(1) - std.clamp(dist / std.max(e.radius, d.f32(0.01)), d.f32(0), d.f32(1));
         const w = e.intensity * t * t;
         accx += e.color.x * w;
         accy += e.color.y * w;
@@ -129,8 +129,13 @@ export const glowFragment = tgpu
       }
     }
     const acc = d.vec3f(accx, accy, accz);
-    const warmth = acc.mul(0.55);
-    return d.vec4f(warmth.x, warmth.y, warmth.z, std.min(0.45, std.length(acc) * 0.35));
+    const warmth = acc.mul(d.f32(0.55));
+    return d.vec4f(
+      warmth.x,
+      warmth.y,
+      warmth.z,
+      std.min(d.f32(0.45), std.length(acc) * d.f32(0.35)),
+    );
   })
   .$name('glowFragment');
 
