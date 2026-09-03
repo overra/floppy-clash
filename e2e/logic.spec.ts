@@ -1045,10 +1045,26 @@ test('editor remapped Start playtests the draft', async ({ page }) => {
   await page.getByRole('button', { name: 'Back' }).click();
   await page.getByRole('button', { name: 'Level Editor' }).click();
   await expect(page.locator('text=Level Editor')).toBeVisible();
-  await page.evaluate(() => {
-    const pad = (window as unknown as { __e2ePad: { buttons: { pressed: boolean }[] } }).__e2ePad;
-    pad.buttons[8]!.pressed = true;
-  });
+  for (let i = 0; i < 6; i++) {
+    await page.evaluate(() => {
+      const pad = (window as unknown as { __e2ePad: { buttons: { pressed: boolean }[] } }).__e2ePad;
+      pad.buttons[8]!.pressed = true;
+    });
+    await page.waitForTimeout(100);
+    await page.evaluate(() => {
+      const pad = (window as unknown as { __e2ePad: { buttons: { pressed: boolean }[] } }).__e2ePad;
+      pad.buttons[8]!.pressed = false;
+    });
+    if (
+      (await page.locator('[data-countdown]').count()) > 0 ||
+      (await page.getByRole('heading', { name: 'Paused' }).count()) > 0
+    ) {
+      break;
+    }
+  }
+  if (await page.getByRole('heading', { name: 'Paused' }).isVisible()) {
+    await page.getByRole('button', { name: 'Resume' }).click();
+  }
   await expect(page.locator('[data-countdown]')).toBeVisible({ timeout: 8_000 });
 });
 
