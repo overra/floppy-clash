@@ -43,7 +43,9 @@ export function hazardsStep(world: World): void {
       const predX = (pos?.x ?? ht.x) + (vel?.x ?? 0) * dt;
       const predY = (pos?.y ?? ht.y) + (vel?.y ?? 0) * dt;
       const sweep =
-        hz.kind === HazardKind.Saw || hz.kind === HazardKind.Crusher
+        hz.kind === HazardKind.Saw ||
+        hz.kind === HazardKind.Crusher ||
+        hz.kind === HazardKind.Spikeball
           ? pt.x >= Math.min(prev?.x ?? ht.x, ht.x, pos?.x ?? ht.x, predX) - reach &&
             pt.x <= Math.max(prev?.x ?? ht.x, ht.x, pos?.x ?? ht.x, predX) + reach &&
             pt.y >= Math.min(prev?.y ?? ht.y, ht.y, pos?.y ?? ht.y, predY) - 1.6 &&

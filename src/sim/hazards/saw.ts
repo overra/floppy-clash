@@ -1,13 +1,10 @@
 import { Vec2 } from 'planck';
 import { getContext } from '../context';
 import { HazardKind, HazardPath, PrevTransform, Transform } from '../traits';
-import { createKinematicCircle, kill, stepHazardPath } from './common';
+import { createKinematicCircle, diskSweepsPlayer, kill, stepHazardPath } from './common';
 import type { HazardModule } from './types';
 
-/**
- * PLAN M4: swept kill disk so a 60 Hz tick cannot tunnel a player through a translating saw.
- * `reach` is the combined player+blade radius (same as the old point-sample nearKill).
- */
+/** PLAN M4: swept kill disk so a 60 Hz tick cannot tunnel a player through a translating saw. */
 export function sawOverlaps(
   px: number,
   py: number,
@@ -17,18 +14,7 @@ export function sawOverlaps(
   prevX = hx,
   prevY = hy,
 ): boolean {
-  const dx = hx - prevX;
-  const dy = hy - prevY;
-  const len2 = dx * dx + dy * dy;
-  let t = 0;
-  if (len2 > 1e-8) {
-    t = Math.max(0, Math.min(1, ((px - prevX) * dx + (py - prevY) * dy) / len2));
-  }
-  const cx = prevX + dx * t;
-  const cy = prevY + dy * t;
-  const pr = 0.3;
-  const ph = 0.9;
-  return Math.abs(px - cx) < reach + pr && Math.abs(py - cy) < reach + ph;
+  return diskSweepsPlayer(px, py, hx, hy, reach, prevX, prevY);
 }
 
 export const saw: HazardModule = {

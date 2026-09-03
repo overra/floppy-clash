@@ -1,8 +1,8 @@
 import { RevoluteJoint } from 'planck';
 import { getContext } from '../context';
 import { createCircleBody, registerBody } from '../physics/bodies';
-import { HazardKind, Transform } from '../traits';
-import { nearKill, spawnHazardEntity } from './common';
+import { HazardKind, PrevTransform, Transform } from '../traits';
+import { diskSweepsPlayer, kill, spawnHazardEntity } from './common';
 import type { HazardModule } from './types';
 
 /** Appendix D: swinging on a chain, rolling, or dropping; instant kill. */
@@ -37,8 +37,35 @@ export const spikeball: HazardModule = {
     }
     return entity;
   },
-  contact(world, player, _hz, ht) {
+  contact(world, player, hz, ht, _ctrl, dt, hazard) {
     const pt = player.get(Transform);
-    if (pt) nearKill(world, player, pt, ht, 0.75);
+    if (!pt) return;
+    const ctx = getContext(world);
+    const prev = hazard.get(PrevTransform);
+    const pprev = player.get(PrevTransform);
+    const body = ctx.bodies.get(hazard);
+    const pos = body?.getPosition();
+    const vel = body?.getLinearVelocity();
+    const lastX = prev?.x ?? ht.x;
+    const lastY = prev?.y ?? ht.y;
+    const bodyX = pos?.x ?? ht.x;
+    const bodyY = pos?.y ?? ht.y;
+    const predX = bodyX + (vel?.x ?? 0) * dt;
+    const predY = bodyY + (vel?.y ?? 0) * dt;
+    const reach = (hz.param0 || 0.4) + 0.35;
+    const samples = [
+      [pt.x, pt.y],
+      [pprev?.x ?? pt.x, pprev?.y ?? pt.y],
+    ] as const;
+    for (const [px, py] of samples) {
+      if (
+        diskSweepsPlayer(px, py, ht.x, ht.y, reach, lastX, lastY) ||
+        diskSweepsPlayer(px, py, bodyX, bodyY, reach, ht.x, ht.y) ||
+        diskSweepsPlayer(px, py, predX, predY, reach, bodyX, bodyY)
+      ) {
+        kill(world, player, pt.x, pt.y);
+        return;
+      }
+    }
   },
 };

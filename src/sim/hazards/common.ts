@@ -255,6 +255,33 @@ export function kill(world: World, player: Entity, x: number, y: number): void {
   takeDamage(world, player, 9999, 'body', -1, x, y, true);
 }
 
+/**
+ * PLAN M4: closest point on a last→now segment, then a player-sized AABB.
+ * Used by translating saws and fast spikeballs so 60 Hz cannot tunnel.
+ */
+export function diskSweepsPlayer(
+  px: number,
+  py: number,
+  hx: number,
+  hy: number,
+  reach = 0.7,
+  prevX = hx,
+  prevY = hy,
+): boolean {
+  const dx = hx - prevX;
+  const dy = hy - prevY;
+  const len2 = dx * dx + dy * dy;
+  let t = 0;
+  if (len2 > 1e-8) {
+    t = Math.max(0, Math.min(1, ((px - prevX) * dx + (py - prevY) * dy) / len2));
+  }
+  const cx = prevX + dx * t;
+  const cy = prevY + dy * t;
+  const pr = 0.3;
+  const ph = 0.9;
+  return Math.abs(px - cx) < reach + pr && Math.abs(py - cy) < reach + ph;
+}
+
 export function nearKill(
   world: World,
   player: Entity,

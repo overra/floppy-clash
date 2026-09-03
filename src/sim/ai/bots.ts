@@ -81,10 +81,33 @@ export function hazardAhead(
   return danger;
 }
 
+function ignoreNonWalls(hit: { kind: string }): boolean {
+  return (
+    hit.kind === 'sensor' ||
+    hit.kind === 'projectile' ||
+    hit.kind === 'player' ||
+    hit.kind === 'ragdoll' ||
+    hit.kind === 'weapon'
+  );
+}
+
 /** Horizontal wall probe used by the climb heuristic (PLAN 4.14). */
 export function wallToward(world: World, x: number, y: number, dir: number): boolean {
   const sign = Math.sign(dir) || 1;
-  return Boolean(raycastClosest(world, x, y, x + sign * 0.55, y));
+  return Boolean(raycastClosest(world, x, y, x + sign * 0.55, y, ignoreNonWalls));
+}
+
+/**
+ * PLAN 2.2 / 4.14: press into the nearer shaft wall so wall-jumps bounce
+ * instead of always driving toward the target (which never slides the far wall).
+ */
+export function nearerWallDir(world: World, x: number, y: number): number {
+  const right = raycastClosest(world, x, y, x + 0.55, y, ignoreNonWalls);
+  const left = raycastClosest(world, x, y, x - 0.55, y, ignoreNonWalls);
+  const rd = right ? Math.hypot(right.x - x, right.y - y) : 99;
+  const ld = left ? Math.hypot(left.x - x, left.y - y) : 99;
+  if (rd > 0.6 && ld > 0.6) return 0;
+  return rd <= ld ? 1 : -1;
 }
 
 /** Climb when a wall is in the move dir and the bot is airborne or the target is above. */
@@ -110,7 +133,9 @@ export function thinkBots(world: World): void {
     world.query(Player, Transform).updateEach(([_p, ot], other) => {
       if (other === entity || other.has(Dead)) return;
       if (!target.cur) target.cur = { x: ot.x, y: ot.y };
-      else if (Math.hypot(ot.x - tr.x, ot.y - tr.y) < Math.hypot(target.cur.x - tr.x, target.cur.y - tr.y)) {
+      else if (
+        Math.hypot(ot.x - tr.x, ot.y - tr.y) < Math.hypot(target.cur.x - tr.x, target.cur.y - tr.y)
+      ) {
         target.cur = { x: ot.x, y: ot.y };
       }
     });
@@ -138,11 +163,13 @@ export function thinkBots(world: World): void {
       input.attack = !retreat && bot.think % 18 < 6;
       input.block = bulletApproaching(world, tr.x, tr.y);
       if (dy > 1.2 || Math.abs(dx) > 3) input.jump = bot.think % 16 < 3;
-      const climbDir = Math.sign(input.moveX) || Math.sign(dx) || ctrl.facing || 1;
+      const prefer = Math.sign(input.moveX) || Math.sign(dx) || ctrl.facing || 1;
+      const near = nearerWallDir(world, tr.x, tr.y);
+      const climbDir = near || prefer;
       climbing = shouldClimb({
         grounded: ctrl.grounded,
         dy,
-        wall: wallToward(world, tr.x, tr.y, climbDir),
+        wall: near !== 0 || wallToward(world, tr.x, tr.y, climbDir),
       });
       if (climbing) {
         input.moveX = climbDir;

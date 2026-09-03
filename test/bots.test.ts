@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { bulletApproaching, hazardAhead, shouldClimb, wallToward } from '../src/sim/ai/bots';
+import {
+  bulletApproaching,
+  hazardAhead,
+  nearerWallDir,
+  shouldClimb,
+  wallToward,
+} from '../src/sim/ai/bots';
 import { getLevel } from '../src/levels/catalog';
 import { spawnWeapon } from '../src/sim/systems/weapons';
 import {
@@ -184,6 +190,17 @@ describe('M9 bots', () => {
     expect(shouldClimb({ grounded: true, dy: 1.15, wall: false })).toBe(false);
   });
 
+  it('nearerWallDir presses into the closer shaft wall (PLAN 4.14)', () => {
+    const sim = makeSim({
+      level: gymLevel,
+      seed: 98,
+      settings: { playerCount: 1, bots: 1 },
+    });
+    expect(nearerWallDir(sim.ecs, 4.7, 3.2)).toBe(1);
+    expect(nearerWallDir(sim.ecs, 3.3, 3.2)).toBe(-1);
+    expect(nearerWallDir(sim.ecs, 16, 3.2)).toBe(0);
+  });
+
   it('wall-jumps into a shaft wall when generic jump would not fire (PLAN 4.14)', () => {
     const sim = makeSim({
       level: gymLevel,
@@ -248,7 +265,7 @@ describe('M9 bots', () => {
     expect(sim.ctx.inputs[slot]?.moveX ?? 0).toBeGreaterThan(0.2);
   });
 
-  it('a bot in the gym shaft actually gains height via wall-jumps (PLAN 4.14)', () => {
+  it('a bot in the gym shaft wall-climbs past a single jump (PLAN 4.14 / M1)', () => {
     const sim = makeSim({
       level: gymLevel,
       seed: 101,
@@ -259,12 +276,20 @@ describe('M9 bots', () => {
     pin(sim, bot, 4.7, 3.2);
     const y0 = bot.get(Transform)?.y ?? 3.2;
     let apex = y0;
-    for (let i = 0; i < 240; i++) {
+    let wallJumps = 0;
+    let prevLock = 0;
+    for (let i = 0; i < 360; i++) {
       pin(sim, human, 4.9, 12);
       sim.step();
       apex = Math.max(apex, bot.get(Transform)?.y ?? apex);
+      const lock = bot.get(Controller)?.lockTicks ?? 0;
+      if (lock > prevLock) wallJumps += 1;
+      prevLock = lock;
     }
-    expect(apex).toBeGreaterThan(y0 + 2);
+    // One floor jump is ≈2.0 m; M1 shaft climb is 6 tiles (y ≥ 8.5).
+    expect(apex).toBeGreaterThan(y0 + 4);
+    expect(apex).toBeGreaterThanOrEqual(8.5);
+    expect(wallJumps).toBeGreaterThanOrEqual(2);
   });
 
   it('a bot actually blocks a live incoming bullet (PLAN 4.14)', () => {

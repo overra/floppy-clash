@@ -16,6 +16,7 @@ import {
   Transform,
 } from '../src/sim/traits';
 import { crusherOverlaps } from '../src/sim/hazards/crusher';
+import { diskSweepsPlayer } from '../src/sim/hazards/common';
 import { sawOverlaps } from '../src/sim/hazards/saw';
 import { hold, makeSim, pin, playerOf } from './helpers';
 
@@ -88,6 +89,53 @@ describe('M4 hazards', () => {
     }
     expect(p.has(Dead) || (p.get(Health)?.hp ?? 1) <= 0).toBe(true);
     expect(Number.isFinite(p.get(Transform)?.x)).toBe(true);
+  });
+
+  it('does not tunnel a player through a translating crusher (PLAN M4 sweep)', () => {
+    const level = {
+      ...getLevel('test-crusher'),
+      id: 'sweep-crusher-live',
+      objects: [
+        { type: 'solid' as const, x: 12, y: 1, w: 24, h: 2 },
+        { type: 'crusher' as const, x: 8, y: 5, w: 1.5, h: 2, period: 1, speed: 720 },
+      ],
+    };
+    const sim = makeSim({ level, seed: 25, settings: { playerCount: 1 } });
+    const p = playerOf(sim);
+    pin(sim, p, 14, 5);
+    const hx = { n: 8 };
+    sim.ecs.query(Hazard, Transform).updateEach(([hz, t]) => {
+      if (hz.kind === HazardKind.Crusher) hx.n = t.x;
+    });
+    expect(Math.abs(hx.n - 14)).toBeGreaterThan(2);
+    sim.step([hold({}), hold({}), hold({}), hold({})]);
+    expect(p.has(Dead) || (p.get(Health)?.hp ?? 1) <= 0).toBe(false);
+    pin(sim, p, 14, 5);
+    sim.step([hold({}), hold({}), hold({}), hold({})]);
+    expect(p.has(Dead) || (p.get(Health)?.hp ?? 1) <= 0).toBe(true);
+  });
+
+  it('does not tunnel a player through a fast spikeball (PLAN M4 sweep)', () => {
+    expect(diskSweepsPlayer(14, 5, 20, 5, 0.75, 8, 5)).toBe(true);
+    expect(diskSweepsPlayer(4, 2, 20, 5, 0.75, 8, 5)).toBe(false);
+    const sim = makeSim({
+      level: getLevel('test-spikeball-roll'),
+      seed: 26,
+      settings: { playerCount: 1 },
+    });
+    const p = playerOf(sim);
+    sim.ecs.query(Hazard, Transform).updateEach(([hz, t], e) => {
+      if (hz.kind !== HazardKind.Spikeball) return;
+      e.set(Transform, { x: 8, y: 5, angle: 0 });
+      e.set(PrevTransform, { x: 8, y: 5, angle: 0 });
+      sim.ctx.bodies.get(e)?.setPosition({ x: 8, y: 5 });
+      sim.ctx.bodies.get(e)?.setLinearVelocity({ x: 720, y: 0 });
+      t.x = 8;
+      t.y = 5;
+    });
+    pin(sim, p, 14, 5);
+    sim.step([hold({}), hold({}), hold({}), hold({})]);
+    expect(p.has(Dead) || (p.get(Health)?.hp ?? 1) <= 0).toBe(true);
   });
 
   it('does not tunnel a player through a translating saw (PLAN M4 sweep)', () => {
