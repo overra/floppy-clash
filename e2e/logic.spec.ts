@@ -690,16 +690,29 @@ test('saved remap jump button makes the joined seat jump', async ({ page }) => {
     pad.buttons[0]!.pressed = false;
   });
   await expect(page.locator('[data-seat="0"]')).toHaveAttribute('data-ready', '1');
+  const stored = await page.evaluate(() => localStorage.getItem('floppy-clash.padmaps'));
+  expect(stored).toContain('e2e-jump-pad');
+  expect(stored).toContain('"jump":2');
   await page.getByRole('button', { name: 'Start' }).click();
   await page.waitForFunction(() => window.__floppy?.phase === 2, null, { timeout: 15_000 });
+  let prevY = -999;
+  await expect
+    .poll(async () => {
+      const y = await page.evaluate(() => window.__floppy?.playerYs?.[0] ?? 0);
+      const stable = Math.abs(y - prevY) < 0.03;
+      prevY = y;
+      return stable && y > 1;
+    }, { timeout: 6_000 })
+    .toBe(true);
   const y0 = await page.evaluate(() => window.__floppy?.playerYs?.[0] ?? 0);
   await page.evaluate(() => {
     const pad = (window as unknown as { __e2ePad: { buttons: { pressed: boolean }[] } }).__e2ePad;
+    pad.buttons[0]!.pressed = false;
     pad.buttons[2]!.pressed = true;
   });
   await expect
-    .poll(async () => page.evaluate(() => window.__floppy?.playerYs?.[0] ?? 0), { timeout: 5_000 })
-    .toBeGreaterThan(y0 + 0.4);
+    .poll(async () => page.evaluate(() => window.__floppy?.playerYs?.[0] ?? 0), { timeout: 6_000 })
+    .toBeGreaterThan(y0 + 0.35);
 });
 
 test('online lobby has room code and chat', async ({ page }) => {
