@@ -47,6 +47,9 @@ describe('settings persistence', () => {
     expect(s.kos).toBe(2);
     expect(s.matches).toBe(1);
     expect(s.wins).toBe(1);
+    expect(s.achievements.firstBlood).toBe(true);
+    expect(s.achievements.firstWin).toBe(true);
+    expect(s.achievements.tenKos).toBe(false);
   });
 });
 

@@ -18,12 +18,20 @@ export default defineConfig({
     baseURL: 'http://127.0.0.1:4173',
     trace: 'on-first-retry',
   },
-  webServer: {
-    command: 'npm run build && npx vite preview --host 127.0.0.1 --port 4173',
-    url: 'http://127.0.0.1:4173',
-    reuseExistingServer: !process.env.CI,
-    timeout: 180_000,
-  },
+  webServer: [
+    {
+      command: 'npm run build && npx vite preview --host 127.0.0.1 --port 4173',
+      url: 'http://127.0.0.1:4173',
+      reuseExistingServer: !process.env.CI,
+      timeout: 180_000,
+    },
+    {
+      command: 'PORT=8787 npx tsx server/signaling.ts',
+      url: 'http://127.0.0.1:8787',
+      reuseExistingServer: !process.env.CI,
+      timeout: 20_000,
+    },
+  ],
   projects: [
     {
       name: 'logic',
@@ -33,7 +41,7 @@ export default defineConfig({
           args: ['--use-gl=swiftshader'],
         },
       },
-      testMatch: /logic\.spec\.ts/,
+      testMatch: /logic\.spec\.ts|webrtc\.spec\.ts/,
     },
     {
       name: 'gpu',

@@ -21,6 +21,7 @@ const PALETTE = [
   'spikeball',
   'crusher',
   'trigger.drop',
+  'boss',
 ];
 
 export type EditorTool = string;
@@ -196,6 +197,20 @@ export function fromHash(hash: string): LevelDef | null {
   } catch {
     return null;
   }
+}
+
+const memoryStore = new Map<string, LevelDef>();
+
+export function resetMemoryLibrary(): void {
+  memoryStore.clear();
+}
+
+export async function saveMemory(level: LevelDef): Promise<void> {
+  memoryStore.set(level.id, structuredClone(level));
+}
+
+export async function loadMemory(): Promise<LevelDef[]> {
+  return [...memoryStore.values()].map((l) => structuredClone(l));
 }
 
 export async function saveLibrary(level: LevelDef): Promise<void> {

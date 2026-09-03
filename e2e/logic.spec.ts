@@ -81,6 +81,46 @@ test('settings persist toggles and editor property panel opens', async ({ page }
   await expect(page.locator('#edfields')).toBeVisible();
 });
 
+test('editor playtest starts a match from the draft', async ({ page }) => {
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Level Editor' }).click();
+  await expect(page.locator('text=Level Editor')).toBeVisible();
+  await page.getByRole('button', { name: 'Playtest' }).click();
+  await expect(page.locator('canvas#game')).toBeVisible();
+  await expect(page.locator('[data-countdown]')).toBeVisible({ timeout: 8_000 });
+});
+
+test('F3 debug HUD and F1 overlay flags are wired', async ({ page }) => {
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Solo vs Bots' }).click();
+  await page.keyboard.press('Enter');
+  await page.waitForTimeout(800);
+  if (await page.getByRole('heading', { name: 'Join' }).isVisible()) {
+    await page.getByRole('button', { name: 'Start' }).click();
+  }
+  await page.waitForFunction(() => window.__floppy?.phase === 2, null, { timeout: 15_000 });
+  await page.keyboard.press('F3');
+  await page.keyboard.press('F1');
+  await page.waitForTimeout(200);
+  const flags = await page.evaluate(() => ({
+    hud: window.__floppy?.debugHud,
+    draw: window.__floppy?.debugDraw,
+  }));
+  expect(flags.hud).toBe(true);
+  expect(flags.draw).toBe(true);
+  await expect(page.locator('pre', { hasText: 'hash' })).toBeVisible();
+});
+
+test('service worker registers for PWA offline cache', async ({ page }) => {
+  await page.goto('/');
+  const state = await page.evaluate(async () => {
+    if (!('serviceWorker' in navigator)) return 'no-sw';
+    const reg = await navigator.serviceWorker.ready;
+    return reg.active?.state ?? reg.installing?.state ?? 'missing';
+  });
+  expect(['activated', 'activating', 'installed']).toContain(state);
+});
+
 test('online lobby has room code and chat', async ({ page }) => {
   await page.goto('/');
   await page.getByRole('button', { name: 'Online' }).click();

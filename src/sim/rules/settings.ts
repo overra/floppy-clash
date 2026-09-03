@@ -9,6 +9,8 @@ export interface MatchSettings {
   enabledLevels: string[] | 'all';
   playerCount: number;
   bots: number;
+  /** PLAN 4.6 opt-in: motor-driven physics arms tracking aim. */
+  physicsArms: boolean;
 }
 
 export const DEFAULT_SETTINGS: MatchSettings = {
@@ -20,6 +22,7 @@ export const DEFAULT_SETTINGS: MatchSettings = {
   enabledLevels: 'all',
   playerCount: 2,
   bots: 0,
+  physicsArms: false,
 };
 
 export function mergeSettings(partial?: Partial<MatchSettings>): MatchSettings {

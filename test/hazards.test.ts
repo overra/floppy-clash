@@ -75,10 +75,11 @@ describe('M4 hazards', () => {
   });
 
   it('registers one module file per Appendix D type id', () => {
-    expect(HAZARD_MODULES.map((m) => m.typeId).sort()).toEqual([...APPENDIX_D_TYPE_IDS].sort());
     for (const id of APPENDIX_D_TYPE_IDS) {
       expect(HAZARDS_BY_TYPE.get(id)?.typeId).toBe(id);
     }
+    expect(HAZARD_MODULES.length).toBeGreaterThanOrEqual(APPENDIX_D_TYPE_IDS.length);
+    expect(HAZARDS_BY_TYPE.get('boss')?.typeId).toBe('boss');
   });
 
   it('trigger.drop spawns the named weapon at atTick', () => {

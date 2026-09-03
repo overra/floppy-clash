@@ -29,10 +29,22 @@ describe('M1 movement', () => {
     expect(punch).toBeGreaterThan(normal * 1.15);
   });
 
+  it('punch jump apex is ~1.5–2× height (±15%)', () => {
+    const punch = jumpRise(true, false);
+    expect(punch).toBeGreaterThan(1.8 * 1.5 * 0.85);
+    expect(punch).toBeLessThan(1.8 * 2.0 * 1.15);
+  });
+
   it('block punch jump is the highest', () => {
     const punch = jumpRise(true, false);
     const blockPunch = jumpRise(true, true);
     expect(blockPunch).toBeGreaterThan(punch * 1.05);
+  });
+
+  it('block punch jump apex is ~2.5–3× height (±20%)', () => {
+    const blockPunch = jumpRise(true, true);
+    expect(blockPunch).toBeGreaterThan(1.8 * 2.5 * 0.8);
+    expect(blockPunch).toBeLessThan(1.8 * 3.0 * 1.2);
   });
 
   it('climbs a 6-tile shaft in <= 4 wall jumps', () => {

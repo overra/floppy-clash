@@ -25,6 +25,8 @@ export const replication = {
   Status: 'replicated',
   Snake: 'replicated',
   Bot: 'local',
+  Boss: 'replicated',
+  PhysArm: 'local',
 } as const;
 
 export type ReplicationClass = 'replicated' | 'local';
@@ -96,6 +98,8 @@ export const Status = trait({
 });
 export const Snake = trait({ hp: 0, giant: 0, flying: 0, biteCooldown: 0 });
 export const Bot = trait({ slot: 0, think: 0 });
+export const Boss = trait({ hp: 200, bite: 0, speed: 3.2 });
+export const PhysArm = trait({ side: 0 });
 export const Crown = trait();
 export const Dead = trait();
 export const Loose = trait();
@@ -167,6 +171,7 @@ export const HazardKind = {
   Spikeball: 17,
   Crusher: 18,
   TriggerDrop: 19,
+  Boss: 20,
 } as const;
 
 export const ProjectileKind = {

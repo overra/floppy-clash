@@ -1,13 +1,15 @@
 import { createWorld, type Entity, type World } from 'koota';
 import { World as PhysicsWorld } from 'planck';
+import { thinkBosses } from './ai/boss';
 import { thinkBots } from './ai/bots';
+import { stepArms } from './player/arms';
 import { bindContext, getContext, makeContext, type SimContext } from './context';
 import type { SimEvents } from './events';
 import { blankInputs, normalizeInput, type PlayerInput } from './input';
 import { loadLevel, spawnPlayer } from './level/loader';
 import type { LevelDef } from './level/schema';
 import { assignNetId, createBoxBody, registerBody } from './physics/bodies';
-import type { FixtureUserData } from './physics/categories';
+import { bindContactRouter } from './physics/contacts';
 import { cloneTuning } from './tuning';
 import { mergeSettings, type MatchSettings } from './rules/settings';
 import { hashWorld, serializeWorld } from './snapshot';
@@ -51,12 +53,7 @@ export function createSimWorld(opts: CreateSimOptions): SimHandle {
   const ctx = makeContext(ecs, physics, opts.level, opts.seed, settings);
   ctx.extraLevels = opts.extraLevels ?? [];
   bindContext(ecs, ctx);
-  physics.on('begin-contact', (contact) => {
-    const a = contact.getFixtureA().getBody().getUserData() as FixtureUserData | undefined;
-    const b = contact.getFixtureB().getBody().getUserData() as FixtureUserData | undefined;
-    if (a?.kind === 'projectile') ctx.contactHits.add(a.entity);
-    if (b?.kind === 'projectile') ctx.contactHits.add(b.entity);
-  });
+  bindContactRouter(physics, ctx);
 
   ecs.add(
     RoundState({ phase: RoundPhase.Loading, ticks: 0, aliveMask: 0, lastKiller: -1, seed: opts.seed }),
@@ -99,8 +96,10 @@ export function createSimWorld(opts: CreateSimOptions): SimHandle {
     ctx.rawInputs = incoming.map((i) => ({ ...i }));
     ctx.inputs = incoming.map(normalizeInput);
     thinkBots(ecs);
+    thinkBosses(ecs);
     applyInputs(ecs);
     controller(ecs);
+    stepArms(ecs);
     combat(ecs);
     weapons(ecs);
     projectiles(ecs);

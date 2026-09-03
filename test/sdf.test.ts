@@ -68,6 +68,44 @@ describe('figure pose', () => {
     expect(prims.some((p) => p.kind === PRIM_DISK)).toBe(true);
   });
 
+  it('duck pose lowers the head disk', () => {
+    const stand = poseToPrimitives({
+      x: 0,
+      y: 0,
+      facing: 1,
+      ducking: false,
+      grounded: true,
+      wallSliding: false,
+      vx: 0,
+      vy: 0,
+      aimX: 1,
+      aimY: 0,
+      punching: false,
+      blocking: false,
+      dead: false,
+      phase: 0,
+    });
+    const duck = poseToPrimitives({
+      x: 0,
+      y: 0,
+      facing: 1,
+      ducking: true,
+      grounded: true,
+      wallSliding: false,
+      vx: 0,
+      vy: 0,
+      aimX: 1,
+      aimY: 0,
+      punching: false,
+      blocking: false,
+      dead: false,
+      phase: 0,
+    });
+    const headStand = stand.find((p) => p.kind === PRIM_DISK);
+    const headDuck = duck.find((p) => p.kind === PRIM_DISK);
+    expect(headDuck?.ay ?? 0).toBeLessThan(headStand?.ay ?? 1);
+  });
+
   it('wall-slide pose offsets the hip opposite facing', () => {
     const base = poseToPrimitives({
       x: 0,

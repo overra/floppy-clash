@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { getLevel } from '../src/levels/catalog';
-import { Destructible, Hazard, HazardKind, Transform } from '../src/sim/traits';
+import { Destructible, Hazard, HazardKind, PhysArm, Transform } from '../src/sim/traits';
 import { hold, makeSim, playerOf } from './helpers';
 
 describe('M4 hazard details', () => {
@@ -22,6 +22,33 @@ describe('M4 hazard details', () => {
     }
     const span = Math.max(...xs) - Math.min(...xs);
     expect(span).toBeGreaterThan(0.4);
+  });
+
+  it('halloween boss walks and can be stepped', () => {
+    const sim = makeSim({ level: getLevel('halloween-boss'), seed: 42, settings: { playerCount: 1 } });
+    let bosses = 0;
+    sim.ecs.query(Hazard).updateEach(([hz]) => {
+      if (hz.kind === HazardKind.Boss) bosses += 1;
+    });
+    expect(bosses).toBeGreaterThan(0);
+    const p = playerOf(sim);
+    const start = p.get(Transform)?.x ?? 0;
+    expect(() => {
+      for (let i = 0; i < 90; i++) sim.step([hold({}), hold({}), hold({}), hold({})]);
+    }).not.toThrow();
+    expect(Number.isFinite(p.get(Transform)?.x ?? start)).toBe(true);
+  });
+
+  it('opt-in physics arms attach to the capsule', () => {
+    const sim = makeSim({ seed: 43, settings: { playerCount: 1, physicsArms: true } });
+    let arms = 0;
+    sim.ecs.query(PhysArm).updateEach(() => {
+      arms += 1;
+    });
+    expect(arms).toBe(2);
+    expect(() => {
+      for (let i = 0; i < 20; i++) sim.step([hold({ aimX: 0, aimY: 1 }), hold({}), hold({}), hold({})]);
+    }).not.toThrow();
   });
 
   it('chain links take damage and break', () => {

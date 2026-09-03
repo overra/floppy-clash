@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createRecorder, playReplay } from '../src/input/replay';
+import { createRecorder, parseReplay, playReplay } from '../src/input/replay';
 import { getLevel } from '../src/levels/catalog';
 import { hold, makeSim } from './helpers';
 
@@ -18,5 +18,7 @@ describe('replay playback', () => {
     const played = playReplay(replay, (r) => makeSim({ seed: r.seed, level: getLevel(r.levelId === 'gym' ? 'gym' : r.levelId), settings: { playerCount: 2 } }));
     expect(played.ticks).toBe(90);
     expect(played.hash).toBe(expected);
+    const parsed = parseReplay(JSON.stringify(replay));
+    expect(parsed.inputs.length).toBe(90);
   });
 });

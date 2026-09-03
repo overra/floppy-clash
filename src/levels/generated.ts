@@ -1197,6 +1197,29 @@ export const halloween_07: LevelDef = {
   ],
 };
 
+export const halloween_boss: LevelDef = {
+  id: 'halloween-boss',
+  name: 'Lich',
+  theme: 'halloween',
+  bounds: { x: 0, y: 0, w: 30, h: 16 },
+  killMargin: 6,
+  spawns: [
+    { x: 4, y: 5 },
+    { x: 26, y: 5 },
+    { x: 8, y: 10 },
+    { x: 22, y: 10 },
+  ],
+  drops: { enabled: true, xMin: 4, xMax: 26, intervalScale: 1 },
+  objects: [
+    { type: 'solid', x: 15, y: 1, w: 30, h: 2 },
+    { type: 'boss', x: 15, y: 4, w: 2.2, h: 2.0, hp: 200 },
+    { type: 'spikes', x: 15, y: 2.4, w: 4, dir: 'up' },
+    { type: 'platform.disappearing', x: 8, y: 7, w: 3, h: 0.5, period: 140 },
+    { type: 'solid', x: 1.2, y: 8, w: 2, h: 12 },
+    { type: 'solid', x: 28.8, y: 8, w: 2, h: 12 },
+  ],
+};
+
 export const arena_01: LevelDef = {
   id: 'arena-01',
   name: 'Ring',
@@ -1674,6 +1697,7 @@ export const GENERATED_LEVELS: LevelDef[] = [
   halloween_05,
   halloween_06,
   halloween_07,
+  halloween_boss,
   arena_01,
   arena_02,
   arena_03,

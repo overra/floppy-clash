@@ -32,7 +32,7 @@ import { loadStats, recordKos, recordMatch } from './ui/statsStore';
 import { hostContentMessages, lateJoinSnapshotMessage } from './net/protocol';
 import { createEditorState, fromHash, loadLibrary, type EditorState } from './editor/editor';
 import { mountEditor } from './editor/view';
-import { createLocalLoopback } from './net/transport';
+import { createLocalLoopback, createWebRtcSession, signalingUrlFromLocation, type NetSession } from './net/transport';
 import { createRecorder } from './input/replay';
 import type { LevelDef } from './sim/level/schema';
 
@@ -50,6 +50,13 @@ type FloppyDebug = {
   gpuMs: number;
   phase: number;
   forceLastStand: () => void;
+  debugDraw: boolean;
+  debugHud: boolean;
+  freezeCam: boolean;
+  netRole: string;
+  netState: string;
+  netReady: boolean;
+  lastSnapTick: number;
 };
 
 declare global {
@@ -92,7 +99,7 @@ export function createGame(root: HTMLElement): Game {
   let paused = false;
   let editor: EditorState | null = null;
   let pane: Pane | null = null;
-  const net = createLocalLoopback();
+  let net: NetSession = createLocalLoopback();
   let extraLevels: LevelDef[] = [];
   let debugHud = false;
   let debugDraw = false;
@@ -159,28 +166,15 @@ export function createGame(root: HTMLElement): Game {
           show();
         },
         host: () => {
-          if (!menus.roomCode) menus.roomCode = Math.random().toString(36).slice(2, 8).toUpperCase();
-          settings.maxHp = menus.maxHp;
-          settings.firstTo = menus.firstTo;
-          saveSettings(settings);
-          menus.chat.push(`* hosted room ${menus.roomCode} (HP ${menus.maxHp}, first-to ${menus.firstTo || 'endless'})`);
-          for (const msg of hostContentMessages(
-            JSON.stringify({ maxHp: settings.maxHp, firstTo: settings.firstTo }),
-            JSON.stringify({ id: 'host-level' }),
-          )) {
-            net.send(msg);
-          }
-          show();
+          void connectLobby('host');
         },
         joinRoom: () => {
-          menus.roomCode = menus.roomCode || 'JOINME';
-          menus.chat.push(`* joined ${menus.roomCode}`);
-          show();
+          void connectLobby('client');
         },
         chat: (text?: string) => {
           if (!text) return;
           menus.chat.push(`you: ${text}`);
-          net.send({ t: 'chat', from: 'you', text });
+          net.send({ t: 'chat', from: menus.netRole || 'you', text });
           show();
         },
       },
@@ -218,6 +212,86 @@ export function createGame(root: HTMLElement): Game {
         ? (pool[0] ?? gymLevel)
         : (pool[Math.floor(Math.random() * pool.length)] ?? gymLevel);
     startSim(level, { playerCount: humans, bots: menus.bots, maxHp: settings.maxHp, firstTo: settings.firstTo });
+  }
+
+  function attachNet(session: NetSession): void {
+    net.close();
+    net = session;
+    net.onMessage((msg) => {
+      if (msg.t === 'chat') {
+        menus.chat.push(`${msg.from}: ${msg.text}`);
+        if (menus.screen === 'lobby') show();
+      }
+      if (msg.t === 'settings') {
+        try {
+          const parsed = JSON.parse(msg.json) as { maxHp?: number; firstTo?: number };
+          if (parsed.maxHp) menus.maxHp = parsed.maxHp;
+          if (parsed.firstTo != null) menus.firstTo = parsed.firstTo;
+          menus.notice = 'Host settings received';
+        } catch {
+          /* ignore */
+        }
+        if (menus.screen === 'lobby') show();
+      }
+      if (msg.t === 'level') {
+        menus.notice = 'Host level JSON received';
+        if (menus.screen === 'lobby') show();
+      }
+      if (msg.t === 'snapshot') {
+        menus.lastSnapTick = msg.snap.tick;
+        menus.notice = `Late-join snapshot tick ${msg.snap.tick}`;
+        if (menus.screen === 'lobby') show();
+      }
+      if (msg.t === 'hello' && session.role === 'host') {
+        for (const m of hostContentMessages(
+          JSON.stringify({ maxHp: settings.maxHp, firstTo: settings.firstTo }),
+          JSON.stringify({ id: sim?.ctx.level.id ?? 'host-level' }),
+        )) {
+          session.send(m);
+        }
+        if (sim) session.send(lateJoinSnapshotMessage(sim.snapshot()));
+      }
+    });
+  }
+
+  async function connectLobby(role: 'host' | 'client'): Promise<void> {
+    if (role === 'host' && !menus.roomCode) {
+      menus.roomCode = Math.random().toString(36).slice(2, 8).toUpperCase();
+    }
+    menus.roomCode = (menus.roomCode || 'JOINME').toUpperCase();
+    menus.netRole = role;
+    menus.netState = 'connecting';
+    menus.notice = role === 'host' ? `Hosting ${menus.roomCode}…` : `Joining ${menus.roomCode}…`;
+    show();
+    if (role === 'host') {
+      settings.maxHp = menus.maxHp;
+      settings.firstTo = menus.firstTo;
+      saveSettings(settings);
+    }
+    try {
+      const session = await createWebRtcSession(signalingUrlFromLocation(), menus.roomCode, role);
+      attachNet(session);
+      menus.netState = 'up';
+      menus.chat.push(
+        role === 'host'
+          ? `* hosted room ${menus.roomCode} (WebRTC, HP ${menus.maxHp})`
+          : `* joined ${menus.roomCode} (WebRTC)`,
+      );
+      if (role === 'client') session.send({ t: 'hello', name: 'guest' });
+      if (role === 'host') {
+        for (const msg of hostContentMessages(
+          JSON.stringify({ maxHp: settings.maxHp, firstTo: settings.firstTo }),
+          JSON.stringify({ id: 'host-level' }),
+        )) {
+          session.send(msg);
+        }
+      }
+    } catch {
+      menus.netState = 'error';
+      menus.notice = 'Signaling failed — run npm run server (loopback still works locally).';
+      attachNet(createLocalLoopback());
+    }
+    show();
   }
 
   function startIfReady() {
@@ -399,22 +473,7 @@ export function createGame(root: HTMLElement): Game {
       frame.hud.gpuMs = renderer?.lastGpuMs ?? 0;
       renderer?.render(frame);
       drawHud(frame);
-      window.__floppy = {
-        rendererKind,
-        lastHash: frame.hud.hash ?? '',
-        tick: frame.hud.tick ?? 0,
-        countdown: frame.hud.countdown,
-        physicsMs: frame.hud.physicsMs ?? 0,
-        gpuMs: frame.hud.gpuMs ?? 0,
-        phase: frame.hud.phase ?? 0,
-        forceLastStand: () => {
-          if (!sim) return;
-          sim.players().forEach((p) => {
-            const slot = p.get(Player)?.slot ?? 0;
-            if (slot !== 0) p.set(Health, { hp: 0, maxHp: p.get(Health)?.maxHp ?? 100 });
-          });
-        },
-      };
+      publishDebug(frame.hud.hash ?? '', frame.hud.tick ?? 0, frame.hud.countdown, frame.hud.physicsMs ?? 0, frame.hud.gpuMs ?? 0, frame.hud.phase ?? 0);
     } else if (renderer && menus.screen !== 'editor') {
       renderer.render({
         groups: [],
@@ -423,7 +482,34 @@ export function createGame(root: HTMLElement): Game {
         hud: { slowmo: false, countdown: 0 },
       });
     }
+    if (menus.screen !== 'play') publishDebug('', sim?.getTick() ?? 0, 0, 0, 0, 0);
     raf = requestAnimationFrame(tick);
+  }
+
+  function publishDebug(hash: string, tick: number, countdown: number, physicsMs: number, gpuMs: number, phase: number): void {
+    window.__floppy = {
+      rendererKind,
+      lastHash: hash,
+      tick,
+      countdown,
+      physicsMs,
+      gpuMs,
+      phase,
+      debugDraw,
+      debugHud,
+      freezeCam,
+      netRole: menus.netRole,
+      netState: menus.netState,
+      netReady: net.ready,
+      lastSnapTick: menus.lastSnapTick,
+      forceLastStand: () => {
+        if (!sim) return;
+        sim.players().forEach((p) => {
+          const slot = p.get(Player)?.slot ?? 0;
+          if (slot !== 0) p.set(Health, { hp: 0, maxHp: p.get(Health)?.maxHp ?? 100 });
+        });
+      },
+    };
   }
 
   function drawHud(frame: ReturnType<typeof buildFrame>) {

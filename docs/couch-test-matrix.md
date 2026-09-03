@@ -20,6 +20,8 @@ v1 needs two or more pads. Physical 4-pad evenings cannot be faked in CI.
 | Standard Xbox / DualSense / Switch Pro / Firefox-style fixtures → `PlayerInput` | `test/gamepad.test.ts` |
 | 10-round fists + mid-round zero-input “disconnect” | `test/match.test.ts` |
 | Simulated 100 ms / 2 % loss, 10 rounds, < 30 KB/s | `test/net.test.ts` |
+| Two-page localhost WebRTC + signaling + chat | `e2e/webrtc.spec.ts` + `test/signaling.test.ts` (`ws://127.0.0.1:8787`) |
+| Editor playtest / F1–F3 debug / PWA service worker | `e2e/logic.spec.ts` |
 
 ## Still hardware-only
 

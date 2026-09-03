@@ -23,6 +23,9 @@ export type MenuState = {
   roomCode: string;
   chat: string[];
   draftChat: string;
+  netRole: '' | 'host' | 'client';
+  netState: 'idle' | 'connecting' | 'up' | 'error';
+  lastSnapTick: number;
 };
 
 export type MenuActions = {
@@ -40,6 +43,9 @@ export function createMenuState(): MenuState {
     roomCode: '',
     chat: [],
     draftChat: '',
+    netRole: '',
+    netState: 'idle',
+    lastSnapTick: 0,
   };
 }
 
@@ -150,7 +156,7 @@ export function renderMenus(
   actions: MenuActions,
   settings: UserSettings = DEFAULT_USER_SETTINGS,
   maps: Record<string, PadMap> = {},
-  stats?: { matches: number; wins: number; kos: number },
+  stats?: { matches: number; wins: number; kos: number; achievements?: { firstBlood?: boolean; firstWin?: boolean; tenKos?: boolean } },
 ): void {
   root.innerHTML = '';
   if (state.screen === 'play') return;
@@ -177,7 +183,9 @@ export function renderMenus(
     }
     const statEl = card.querySelector('#localstats');
     if (statEl && stats) {
-      statEl.textContent = `Local stats — matches ${stats.matches} · wins ${stats.wins} · KOs ${stats.kos}`;
+      const a = stats.achievements;
+      const badges = [a?.firstBlood && 'first blood', a?.firstWin && 'first win', a?.tenKos && '10 KOs'].filter(Boolean);
+      statEl.textContent = `Local stats — matches ${stats.matches} · wins ${stats.wins} · KOs ${stats.kos}${badges.length ? ` · ${badges.join(', ')}` : ''}`;
     }
   } else if (state.screen === 'join') {
     card.innerHTML = `<h2>Join</h2><p>Press A / Space to join a seat. A / Space again readies. Left/Right change color. Start / Enter on a readied pad begins.</p>`;
@@ -306,7 +314,16 @@ function renderLobby(card: HTMLElement, state: MenuState, settings: UserSettings
     <label>Room code <input id="room" value="${state.roomCode}" placeholder="ABC123" maxlength="8"></label>
     <label>HP <input id="hp" type="number" value="${state.maxHp}"></label>
     <label>First to <input id="ft" type="number" value="${state.firstTo}"></label>
-    <p style="color:#9aa3b2;font-size:13px">Host-only: HP / first-to apply when you Host. Chat is reliable-channel text.</p>`;
+    <p style="color:#9aa3b2;font-size:13px">Host-only: HP / first-to apply when you Host. Chat is reliable-channel text.</p>
+    <p id="netstatus" data-net-role="${state.netRole}" data-net-state="${state.netState}">${
+      state.netState === 'up'
+        ? `${state.netRole} ${state.roomCode} — WebRTC up${state.lastSnapTick ? ` · snap ${state.lastSnapTick}` : ''}`
+        : state.netState === 'connecting'
+          ? 'Connecting…'
+          : state.netState === 'error'
+            ? state.notice || 'Signaling failed'
+            : 'Idle — Host or Join a room'
+    }</p>`;
   const chat = document.createElement('div');
   chat.style.maxHeight = '160px';
   chat.style.overflow = 'auto';

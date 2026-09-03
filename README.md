@@ -37,6 +37,8 @@ Pads only appear after you press a button. Keyboard/mouse is a development fallb
 
 Until Pages is enabled on the repo, serve locally with `npm run preview`. Distinctive weapon names (Oracle Pistol, Void Well, …) are used in the UI; data ids stay stable.
 
+Online lobby Host/Join uses WebRTC DataChannels. Run `npm run server` (signaling on `:8787`) and open two tabs; Playwright covers the localhost path (`e2e/webrtc.spec.ts`). Live WAN STUN/TURN is still hardware.
+
 Settings persist HP, weapon/level toggles, remaps, audio, renderer, and the optional 2D lighting pass (`@typegpu/radiance-cascades` + Jump Flood, budget-gated). User levels from the editor join match rotation when that toggle is on.
 
 ## Commands

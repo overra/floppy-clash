@@ -1,6 +1,18 @@
 import { describe, expect, it } from 'vitest';
-import { addObject, createEditorState, exportLevel, importLevel, moveSelected, resizeSelected } from '../src/editor/editor';
-import { PALETTE } from '../src/editor/editor';
+import {
+  addObject,
+  createEditorState,
+  exportLevel,
+  fromHash,
+  importLevel,
+  loadMemory,
+  moveSelected,
+  PALETTE,
+  resetMemoryLibrary,
+  resizeSelected,
+  saveMemory,
+  shareHash,
+} from '../src/editor/editor';
 import { parseLevel } from '../src/sim/level/schema';
 
 describe('M7 editor', () => {
@@ -18,5 +30,18 @@ describe('M7 editor', () => {
     moveSelected(copy, 10, 7);
     resizeSelected(copy, 3, 2);
     expect(copy.level.objects[copy.selected]?.w).toBeGreaterThan(1);
+  });
+
+  it('share URL hash round-trips and memory library stores a draft', async () => {
+    const state = createEditorState();
+    state.level.name = 'Hash Pit';
+    const hash = shareHash(state);
+    const loaded = fromHash(hash);
+    expect(loaded?.name).toBe('Hash Pit');
+    expect(loaded?.objects.length).toBe(state.level.objects.length);
+    resetMemoryLibrary();
+    await saveMemory(state.level);
+    const lib = await loadMemory();
+    expect(lib.some((l) => l.id === state.level.id)).toBe(true);
   });
 });

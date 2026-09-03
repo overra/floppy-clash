@@ -26,6 +26,12 @@ export function createRecorder(seed: number, levelId: string) {
   };
 }
 
+export function parseReplay(raw: string): Replay {
+  const parsed = JSON.parse(raw) as Replay;
+  if (!Array.isArray(parsed.inputs) || typeof parsed.seed !== 'number') throw new Error('invalid replay');
+  return parsed;
+}
+
 export type ReplayPlayer = (replay: Replay) => SimHandle;
 
 /** Replay a recorded seed + input tape and return the resulting world hash. */

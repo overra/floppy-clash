@@ -36,17 +36,19 @@ export function playTone(
   dur: number,
   gain: number,
   dest: AudioNode,
+  when = ctx.currentTime,
 ): void {
   const osc = ctx.createOscillator();
   const g = ctx.createGain();
   osc.type = type;
   osc.frequency.value = freq;
   g.gain.value = gain;
-  g.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + dur);
+  g.gain.setValueAtTime(gain, when);
+  g.gain.exponentialRampToValueAtTime(0.0001, when + dur);
   osc.connect(g);
   g.connect(dest);
-  osc.start();
-  osc.stop(ctx.currentTime + dur);
+  osc.start(when);
+  osc.stop(when + dur);
 }
 
 export function playNoise(ctx: AudioContext, dur: number, gain: number, dest: AudioNode): void {

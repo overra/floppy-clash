@@ -1,6 +1,7 @@
 import type { Entity, World } from 'koota';
 import { getContext } from '../context';
 import { assignNetId, createPlayerCapsule } from '../physics/bodies';
+import { attachPhysicsArms } from '../player/arms';
 import { spawnWeapon } from '../systems/weapons';
 import { createHazard } from '../hazards';
 import {
@@ -61,6 +62,7 @@ export function spawnPlayer(world: World, slot: number, x: number, y: number, co
   );
   assignNetId(world, entity);
   createPlayerCapsule(world, entity, x, y);
+  if (ctx.settings.physicsArms) attachPhysicsArms(world, entity);
   ctx.players.push(entity);
   return entity;
 }
