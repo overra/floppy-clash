@@ -9,7 +9,7 @@ import {
   serializeWorld,
 } from '../src/sim/snapshot';
 import { spawnWeapon } from '../src/sim/systems/weapons';
-import { Held, HeldBy, Loose, NetId, Weapon } from '../src/sim/traits';
+import { Dead, Health, Held, HeldBy, Loose, NetId, RagdollPart, Weapon } from '../src/sim/traits';
 import { hold, makeSim, playerOf, pos } from './helpers';
 
 describe('M8 snapshot', () => {
@@ -82,5 +82,29 @@ describe('M8 snapshot', () => {
       if (n.id === gunNet) bodyActive = client.ctx.bodies.get(e)?.isActive() ?? true;
     });
     expect(bodyActive).toBe(false);
+  });
+
+  it('late-join snapshot respawns ragdoll parts from a host death', () => {
+    const host = makeSim({ seed: 92, settings: { playerCount: 2 } });
+    const victim = playerOf(host, 1);
+    victim.set(Health, { hp: 0, maxHp: 100 });
+    host.step([hold({}), hold({}), hold({}), hold({})]);
+    expect(victim.has(Dead)).toBe(true);
+    const snap = serializeWorld(host.ecs);
+    const parts = snap.entities.filter((e) => e.traits.RagdollPart);
+    expect(parts.length).toBeGreaterThanOrEqual(8);
+
+    const client = makeSim({ seed: 93, settings: { playerCount: 2 } });
+    let before = 0;
+    client.ecs.query(RagdollPart).updateEach(() => {
+      before += 1;
+    });
+    restoreWorld(client.ecs, snap);
+    let after = 0;
+    client.ecs.query(RagdollPart).updateEach(() => {
+      after += 1;
+    });
+    expect(before).toBe(0);
+    expect(after).toBe(parts.length);
   });
 });

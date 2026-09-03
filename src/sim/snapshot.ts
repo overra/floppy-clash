@@ -15,6 +15,7 @@ import {
   Player,
   PrevTransform,
   Projectile,
+  RagdollPart,
   RoundState,
   Snake,
   Transform,
@@ -88,6 +89,8 @@ export function serializeWorld(world: World): WorldSnapshot {
     }
     const sn = entity.get(Snake);
     if (sn) snap.traits.Snake = { hp: sn.hp, giant: sn.giant, flying: sn.flying };
+    const rp = entity.get(RagdollPart);
+    if (rp) snap.traits.RagdollPart = { part: rp.part };
     const cb = entity.get(Combat);
     if (cb) snap.traits.Combat = { blockMeter: cb.blockMeter, blocking: cb.blocking };
     entities.push(snap);
@@ -288,6 +291,7 @@ function spawnMissing(world: World, rec: TraitSnapshot): void {
   const w = rec.traits.Weapon;
   const pr = rec.traits.Projectile;
   const sn = rec.traits.Snake;
+  const rp = rec.traits.RagdollPart;
   const x = Number(t?.x ?? pr?.x ?? 0);
   const y = Number(t?.y ?? pr?.y ?? 0);
   const angle = Number(t?.angle ?? 0);
@@ -366,6 +370,24 @@ function spawnMissing(world: World, rec: TraitSnapshot): void {
     );
     if (Number(sn.flying) === 1) body.setGravityScale(0);
     registerBody(world, entity, body);
+    return;
+  }
+
+  if (rp && t) {
+    const entity = world.spawn(
+      RagdollPart({ part: Number(rp.part ?? 0) }),
+      Transform({ x, y, angle }),
+      PrevTransform({ x, y, angle }),
+      NetId({ id: rec.netId }),
+    );
+    const body = createBoxBody(ctx.physics, entity, 'ragdoll', x, y, 0.12, 0.16, 'dynamic', {
+      density: 0.8,
+      friction: 0.4,
+      restitution: 0.05,
+      fixedRotation: false,
+    });
+    registerBody(world, entity, body);
+    body.setActive(false);
   }
 }
 
