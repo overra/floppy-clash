@@ -32,8 +32,6 @@ import {
   OwnedBy,
   PartOf,
   RagdollPart,
-  Solid,
-  Static,
   Status,
   Weapon,
 } from '../src/sim/traits';
