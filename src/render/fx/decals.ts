@@ -65,9 +65,46 @@ function align(n: number, a: number): number {
   return Math.ceil(n / a) * a;
 }
 
+/** Texture size for an arena: width padded to 64 px so rows stay aligned for the GPU upload. */
+export function decalLayerSize(bounds: WorldBounds, ppm = 16): { width: number; height: number } {
+  return {
+    width: Math.max(64, align(Math.ceil(Math.max(1, bounds.w) * ppm), 64)),
+    height: Math.max(1, Math.ceil(Math.max(1, bounds.h) * ppm)),
+  };
+}
+
+/**
+ * Re-uses rotated-out layers. A layer is a few MB of pixels plus a backing canvas, and building one
+ * landed on the same frame as the level swap itself, which was enough to miss a 120 Hz frame on the
+ * first frame of a round. Arenas come in a handful of sizes, so a spare of the right size is almost
+ * always waiting; it is wiped (a memset) instead of rebuilt.
+ */
+export function createDecalLayerPool(max = 4) {
+  const spare: PersistentDecalLayer[] = [];
+  return {
+    acquire(bounds: WorldBounds, ppm = 16): PersistentDecalLayer {
+      const { width, height } = decalLayerSize(bounds, ppm);
+      const i = spare.findIndex((l) => l.width === width && l.height === height && l.ppm === ppm);
+      if (i < 0) return createDecalLayer(bounds, ppm);
+      const layer = spare.splice(i, 1)[0]!;
+      layer.bounds = { ...bounds };
+      layer.clear();
+      return layer;
+    },
+    release(layer: PersistentDecalLayer): void {
+      if (spare.includes(layer)) return;
+      if (spare.length >= max) spare.shift();
+      spare.push(layer);
+    },
+    /** Spare layers currently held (tests). */
+    get size() {
+      return spare.length;
+    },
+  };
+}
+
 export function createDecalLayer(bounds: WorldBounds, ppm = 16): PersistentDecalLayer {
-  const width = Math.max(64, align(Math.ceil(Math.max(1, bounds.w) * ppm), 64));
-  const height = Math.max(1, Math.ceil(Math.max(1, bounds.h) * ppm));
+  const { width, height } = decalLayerSize(bounds, ppm);
   const pixels = new Uint8ClampedArray(width * height * 4);
   let canvas: HTMLCanvasElement | OffscreenCanvas | null = null;
   let ctx2d: CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D | null = null;

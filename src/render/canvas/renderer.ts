@@ -1,5 +1,6 @@
 import { worldToScreen, type CameraState } from '../camera';
 import { DEFAULT_GLOW, Layer, type RenderFrame, type ShapeGroup } from '../frame';
+import { PARTICLE_RGBA, emptyParticleQuad, particleQuad, type ParticleSystem } from '../fx/particles';
 import { PRIM_CAPSULE, PRIM_DISK, PRIM_PIE, PRIM_ROUNDED_BOX, PRIM_TRIANGLE, parseColor, type Primitive } from '../sdf/primitives';
 
 export type Renderer = {
@@ -7,9 +8,14 @@ export type Renderer = {
   render(frame: RenderFrame): void;
   resize(w: number, h: number): void;
   canvas: HTMLCanvasElement;
+  /** CPU time spent in `render` (encoding and submitting; the whole draw for the canvas renderer). */
   lastGpuMs: number;
+  /** Measured GPU time of the last frame's main pass in ms (timestamp queries), or -1 when unavailable. */
+  gpuPassMs: number;
   /** Increments only when a dirty persistent decal texture is uploaded/blitted as a new stamp batch. */
   decalUploads: number;
+  /** Backing-store size relative to CSS size × devicePixelRatio; the GPU renderer lowers it when its pass overruns. */
+  resolutionScale: number;
 };
 
 export function createCanvasRenderer(canvas: HTMLCanvasElement): Renderer {
@@ -21,13 +27,20 @@ export function createCanvasRenderer(canvas: HTMLCanvasElement): Renderer {
   };
   window.addEventListener('keydown', onKey);
   let decalTmp: HTMLCanvasElement | null = null;
+  // CSS size from the last `resize`; `render` must not read clientWidth (a forced layout mid-frame).
+  let cssW = canvas.clientWidth || 1280;
+  let cssH = canvas.clientHeight || 720;
 
   const renderer: Renderer = {
     kind: 'canvas',
     canvas,
     lastGpuMs: 0,
+    gpuPassMs: -1,
     decalUploads: 0,
+    resolutionScale: 1,
     resize(w: number, h: number) {
+      cssW = w;
+      cssH = h;
       const dpr = window.devicePixelRatio || 1;
       const pw = Math.floor(w * dpr);
       const ph = Math.floor(h * dpr);
@@ -41,8 +54,8 @@ export function createCanvasRenderer(canvas: HTMLCanvasElement): Renderer {
     },
     render(frame: RenderFrame) {
       const t0 = performance.now();
-      const w = canvas.clientWidth;
-      const h = canvas.clientHeight;
+      const w = cssW;
+      const h = cssH;
       drawBackground(ctx, frame, w, h);
       const cam: CameraState = {
         x: frame.camera.x,
@@ -52,10 +65,13 @@ export function createCanvasRenderer(canvas: HTMLCanvasElement): Renderer {
         shakeY: frame.camera.shakeY,
         shake: 0,
       };
-      const layers = [...frame.groups].sort((a, b) => a.layer - b.layer);
+      // buildFrame hands the groups over sorted by layer (the GPU path relies on it too).
+      const layers = frame.groups;
       let i = 0;
       for (; i < layers.length && layers[i]!.layer <= Layer.Hazards; i++) drawGroup(ctx, layers[i]!, cam, w, h);
       decalTmp = blitDecals(ctx, frame, cam, w, h, renderer, decalTmp);
+      for (; i < layers.length && layers[i]!.layer <= Layer.Particles; i++) drawGroup(ctx, layers[i]!, cam, w, h);
+      if (frame.particles) drawParticles(ctx, frame.particles, cam, w, h);
       for (; i < layers.length; i++) drawGroup(ctx, layers[i]!, cam, w, h);
       if ((frame.hud.flash ?? 0) > 0) {
         ctx.fillStyle = `rgba(255,255,255,${Math.min(0.35, frame.hud.flash! * 0.12)})`;
@@ -100,10 +116,35 @@ function drawBackground(ctx: CanvasRenderingContext2D, frame: RenderFrame, w: nu
   }
 }
 
+/**
+ * Halo without `shadowBlur`: Chrome rasterises every shadowed fill through an offscreen Gaussian
+ * blur, and a screen of glowing embers at 2× DPR turned that into 30–100 ms frames. Three widening
+ * translucent strokes of the same path read as a soft rim at a tiny fraction of the cost.
+ */
+const HALO_BANDS = 5;
+/** Alpha the bands add up to right at the shape's edge; it falls off roughly quadratically outward. */
+const HALO_ALPHA = 0.45;
+
+function strokeHalo(ctx: CanvasRenderingContext2D, r: number, g: number, b: number, a: number, reachPx: number): void {
+  const prevWidth = ctx.lineWidth;
+  const prevStroke = ctx.strokeStyle;
+  ctx.strokeStyle = `rgba(${r},${g},${b},${((a * HALO_ALPHA) / HALO_BANDS).toFixed(3)})`;
+  for (let k = HALO_BANDS; k >= 1; k--) {
+    // Equal-alpha bands from widest to narrowest: they stack toward the edge, so alpha ramps up there.
+    ctx.lineWidth = 2 * reachPx * (k / HALO_BANDS);
+    ctx.stroke();
+  }
+  ctx.lineWidth = prevWidth;
+  ctx.strokeStyle = prevStroke;
+}
+
 function drawGroup(ctx: CanvasRenderingContext2D, g: ShapeGroup, cam: CameraState, w: number, h: number): void {
   const [r, gg, b, a] = parseColor(g.color);
   if (a <= 0.004) return;
-  const css = `rgba(${Math.round(r * 255)},${Math.round(gg * 255)},${Math.round(b * 255)},${a})`;
+  const r8 = Math.round(r * 255);
+  const g8 = Math.round(gg * 255);
+  const b8 = Math.round(b * 255);
+  const css = `rgba(${r8},${g8},${b8},${a})`;
   ctx.save();
   ctx.fillStyle = css;
   ctx.strokeStyle = css;
@@ -111,9 +152,10 @@ function drawGroup(ctx: CanvasRenderingContext2D, g: ShapeGroup, cam: CameraStat
   ctx.lineJoin = 'round';
   const outline = g.style === 'outline';
   if (g.fx === 'glow' || g.fx === 'lava') {
-    // Canvas shadows are not clipped to a quad; size the blur to the same reach the GPU halo uses.
-    ctx.shadowColor = css;
-    ctx.shadowBlur = Math.max(6, cam.zoom * (g.glow ?? DEFAULT_GLOW) * 1.6);
+    // Same reach as the GPU halo (metres → px), drawn once around the whole silhouette.
+    ctx.beginPath();
+    for (const p of g.primitives) tracePrimitive(ctx, p, cam, w, h, 0);
+    strokeHalo(ctx, r8, g8, b8, a, Math.max(3, cam.zoom * (g.glow ?? DEFAULT_GLOW)));
   }
   if (g.blend === 'smoothUnion' && !outline) {
     // One path for the whole silhouette (capsules slightly grown to fake the smooth-union bulge at
@@ -136,11 +178,66 @@ function drawGroup(ctx: CanvasRenderingContext2D, g: ShapeGroup, cam: CameraStat
   if (g.style === 'shaded' || g.style === undefined) {
     // faint rim light reads as volume without breaking the flat look; a single fill so overlapping
     // parts of one silhouette do not show as brighter patches
-    ctx.shadowBlur = 0;
     ctx.globalCompositeOperation = 'source-atop';
     ctx.fillStyle = 'rgba(255,255,255,0.05)';
     ctx.beginPath();
     for (const p of g.primitives) tracePrimitive(ctx, p, cam, w, h, 0);
+    ctx.fill();
+  }
+  ctx.restore();
+}
+
+const particleScratch = emptyParticleQuad();
+const particlePrim: Primitive = { kind: PRIM_DISK, ax: 0, ay: 0, bx: 0, by: 0, r: 0 };
+
+/** Fill alpha is quantised to this many steps so fill styles can be cached and consecutive particles batch. */
+const ALPHA_STEPS = 32;
+/** `rgba()` strings by palette index × alpha step × (core | halo); built on first use, then reused every frame. */
+const particleStyles = new Map<number, string>();
+
+function particleStyle(color: number, alphaStep: number, halo: boolean): string {
+  const key = (color << 7) | (alphaStep << 1) | (halo ? 1 : 0);
+  let css = particleStyles.get(key);
+  if (css === undefined) {
+    const rgba = PARTICLE_RGBA[color] ?? PARTICLE_RGBA[0]!;
+    const a = (rgba[3] * alphaStep) / ALPHA_STEPS;
+    css = `rgba(${Math.round(rgba[0] * 255)},${Math.round(rgba[1] * 255)},${Math.round(rgba[2] * 255)},${(halo ? a * 0.28 : a).toFixed(3)})`;
+    particleStyles.set(key, css);
+  }
+  return css;
+}
+
+/**
+ * Particles straight from the pool: a flat disk or capsule each. Glowing ones get one wider,
+ * fainter fill underneath instead of a shadow (see {@link strokeHalo} for why shadows are out).
+ */
+function drawParticles(ctx: CanvasRenderingContext2D, sys: ParticleSystem, cam: CameraState, w: number, h: number): void {
+  const n = sys.count;
+  if (n === 0) return;
+  ctx.save();
+  ctx.lineCap = 'round';
+  let lastStyle = '';
+  for (let i = 0; i < n; i++) {
+    const q = particleQuad(sys, i, particleScratch);
+    const step = Math.round(q.alpha * ALPHA_STEPS);
+    if (step <= 0) continue;
+    particlePrim.kind = q.kind;
+    particlePrim.ax = q.ax;
+    particlePrim.ay = q.ay;
+    particlePrim.bx = q.bx;
+    particlePrim.by = q.by;
+    particlePrim.r = q.r;
+    if (q.glow > 0) {
+      const halo = particleStyle(q.color, step, true);
+      if (halo !== lastStyle) ctx.fillStyle = lastStyle = halo;
+      ctx.beginPath();
+      tracePrimitive(ctx, particlePrim, cam, w, h, q.glow * 0.6);
+      ctx.fill();
+    }
+    const core = particleStyle(q.color, step, false);
+    if (core !== lastStyle) ctx.fillStyle = lastStyle = core;
+    ctx.beginPath();
+    tracePrimitive(ctx, particlePrim, cam, w, h, 0);
     ctx.fill();
   }
   ctx.restore();

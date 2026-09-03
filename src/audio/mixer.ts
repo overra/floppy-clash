@@ -6,6 +6,12 @@ export type Mixer = {
   sfx: number;
   music: number;
   muted: boolean;
+  /**
+   * Builds the AudioContext without starting it. Construction opens the output device and costs
+   * ~200 ms of main thread, so it belongs at boot (behind the title screen), not on the first
+   * frame of a match where it read as a stutter in the countdown.
+   */
+  warm: () => void;
   resume: () => void;
   handle: (events: SimEvents) => void;
   startMusic: () => void;
@@ -19,14 +25,17 @@ export function createMixer(): Mixer {
     sfx: 0.8,
     music: 0.25,
     muted: false,
+    warm() {
+      if (ctx || typeof AudioContext === 'undefined') return;
+      ctx = new AudioContext();
+      sfxGain = ctx.createGain();
+      musicGain = ctx.createGain();
+      sfxGain.connect(ctx.destination);
+      musicGain.connect(ctx.destination);
+    },
     resume() {
-      if (!ctx) {
-        ctx = new AudioContext();
-        sfxGain = ctx.createGain();
-        musicGain = ctx.createGain();
-        sfxGain.connect(ctx.destination);
-        musicGain.connect(ctx.destination);
-      }
+      mixer.warm();
+      if (!ctx) return;
       if (ctx.state === 'suspended') void ctx.resume();
       apply();
     },

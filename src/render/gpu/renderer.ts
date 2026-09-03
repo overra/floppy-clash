@@ -2,9 +2,9 @@ import { tgpu } from 'typegpu';
 import { sdDisk, sdLine, sdRoundedBox2d, opSmoothUnion } from '@typegpu/sdf';
 import type { Renderer } from '../canvas/renderer';
 import { Layer, type RenderFrame } from '../frame';
-import { parseColor, primitiveSdf } from '../sdf/primitives';
+import { primitiveSdf } from '../sdf/primitives';
 import { createLightingPass, type LightingPass } from './lighting';
-import { packGroups } from './pack';
+import { packInto, packedColor } from './pack';
 import type { PersistentDecalLayer } from '../fx/decals';
 
 const WGSL = /* wgsl */ `
@@ -282,13 +282,42 @@ export type GpuRendererOpts = {
   lighting?: boolean;
 };
 
+/** Measured pass time (p90 over a window) above which the render scale steps down. */
+export const GPU_BUDGET_MS = 4.5;
+/** Pass time below which a scaled-down renderer steps back up; `GPU_BUDGET_MS * RESOLUTION_STEP²` is the no-oscillation ceiling. */
+export const GPU_RELAX_MS = 2.6;
+/** Linear scale step: pixel count moves by the square (0.85² ≈ 0.72) per step. */
+export const RESOLUTION_STEP = 0.85;
+export const MIN_RESOLUTION_SCALE = 0.5;
+/** Frames per decision; ~⅓ s at 120 Hz so the scale follows a battle rather than a single frame. */
+export const RESOLUTION_WINDOW = 40;
+
+/**
+ * Next render-resolution scale given the current one and the window's median and p90 GPU pass times.
+ * Both directions need strong evidence: a step down needs the *median* over budget (sustained load,
+ * not a few frames of GPU contention from another app), a step up needs even the *p90* under the
+ * relax line. Pure so the hysteresis can be tested: stepping down from just over the budget lands
+ * above the relax line, and stepping up from just under the relax line lands under the budget.
+ */
+export function nextResolutionScale(scale: number, medMs: number, p90Ms: number = medMs): number {
+  if (medMs > GPU_BUDGET_MS && scale > MIN_RESOLUTION_SCALE) {
+    return Math.max(MIN_RESOLUTION_SCALE, scale * RESOLUTION_STEP);
+  }
+  if (p90Ms < GPU_RELAX_MS && scale < 1) {
+    return Math.min(1, scale / RESOLUTION_STEP);
+  }
+  return scale;
+}
+
 async function createGpuRenderer(canvas: HTMLCanvasElement, opts: GpuRendererOpts = {}): Promise<Renderer> {
   if (!('gpu' in navigator) || !navigator.gpu) throw new Error('navigator.gpu missing');
   const adapter = await navigator.gpu.requestAdapter();
   if (!adapter) throw new Error('no adapter');
   let root;
   try {
-    root = await tgpu.init();
+    // Timestamp queries are optional: with them the F3 overlay shows real GPU pass time, without
+    // them it shows nothing rather than failing to start.
+    root = await tgpu.init({ device: { optionalFeatures: ['timestamp-query'] } });
   } catch (err) {
     throw new Error(`device init failed: ${err instanceof Error ? err.message : String(err)}`);
   }
@@ -414,76 +443,139 @@ async function createGpuRenderer(canvas: HTMLCanvasElement, opts: GpuRendererOpt
     renderer.decalUploads += 1;
   }
 
+  // GPU pass timing: two timestamps around the main pass, resolved into a small ring of read-back
+  // buffers so mapping never stalls the frame. Only when the device granted the feature.
+  const timing = device.features.has('timestamp-query')
+    ? {
+        query: device.createQuerySet({ type: 'timestamp', count: 2 }),
+        resolve: device.createBuffer({ size: 16, usage: GPUBufferUsage.QUERY_RESOLVE | GPUBufferUsage.COPY_SRC }),
+        reads: Array.from({ length: 4 }, () => ({
+          buf: device.createBuffer({ size: 16, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST }),
+          busy: false,
+        })),
+      }
+    : null;
+
+  const camScratch = new Float32Array(8);
+  const bgScratch = new Float32Array(12);
+  const decalBoundsScratch = new Float32Array(4);
+  const clearScratch: GPUColorDict = { r: 0, g: 0, b: 0, a: 1 };
+
+  // Dynamic resolution. The pass cost is almost purely per-pixel and SDFs are resolution-independent,
+  // so when the GPU overruns its share of the 120 Hz budget we shade fewer pixels and let the
+  // compositor stretch the canvas; once it has headroom again we scale back up. Decisions come from a
+  // window of measured pass times so a single noisy frame never flips the scale, and the step ratio
+  // leaves hysteresis between the two thresholds (a step down lands above the relax line and a step
+  // up lands below the budget line). Needs timestamp queries; without them the scale stays at 1.
+  let cssW = 0;
+  let cssH = 0;
+  const passHist = new Float32Array(RESOLUTION_WINDOW);
+  const passSorted = new Float32Array(RESOLUTION_WINDOW);
+  let passFilled = 0;
+
+  function applySize(): void {
+    if (cssW <= 0 || cssH <= 0) return;
+    const ratio = (window.devicePixelRatio || 1) * renderer.resolutionScale;
+    const pw = Math.max(1, Math.floor(cssW * ratio));
+    const ph = Math.max(1, Math.floor(cssH * ratio));
+    if (canvas.width !== pw || canvas.height !== ph) {
+      canvas.width = pw;
+      canvas.height = ph;
+    }
+  }
+
+  function onPassSample(ms: number): void {
+    passHist[passFilled++] = ms;
+    if (passFilled < RESOLUTION_WINDOW) return;
+    passFilled = 0;
+    passSorted.set(passHist);
+    passSorted.sort();
+    const med = passSorted[RESOLUTION_WINDOW >> 1]!;
+    const p90 = passSorted[Math.floor(RESOLUTION_WINDOW * 0.9)]!;
+    const next = nextResolutionScale(renderer.resolutionScale, med, p90);
+    if (next !== renderer.resolutionScale) {
+      renderer.resolutionScale = next;
+      applySize();
+    }
+  }
+
   const renderer: Renderer = {
     kind: 'gpu',
     canvas,
     lastGpuMs: 0,
+    gpuPassMs: -1,
     decalUploads: 0,
+    resolutionScale: 1,
     resize(w: number, h: number) {
-      const dpr = window.devicePixelRatio || 1;
-      const pw = Math.max(1, Math.floor(w * dpr));
-      const ph = Math.max(1, Math.floor(h * dpr));
-      if (canvas.width !== pw || canvas.height !== ph) {
-        canvas.width = pw;
-        canvas.height = ph;
+      if (w !== cssW || h !== cssH) {
+        cssW = w;
+        cssH = h;
         canvas.style.width = `${w}px`;
         canvas.style.height = `${h}px`;
       }
+      applySize();
     },
     render(frame: RenderFrame) {
       const t0 = performance.now();
       const w = canvas.width;
       const h = canvas.height;
-      const dpr = window.devicePixelRatio || 1;
+      // Device pixels per CSS pixel of the *current* backing store (includes the resolution scale).
+      const dpr = cssW > 0 ? w / cssW : window.devicePixelRatio || 1;
       const time = (performance.now() - startTime) / 1000;
-      const cam = new Float32Array([
-        frame.camera.x,
-        frame.camera.y,
-        frame.camera.zoom * dpr,
-        time,
-        w,
-        h,
-        frame.camera.shakeX * dpr,
-        frame.camera.shakeY * dpr,
-      ]);
-      device.queue.writeBuffer(cameraBuf, 0, cam);
-      const top = parseColor(frame.theme.top);
-      const bottom = parseColor(frame.theme.bottom);
-      device.queue.writeBuffer(
-        bgBuf,
-        0,
-        new Float32Array([top[0], top[1], top[2], 1, bottom[0], bottom[1], bottom[2], 1, w, h, frame.theme.vignette ?? 0.35, time]),
-      );
-      const visible = frame.groups.length > GROUP_CAP ? frame.groups.slice(0, GROUP_CAP) : frame.groups;
-      const packed = packGroups(visible);
-      const groupBytes = packed.groupBytes.byteLength > GROUP_CAP * 64 ? packed.groupBytes.slice(0, GROUP_CAP * 64) : packed.groupBytes;
-      const primBytes = packed.primBytes.byteLength > PRIM_CAP * 32 ? packed.primBytes.slice(0, PRIM_CAP * 32) : packed.primBytes;
-      device.queue.writeBuffer(groupBuf, 0, groupBytes);
-      device.queue.writeBuffer(primBuf, 0, primBytes);
+      camScratch[0] = frame.camera.x;
+      camScratch[1] = frame.camera.y;
+      camScratch[2] = frame.camera.zoom * dpr;
+      camScratch[3] = time;
+      camScratch[4] = w;
+      camScratch[5] = h;
+      camScratch[6] = frame.camera.shakeX * dpr;
+      camScratch[7] = frame.camera.shakeY * dpr;
+      device.queue.writeBuffer(cameraBuf, 0, camScratch);
+      const top = packedColor(frame.theme.top);
+      const bottom = packedColor(frame.theme.bottom);
+      bgScratch.set([top[0], top[1], top[2], 1, bottom[0], bottom[1], bottom[2], 1, w, h, frame.theme.vignette ?? 0.35, time]);
+      device.queue.writeBuffer(bgBuf, 0, bgScratch);
+      // Groups (and particles, straight from their pool) are packed into reusable scratch memory and
+      // uploaded from it; nothing is allocated per frame.
+      const packed = packInto(frame.groups, GROUP_CAP, PRIM_CAP, frame.particles);
+      const visible = frame.groups;
+      if (packed.groupBytes > 0) device.queue.writeBuffer(groupBuf, 0, packed.groups, 0, packed.groupBytes);
+      if (packed.primBytes > 0) device.queue.writeBuffer(primBuf, 0, packed.prims, 0, packed.primBytes);
       const encoder = device.createCommandEncoder();
+      const read = timing?.reads.find((r) => !r.busy);
+      clearScratch.r = bottom[0];
+      clearScratch.g = bottom[1];
+      clearScratch.b = bottom[2];
       const pass = encoder.beginRenderPass({
         colorAttachments: [
           {
             view: context.getCurrentTexture().createView(),
-            clearValue: hexToRgb(frame.theme.bottom),
+            clearValue: clearScratch,
             loadOp: 'clear',
             storeOp: 'store',
           },
         ],
+        timestampWrites: timing && read ? { querySet: timing.query, beginningOfPassWriteIndex: 0, endOfPassWriteIndex: 1 } : undefined,
       });
       pass.setPipeline(bgPipeline);
       pass.setBindGroup(0, bgBind);
       pass.draw(3, 1);
       // Groups arrive sorted by layer: world geometry first, then decals splat on top of it,
       // then everything that should occlude the decals (props, actors, fx).
+      // (Instance i is group i up to the particle run, which sits above the hazards.)
       let below = 0;
-      while (below < packed.groupCount && (visible[below]?.layer ?? 0) <= Layer.Hazards) below++;
+      const nGroups = Math.min(packed.groupCount, visible.length);
+      while (below < nGroups && visible[below]!.layer <= Layer.Hazards) below++;
       pass.setPipeline(pipeline);
       pass.setBindGroup(0, bind);
       if (below > 0) pass.draw(6, below);
       if (frame.decalLayer && frame.decalLayer.stamped > 0) {
         const b = frame.decalLayer.bounds;
-        device.queue.writeBuffer(decalBoundsBuf, 0, new Float32Array([b.x, b.y, b.x + b.w, b.y + b.h]));
+        decalBoundsScratch[0] = b.x;
+        decalBoundsScratch[1] = b.y;
+        decalBoundsScratch[2] = b.x + b.w;
+        decalBoundsScratch[3] = b.y + b.h;
+        device.queue.writeBuffer(decalBoundsBuf, 0, decalBoundsScratch);
         uploadDecals(frame.decalLayer);
         if (decalBind) {
           pass.setPipeline(decalPipeline);
@@ -495,7 +587,31 @@ async function createGpuRenderer(canvas: HTMLCanvasElement, opts: GpuRendererOpt
       }
       if (packed.groupCount > below) pass.draw(6, packed.groupCount - below, 0, below);
       pass.end();
+      if (timing && read) {
+        encoder.resolveQuerySet(timing.query, 0, 2, timing.resolve, 0);
+        encoder.copyBufferToBuffer(timing.resolve, 0, read.buf, 0, 16);
+      }
       device.queue.submit([encoder.finish()]);
+      if (timing && read) {
+        read.busy = true;
+        read.buf.mapAsync(GPUMapMode.READ).then(
+          () => {
+            const ts = new BigUint64Array(read.buf.getMappedRange());
+            const ns = Number(ts[1]! - ts[0]!);
+            read.buf.unmap();
+            read.busy = false;
+            // A pair from different timer epochs (device idle/reset) reads as days; anything over a
+            // second is a glitch, not a pass.
+            if (ns >= 0 && ns < 1e9) {
+              renderer.gpuPassMs = ns / 1e6;
+              onPassSample(renderer.gpuPassMs);
+            }
+          },
+          () => {
+            read.busy = false;
+          },
+        );
+      }
       renderer.lastGpuMs = performance.now() - t0;
       if (opts.lighting) lighting?.apply(frame, renderer.lastGpuMs, true);
     },
@@ -541,9 +657,4 @@ export async function tryCreateGpuRenderer(
     console.warn('[render] WebGPU renderer unavailable, using canvas:', err);
     return null;
   }
-}
-
-function hexToRgb(hex: string): GPUColorDict {
-  const [r, g, b] = parseColor(hex);
-  return { r, g, b, a: 1 };
 }

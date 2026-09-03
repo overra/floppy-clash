@@ -232,13 +232,17 @@ function decorShapes(kind: string, x: number, y: number, s: number, seed: number
       return [group([disk(sx, sy, 0.07 * s)], withAlpha('#ffffff', 0.55), L, { style: 'flat' })];
     }
     case 'grid': {
-      const lines: Primitive[] = [];
+      // One group per line: bundled, every pixel of the arena would evaluate all 26 lines, whereas a
+      // line on its own only touches the thin strip it covers. Crossings blend twice, which reads as
+      // a slightly brighter node and suits the look.
+      const out: ShapeGroup[] = [];
       const half = s / 2;
+      const color = withAlpha(theme.trim, 0.25);
       for (let i = -6; i <= 6; i++) {
-        lines.push(cap(x - half, y + i * 2, x + half, y + i * 2, 0.012));
-        lines.push(cap(x + i * 2.5, y - half, x + i * 2.5, y + half, 0.012));
+        out.push(group([cap(x - half, y + i * 2, x + half, y + i * 2, 0.012)], color, L, { style: 'flat', pad: 0.05 }));
+        out.push(group([cap(x + i * 2.5, y - half, x + i * 2.5, y + half, 0.012)], color, L, { style: 'flat', pad: 0.05 }));
       }
-      return [group(lines.slice(0, 16), withAlpha(theme.trim, 0.25), L, { style: 'flat' }), group(lines.slice(16, 32), withAlpha(theme.trim, 0.25), L, { style: 'flat' })];
+      return out;
     }
     default:
       return [group([cap(x, y, x, y + 1.6 * s, 0.12 * s)], color, L, { style: 'flat' })];

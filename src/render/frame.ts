@@ -1,6 +1,7 @@
 import type { PersistentDecalLayer } from './fx/decals';
+import type { ParticleSystem } from './fx/particles';
 import type { LightEmitter } from './gpu/lighting';
-import { primitiveBounds, type Primitive } from './sdf/primitives';
+import { primitiveBoundsInto, type Bounds, type Primitive } from './sdf/primitives';
 
 export type BlendOp = 'union' | 'smoothUnion';
 
@@ -58,6 +59,11 @@ export type RenderFrame = {
   lights?: LightEmitter[];
   /** Persistent world-space decal texture; sampled, never rebuilt as groups. */
   decalLayer?: PersistentDecalLayer;
+  /**
+   * Live particles, drawn at {@link Layer.Particles} straight from the pool: one flat disk or
+   * velocity-stretched capsule each, no group objects (see `particleQuad`).
+   */
+  particles?: ParticleSystem | null;
   hud: {
     slowmo: boolean;
     countdown: number;
@@ -92,20 +98,34 @@ export function emptyFrame(): RenderFrame {
   };
 }
 
-export function groupBounds(primitives: Primitive[], pad = 0.4): Pick<ShapeGroup, 'minX' | 'minY' | 'maxX' | 'maxY'> {
+const boundsScratch: Bounds = { minX: 0, minY: 0, maxX: 0, maxY: 0 };
+
+/** Padded bounds of the primitives written into `out` (returned); an empty list gives a zero box. */
+export function groupBoundsInto(primitives: Primitive[], pad: number, out: Bounds): Bounds {
   let minX = Infinity,
     minY = Infinity,
     maxX = -Infinity,
     maxY = -Infinity;
-  for (const p of primitives) {
-    const b = primitiveBounds(p);
-    minX = Math.min(minX, b.minX);
-    minY = Math.min(minY, b.minY);
-    maxX = Math.max(maxX, b.maxX);
-    maxY = Math.max(maxY, b.maxY);
+  for (let i = 0; i < primitives.length; i++) {
+    const b = primitiveBoundsInto(primitives[i]!, boundsScratch);
+    if (b.minX < minX) minX = b.minX;
+    if (b.minY < minY) minY = b.minY;
+    if (b.maxX > maxX) maxX = b.maxX;
+    if (b.maxY > maxY) maxY = b.maxY;
   }
-  if (!Number.isFinite(minX)) return { minX: 0, minY: 0, maxX: 0, maxY: 0 };
-  return { minX: minX - pad, minY: minY - pad, maxX: maxX + pad, maxY: maxY + pad };
+  if (!Number.isFinite(minX)) {
+    out.minX = out.minY = out.maxX = out.maxY = 0;
+    return out;
+  }
+  out.minX = minX - pad;
+  out.minY = minY - pad;
+  out.maxX = maxX + pad;
+  out.maxY = maxY + pad;
+  return out;
+}
+
+export function groupBounds(primitives: Primitive[], pad = 0.4): Bounds {
+  return groupBoundsInto(primitives, pad, { minX: 0, minY: 0, maxX: 0, maxY: 0 });
 }
 
 /**
@@ -121,8 +141,13 @@ export function group(
   const emissive = opts.fx === 'glow' || opts.fx === 'lava';
   const glow = emissive ? opts.glow ?? DEFAULT_GLOW : 0;
   const pad = Math.max(opts.pad ?? 0.25, glow + 0.05);
-  return {
-    ...groupBounds(primitives, pad),
+  // Built as one literal (bounds included) so every group shares a single hidden class and the
+  // packer's field reads stay monomorphic; no spread, no intermediate bounds object.
+  const g: ShapeGroup = {
+    minX: 0,
+    minY: 0,
+    maxX: 0,
+    maxY: 0,
     color,
     blend: opts.blend ?? 'union',
     smoothK: opts.smoothK ?? 0,
@@ -132,4 +157,6 @@ export function group(
     style: opts.style,
     glow: emissive ? glow : undefined,
   };
+  groupBoundsInto(primitives, pad, g);
+  return g;
 }

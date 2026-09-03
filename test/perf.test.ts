@@ -36,7 +36,7 @@ describe('performance budgets', () => {
     const samples: number[] = [];
     for (let i = 0; i < 40; i++) {
       const t0 = performance.now();
-      buildFrame(sim, cam, 0.5, 1920, 1080, []);
+      buildFrame(sim, cam, 0.5, 1920, 1080, null);
       samples.push(performance.now() - t0);
     }
     const mid = [...samples].sort((a, b) => a - b)[Math.floor(samples.length / 2)] ?? 0;

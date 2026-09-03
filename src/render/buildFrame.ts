@@ -39,7 +39,7 @@ import type { SimHandle } from '../sim/world';
 import { updateCamera, type CameraState } from './camera';
 import { decorForLevel, decorGroups } from './decor';
 import type { PersistentDecalLayer } from './fx/decals';
-import type { Particle } from './fx/particles';
+import { P_GLOW, type ParticleSystem } from './fx/particles';
 import { Layer, group, type RenderFrame, type ShapeGroup } from './frame';
 import { FIGURE, buildFigure, emptyLimbState, secondaryFromVelocity, type LimbState } from './figure';
 import { hazardGroups } from './hazardShapes';
@@ -55,6 +55,7 @@ export const INK = '#1b1c22';
 const limbs = new Map<number, LimbState>();
 const hurt = new Map<number, { hp: number; until: number }>();
 let stateWorld: World | null = null;
+const heldWeapons = new Map<number, { defId: number }>();
 
 export type BuildFrameOpts = {
   debug?: boolean;
@@ -89,7 +90,7 @@ export function buildFrame(
   alpha: number,
   viewW: number,
   viewH: number,
-  particles: Particle[],
+  particles: ParticleSystem | null,
   opts: BuildFrameOpts = {},
 ): RenderFrame {
   const world = sim.ecs;
@@ -131,6 +132,12 @@ export function buildFrame(
   // Players (alive): figure + eyes + held weapon + crown + block arc.
   const anchors = new Map<number, { x: number; y: number; angle: number; flip: boolean }>();
   const hudPlayers: NonNullable<RenderFrame['hud']['players']> = [];
+  // Held weapons by holder, gathered once rather than by a query per fighter.
+  heldWeapons.clear();
+  for (const w of world.query(Weapon, Held)) {
+    const holder = w.targetFor(HeldBy);
+    if (holder !== undefined) heldWeapons.set(holder as unknown as number, w.get(Weapon)!);
+  }
   world.query(Player, Transform, PrevTransform, Controller, Aim, Combat).updateEach(([p, t, prev, ctrl, aim, combat], e) => {
     const dead = e.has(Dead);
     const x = lerp(prev.x, t.x, alpha);
@@ -146,15 +153,8 @@ export function buildFrame(
     hurt.set(e, hurtState);
     const hurtTicks = hurtState.until > tick ? hurtState.until - tick : 0;
 
-    let held: { length: number; twoHanded: boolean; kind: string; defId: number } | null = null;
-    for (const w of world.query(Weapon, Held)) {
-      if (w.targetFor(HeldBy) === e) {
-        const wep = w.get(Weapon)!;
-        const def = weaponByIndex(wep.defId);
-        held = { length: def.shape.length, twoHanded: def.twoHanded, kind: def.shape.kind, defId: wep.defId };
-        break;
-      }
-    }
+    const wep = heldWeapons.get(e as unknown as number);
+    const held = wep ? weaponByIndex(wep.defId) : null;
 
     const fig = buildFigure(
       {
@@ -173,7 +173,7 @@ export function buildFrame(
         blocking: combat.blocking,
         dead,
         phase: tick / 60,
-        weapon: held ? { length: held.length, twoHanded: held.twoHanded } : null,
+        weapon: held ? { length: held.shape.length, twoHanded: held.twoHanded } : null,
         hurt: hurtTicks,
       },
       sec,
@@ -499,19 +499,13 @@ export function buildFrame(
     if (r.eyes.length) groups.push(group(r.eyes, INK, Layer.Ragdolls, { style: 'flat', pad: 0.1 }));
   }
 
-  // Particles.
-  for (const part of particles) {
-    if (part.glow) lights.push({ x: part.x, y: part.y, radius: 1.8, r: 1, g: 0.7, b: 0.3, intensity: 0.45 });
-    const fade = part.maxLife ? Math.max(0, Math.min(1, part.life / part.maxLife)) : 1;
-    const color = part.fade ? withAlpha(part.color, fade) : part.color;
-    // Halo reach scales with the particle: sparks get a tight rim, fireballs a wide soft bloom.
-    const glow = part.glow ? 0.18 + part.r * 0.8 : undefined;
-    if (part.stretch && (part.vx !== 0 || part.vy !== 0)) {
-      const sp = Math.hypot(part.vx, part.vy) || 1;
-      const l = Math.min(0.5, sp * 0.02);
-      groups.push(group([cap(part.x, part.y, part.x - (part.vx / sp) * l, part.y - (part.vy / sp) * l, part.r)], color, Layer.Particles, { style: 'flat', fx: part.glow ? 'glow' : undefined, pad: 0.15, glow }));
-    } else {
-      groups.push(group([disk(part.x, part.y, part.r)], color, Layer.Particles, { style: 'flat', fx: part.glow ? 'glow' : undefined, pad: 0.15, glow }));
+  // Particles are drawn straight from the pool by the renderers (see `particleQuad`); only the
+  // glowing ones leave a mark here, as light emitters.
+  if (particles) {
+    const n = particles.count;
+    const flags = particles.flags;
+    for (let i = 0; i < n; i++) {
+      if (flags[i]! & P_GLOW) lights.push({ x: particles.x[i]!, y: particles.y[i]!, radius: 1.8, r: 1, g: 0.7, b: 0.3, intensity: 0.45 });
     }
   }
 
@@ -545,6 +539,7 @@ export function buildFrame(
     lights,
     debug,
     decalLayer: opts.decalLayer,
+    particles,
     hud: {
       slowmo: rs?.phase === RoundPhase.LastKill,
       countdown: countdownLeft > 0 ? Math.ceil(countdownLeft / beat) : 0,

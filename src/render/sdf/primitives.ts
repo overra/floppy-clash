@@ -138,51 +138,130 @@ export function primitiveSdf(prim: Primitive, p: Vec2): number {
   return 1e9;
 }
 
+export type Bounds = { minX: number; minY: number; maxX: number; maxY: number };
+
 /** Conservative world-space bounds of a primitive (used to size instanced quads). */
-export function primitiveBounds(prim: Primitive): { minX: number; minY: number; maxX: number; maxY: number } {
+export function primitiveBounds(prim: Primitive): Bounds {
+  return primitiveBoundsInto(prim, { minX: 0, minY: 0, maxX: 0, maxY: 0 });
+}
+
+/**
+ * {@link primitiveBounds} written into `out` (returned), so callers sizing hundreds of quads a frame
+ * allocate nothing.
+ */
+export function primitiveBoundsInto(prim: Primitive, out: Bounds): Bounds {
+  const r = prim.r;
   if (prim.kind === PRIM_DISK) {
-    return { minX: prim.ax - prim.r, minY: prim.ay - prim.r, maxX: prim.ax + prim.r, maxY: prim.ay + prim.r };
+    out.minX = prim.ax - r;
+    out.minY = prim.ay - r;
+    out.maxX = prim.ax + r;
+    out.maxY = prim.ay + r;
+    return out;
   }
   if (prim.kind === PRIM_CAPSULE) {
-    return {
-      minX: Math.min(prim.ax, prim.bx) - prim.r,
-      minY: Math.min(prim.ay, prim.by) - prim.r,
-      maxX: Math.max(prim.ax, prim.bx) + prim.r,
-      maxY: Math.max(prim.ay, prim.by) + prim.r,
-    };
+    out.minX = Math.min(prim.ax, prim.bx) - r;
+    out.minY = Math.min(prim.ay, prim.by) - r;
+    out.maxX = Math.max(prim.ax, prim.bx) + r;
+    out.maxY = Math.max(prim.ay, prim.by) + r;
+    return out;
   }
-  let reach: number;
-  if (prim.kind === PRIM_ROUNDED_BOX) reach = Math.hypot(prim.bx, prim.by);
-  else if (prim.kind === PRIM_TRIANGLE) reach = Math.hypot(prim.bx, prim.by) + prim.r;
-  else reach = prim.r;
-  return { minX: prim.ax - reach, minY: prim.ay - reach, maxX: prim.ax + reach, maxY: prim.ay + reach };
+  const rot = prim.rot ?? 0;
+  if (prim.kind === PRIM_ROUNDED_BOX) {
+    // Exact AABB of the rotated rectangle. (A bounding circle would turn a 30 m floor slab into a
+    // 30 m square quad: fifteen times the fragments for the same pixels.)
+    const c = Math.abs(Math.cos(rot));
+    const s = Math.abs(Math.sin(rot));
+    const ex = prim.bx * c + prim.by * s;
+    const ey = prim.bx * s + prim.by * c;
+    out.minX = prim.ax - ex;
+    out.minY = prim.ay - ey;
+    out.maxX = prim.ax + ex;
+    out.maxY = prim.ay + ey;
+    return out;
+  }
+  if (prim.kind === PRIM_TRIANGLE) {
+    // AABB of the three rotated corners (base at the anchor, apex along local +y), grown by the rounding.
+    const cr = Math.cos(rot);
+    const sr = Math.sin(rot);
+    const x0 = prim.ax - prim.bx * cr;
+    const y0 = prim.ay - prim.bx * sr;
+    const x1 = prim.ax + prim.bx * cr;
+    const y1 = prim.ay + prim.bx * sr;
+    const x2 = prim.ax - prim.by * sr;
+    const y2 = prim.ay + prim.by * cr;
+    out.minX = Math.min(x0, x1, x2) - r;
+    out.minY = Math.min(y0, y1, y2) - r;
+    out.maxX = Math.max(x0, x1, x2) + r;
+    out.maxY = Math.max(y0, y1, y2) + r;
+    return out;
+  }
+  out.minX = prim.ax - r;
+  out.minY = prim.ay - r;
+  out.maxX = prim.ax + r;
+  out.maxY = prim.ay + r;
+  return out;
 }
 
-/** Parse `#rgb`, `#rrggbb`, or `#rrggbbaa` into 0–1 floats. */
+// Colors travel as hex strings so groups stay plain data. A frame turns a few dozen base colors into
+// hundreds of shaded / faded variants, so every conversion below is memoised (bounded) and none of
+// them allocates on a steady frame.
+const PARSE_CACHE_MAX = 4096;
+const parsed = new Map<string, readonly [number, number, number, number]>();
+
+/** Parse `#rgb`, `#rrggbb`, or `#rrggbbaa` into 0–1 floats. The returned tuple is shared: do not mutate. */
 export function parseColor(hex: string): [number, number, number, number] {
+  const hit = parsed.get(hex);
+  if (hit) return hit as [number, number, number, number];
   let h = hex.trim().replace('#', '');
   if (h.length === 3 || h.length === 4) h = [...h].map((c) => c + c).join('');
-  if (h.length < 6) return [1, 1, 1, 1];
-  const r = parseInt(h.slice(0, 2), 16) / 255;
-  const g = parseInt(h.slice(2, 4), 16) / 255;
-  const b = parseInt(h.slice(4, 6), 16) / 255;
-  const a = h.length >= 8 ? parseInt(h.slice(6, 8), 16) / 255 : 1;
-  return [r, g, b, a];
+  let out: [number, number, number, number];
+  if (h.length < 6) out = [1, 1, 1, 1];
+  else {
+    const r = parseInt(h.slice(0, 2), 16) / 255;
+    const g = parseInt(h.slice(2, 4), 16) / 255;
+    const b = parseInt(h.slice(4, 6), 16) / 255;
+    const a = h.length >= 8 ? parseInt(h.slice(6, 8), 16) / 255 : 1;
+    out = [r, g, b, a];
+  }
+  if (parsed.size >= PARSE_CACHE_MAX) parsed.clear();
+  parsed.set(hex, out);
+  return out;
 }
 
-/** Compose a hex color with an alpha in 0–1. */
+const alphaCache = new Map<string, string[]>();
+
+/** Compose a hex color with an alpha in 0–1 (quantised to 8 bits, like the output). */
 export function withAlpha(hex: string, alpha: number): string {
+  const ai = Math.round(Math.max(0, Math.min(1, alpha)) * 255);
+  let row = alphaCache.get(hex);
+  if (!row) {
+    if (alphaCache.size >= 512) alphaCache.clear();
+    row = [];
+    alphaCache.set(hex, row);
+  }
+  const hit = row[ai];
+  if (hit) return hit;
   const [r, g, b] = parseColor(hex);
-  const a = Math.max(0, Math.min(1, alpha));
-  return `#${byte(r)}${byte(g)}${byte(b)}${byte(a)}`;
+  const s = `#${byte(r)}${byte(g)}${byte(b)}${byteOf(ai)}`;
+  row[ai] = s;
+  return s;
 }
 
-/** Mix two hex colors (t = 0 → a, 1 → b). */
+const mixCache = new Map<string, string>();
+
+/** Mix two hex colors (t = 0 → a, 1 → b), quantised to 8-bit steps of t. */
 export function mixColor(a: string, b: string, t: number): string {
+  const ki = Math.round(Math.max(0, Math.min(1, t)) * 255);
+  const key = `${a}|${b}|${ki}`;
+  const hit = mixCache.get(key);
+  if (hit) return hit;
   const ca = parseColor(a);
   const cb = parseColor(b);
-  const k = Math.max(0, Math.min(1, t));
-  return `#${byte(ca[0] + (cb[0] - ca[0]) * k)}${byte(ca[1] + (cb[1] - ca[1]) * k)}${byte(ca[2] + (cb[2] - ca[2]) * k)}`;
+  const k = ki / 255;
+  const s = `#${byte(ca[0] + (cb[0] - ca[0]) * k)}${byte(ca[1] + (cb[1] - ca[1]) * k)}${byte(ca[2] + (cb[2] - ca[2]) * k)}`;
+  if (mixCache.size >= 4096) mixCache.clear();
+  mixCache.set(key, s);
+  return s;
 }
 
 /** Lighten (t > 0) or darken (t < 0) a hex color. */
@@ -191,9 +270,11 @@ export function shade(hex: string, t: number): string {
 }
 
 function byte(v: number): string {
-  return Math.round(Math.max(0, Math.min(1, v)) * 255)
-    .toString(16)
-    .padStart(2, '0');
+  return byteOf(Math.round(Math.max(0, Math.min(1, v)) * 255));
+}
+
+function byteOf(i: number): string {
+  return i.toString(16).padStart(2, '0');
 }
 
 function clamp01(v: number): number {
