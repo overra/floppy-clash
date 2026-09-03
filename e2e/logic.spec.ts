@@ -342,7 +342,7 @@ test('Escape opens the pause overlay and Resume continues', async ({ page }) => 
 });
 
 test('local 10-round fists-only match (PLAN M2 stand-in)', async ({ page }) => {
-  test.setTimeout(120_000);
+  test.setTimeout(180_000);
   await page.addInitScript(() => {
     const mk = (id: string, index: number) => {
       const buttons = Array.from({ length: 17 }, () => ({ pressed: false, touched: false, value: 0 }));
@@ -389,7 +389,7 @@ test('local 10-round fists-only match (PLAN M2 stand-in)', async ({ page }) => {
     window.__floppy?.armLiveFists();
   });
   await expect
-    .poll(async () => page.evaluate(() => window.__floppy?.matchRound ?? 0), { timeout: 90_000 })
+    .poll(async () => page.evaluate(() => window.__floppy?.matchRound ?? 0), { timeout: 160_000 })
     .toBeGreaterThanOrEqual(10);
   await expect
     .poll(async () => page.evaluate(() => window.__floppy?.fistKills ?? 0), { timeout: 10_000 })

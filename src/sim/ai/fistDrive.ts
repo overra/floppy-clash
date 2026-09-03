@@ -36,7 +36,7 @@ export function fistDriveForSeat(world: World, seat: number, tick: number): Play
     input.moveX = Math.abs(dx) > 0.55 ? Math.sign(dx) : 0;
   }
   input.jump = dy > 0.4;
-  input.attack = bestD < 1.6 && tick % 18 === 0;
+  input.attack = bestD < 1.6 && tick % 18 === seat % 18;
   return input;
 }
 
