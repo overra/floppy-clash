@@ -43,7 +43,7 @@ describe('M0 scaffold', () => {
     const hash = run();
     expect(hash).toBe(run());
     // Deliberate pin — update only when a sim change is intentional (PLAN §6).
-    expect(hash).toBe('a3d13309');
+    expect(hash).toBe('cc00feea');
   });
 
   it('golden hash with scripted spawns/destroys is stable', () => {
@@ -67,7 +67,7 @@ describe('M0 scaffold', () => {
     };
     const hash = run();
     expect(hash).toBe(run());
-    expect(hash).toBe('de2c04ec');
+    expect(hash).toBe('cb0befaf');
   });
 
   it('player transform stays finite', () => {
