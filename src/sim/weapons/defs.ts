@@ -264,7 +264,7 @@ const raw = [
     ammo: 20,
     fireMode: 'semi',
     fireIntervalTicks: 12,
-    projectile: { kind: 'rocket', speed: 28, damage: 0, spreadDeg: 0, count: 1, gravity: 0, bounce: 0, fuse: 40, radius: 1.6, explodeDamage: 15, explodeImpulse: 16, status: 'none', warningTicks: 0, beamTicks: 0, rare: false },
+    projectile: { kind: 'rocket', speed: 28, damage: 0, spreadDeg: 0, count: 1, gravity: 0, bounce: 0, fuse: 40, radius: 1.6, explodeDamage: 15, explodeDamageMin: 15, explodeDamageMax: 15, explodeImpulse: 16, status: 'none', warningTicks: 0, beamTicks: 0, rare: false },
     recoil: { back: 1.6, up: 0.2, forward: 0 },
     knockback: 10,
     thrownDamage: 55,

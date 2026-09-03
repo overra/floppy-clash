@@ -5,6 +5,7 @@ import { heldWeaponHitKind, heldWeaponIntercept, spawnSnake } from '../src/sim/w
 import { spawnWeapon } from '../src/sim/systems/weapons';
 import {
   Aim,
+  Combat,
   Controller,
   Dead,
   Destructible,
@@ -20,7 +21,7 @@ import {
   Transform,
   Weapon,
 } from '../src/sim/traits';
-import { hold, makeSim, playerOf } from './helpers';
+import { hold, makeSim, pin, playerOf } from './helpers';
 
 describe('PLAN accept stand-ins', () => {
   it('lava deals 35 then respects cooldown', () => {
@@ -166,7 +167,8 @@ describe('PLAN accept stand-ins', () => {
     const w = gun.get(Weapon)!;
     gun.set(Weapon, { ...w, ammo: 0 });
     sim.step([hold({ attack: true, aimX: 1, aimY: 0 }), hold({}), hold({}), hold({})]);
-    expect(gun.has(Loose) || gun.get(Weapon)?.thrown).toBe(true);
+    expect(gun.has(Loose)).toBe(true);
+    expect(gun.get(Weapon)?.thrown).toBe(true);
   });
 
   it('M16 burst fires three shots over ticks, not at once', () => {
@@ -481,6 +483,8 @@ describe('PLAN accept stand-ins', () => {
     }
     expect(pushed).toBe(true);
     expect(popped).toBe(true);
+    const lost = hp0 - (b.get(Health)?.hp ?? 100);
+    expect(lost).toBeGreaterThanOrEqual(15);
   });
 
   it('god pistol rolls 30–60 damage per shot', () => {
@@ -701,6 +705,69 @@ describe('PLAN accept stand-ins', () => {
       y1 = t.y;
     });
     expect(y1).toBeGreaterThan(y0.n + 0.8);
+  });
+
+  it('snakes bite on capsule contact, not a center-to-center disk (PLAN 4.14)', () => {
+    const sim = makeSim({ seed: 415, settings: { playerCount: 1 } });
+    const p = playerOf(sim);
+    pin(sim, p, 12, 3);
+    p.set(Health, { hp: 8, maxHp: 100 });
+    spawnSnake(sim.ecs, 12.35, 2.15, undefined, false, false);
+    let hit = false;
+    for (let i = 0; i < 8; i++) {
+      pin(sim, p, 12, 3);
+      const ev = sim.step([hold({}), hold({}), hold({}), hold({})]);
+      if (ev.some((e) => e.type === 'hit') || (p.get(Health)?.hp ?? 8) < 8) hit = true;
+    }
+    expect(hit).toBe(true);
+    expect(p.get(Health)?.hp ?? 8).toBeLessThanOrEqual(3);
+  });
+
+  it('a blocked snake bite emits block and deals no damage (PLAN M3 / 4.14)', () => {
+    const sim = makeSim({ seed: 416, settings: { playerCount: 1 } });
+    const p = playerOf(sim);
+    pin(sim, p, 12, 3);
+    const combat = p.get(Combat);
+    if (combat) p.set(Combat, { ...combat, blocking: true, blockMeter: 1, blockStartTick: 0 });
+    const hp0 = p.get(Health)?.hp ?? 100;
+    spawnSnake(sim.ecs, 11.5, 2.15, undefined, false, false);
+    let blocked = false;
+    for (let i = 0; i < 10; i++) {
+      pin(sim, p, 12, 3);
+      const ev = sim.step([hold({ block: true, aimX: -1, aimY: 0 }), hold({}), hold({}), hold({})]);
+      if (ev.some((e) => e.type === 'block')) blocked = true;
+    }
+    expect(blocked).toBe(true);
+    expect(p.get(Health)?.hp ?? 100).toBe(hp0);
+  });
+
+  it('bullets reduce snake HP (PLAN 4.14)', () => {
+    const sim = makeSim({ seed: 417, settings: { playerCount: 1 } });
+    const p = playerOf(sim);
+    pin(sim, p, 8, 4);
+    spawnSnake(sim.ecs, 12, 4, undefined, false, false);
+    const gun = spawnWeapon(sim.ecs, 'pistol', 8, 5);
+    gun.add(Held(), HeldBy(p));
+    gun.remove(Loose);
+    const hp0 = { n: 0 };
+    sim.ecs.query(Snake, Health).updateEach(([_s, h]) => {
+      hp0.n = h.hp;
+    });
+    expect(hp0.n).toBeGreaterThan(0);
+    for (let i = 0; i < 12; i++) {
+      pin(sim, p, 8, 4);
+      sim.ecs.query(Snake).updateEach((_, e) => {
+        sim.ctx.bodies.get(e)?.setPosition({ x: 12, y: 4 });
+        sim.ctx.bodies.get(e)?.setLinearVelocity({ x: 0, y: 0 });
+        e.set(Transform, { x: 12, y: 4, angle: 0 });
+      });
+      sim.step([hold({ attack: i === 1, aimX: 1, aimY: 0 }), hold({}), hold({}), hold({})]);
+    }
+    const hp1 = { n: hp0.n };
+    sim.ecs.query(Snake, Health).updateEach(([_s, h]) => {
+      hp1.n = h.hp;
+    });
+    expect(hp1.n).toBeLessThan(hp0.n);
   });
 
   it('black hole swallows a player who enters the core', () => {

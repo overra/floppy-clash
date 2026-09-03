@@ -11,17 +11,33 @@ import {
   loadMemory,
   moveSelected,
   PALETTE,
+  redo,
   resetMemoryLibrary,
   resizeSelected,
   saveLibrary,
   saveMemory,
   shareHash,
+  undo,
 } from '../src/editor/editor';
 import { parseLevel } from '../src/sim/level/schema';
 import { hold, makeSim } from './helpers';
 import { installMemoryIndexedDB } from './idb-memory';
 
 describe('M7 editor', () => {
+  it('undo/redo restores object placement (PLAN 4.15)', () => {
+    const state = createEditorState();
+    const start = state.level.objects.length;
+    state.tool = 'spikes';
+    addObject(state, 10, 6);
+    expect(state.level.objects.length).toBe(start + 1);
+    expect(state.level.objects[state.selected]?.type).toBe('spikes');
+    undo(state);
+    expect(state.level.objects.length).toBe(start);
+    redo(state);
+    expect(state.level.objects.length).toBe(start + 1);
+    expect(state.level.objects.some((o) => o.type === 'spikes')).toBe(true);
+  });
+
   it('can place every hazard type, export, and reload', () => {
     const state = createEditorState();
     for (const tool of PALETTE) {

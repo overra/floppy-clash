@@ -118,10 +118,12 @@ describe('M4 hazard details', () => {
     const p = playerOf(sim);
     const pad = getLevel('test-bounce').objects.find((o) => o.type === 'bounce');
     sim.ctx.bodies.get(p)?.setPosition({ x: pad?.x ?? 13, y: (pad?.y ?? 2.3) + 0.9 });
-    for (let i = 0; i < 20; i++) sim.step([hold({}), hold({}), hold({}), hold({})]);
-    const vy = sim.ctx.bodies.get(p)?.getLinearVelocity().y ?? 0;
-    const y = p.get(Transform)?.y ?? 0;
-    expect(vy > 4 || y > 4).toBe(true);
+    let launched = false;
+    for (let i = 0; i < 20; i++) {
+      sim.step([hold({}), hold({}), hold({}), hold({})]);
+      if ((sim.ctx.bodies.get(p)?.getLinearVelocity().y ?? 0) > 4) launched = true;
+    }
+    expect(launched).toBe(true);
   });
 
   it('conveyor moves a standing player; ducking anchors', () => {

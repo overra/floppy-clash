@@ -48,6 +48,8 @@ describe('PLAN Appendix C range / duration mapping', () => {
     expect(explodeDamageAt(0.5, { explodeDamageMin: 50, explodeDamageMax: 80, explodeDamage: 80, damage: 65 })).toBe(
       65,
     );
+    expect(explodeDamageAt(1, { explodeDamage: 15, damage: 0, rolled: 0 })).toBe(15);
+    expect(explodeDamageAt(1, { explodeDamage: 0, damage: 5, rolled: 5 })).toBe(0);
   });
 
   it('rollIfRanged does not consume a silent midpoint when a range is set', () => {
@@ -193,7 +195,8 @@ describe('PLAN Appendix C range / duration mapping', () => {
     }
     expect(hose.get(Weapon)?.ammo).toBe(0);
     drain.step([hold({ attack: true, aimX: 1, aimY: 0 }), hold({}), hold({}), hold({})]);
-    expect(hose.has(Loose) || (hose.get(Weapon)?.ammo ?? 1) <= 0).toBe(true);
+    expect(hose.has(Loose)).toBe(true);
+    expect(hose.get(Weapon)?.thrown).toBe(true);
   });
 
   it('flamethrower empties after ~5 s of hold fire', () => {

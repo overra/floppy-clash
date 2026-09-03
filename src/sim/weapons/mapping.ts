@@ -58,6 +58,9 @@ export function explodeDamageAt(
   if (opts.explodeDamageMin != null && opts.explodeDamageMax != null) {
     return opts.explodeDamageMin + (opts.explodeDamageMax - opts.explodeDamageMin) * falloff;
   }
-  const base = opts.rolled ?? (opts.explodeDamage || opts.damage);
-  return base * falloff;
+  // `rolled` of 0 is thruster's push, not a silent 0 blast — prefer explodeDamage (15).
+  // Explicit explodeDamage 0 (snake-grenade, glue, flame) must not fall back to shot damage.
+  if (opts.explodeDamage) return opts.explodeDamage * falloff;
+  if (opts.rolled) return opts.rolled * falloff;
+  return 0;
 }

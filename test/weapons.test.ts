@@ -22,7 +22,8 @@ describe('M3 weapons', () => {
       sim.step([hold({}), hold({}), hold({}), hold({})]);
       if (gun.has(Held)) break;
     }
-    expect(gun.has(Held) || gun.targetFor(HeldBy) === p).toBe(true);
+    expect(gun.has(Held)).toBe(true);
+    expect(gun.targetFor(HeldBy)).toBe(p);
     expect(gun.get(Weapon)?.ammo).toBe(15);
   });
 
@@ -144,6 +145,30 @@ describe('M3 weapons', () => {
     const lost = before - (b.get(Health)?.hp ?? 100);
     expect(gun.get(Weapon)?.thrownHit).toBe(true);
     expect(lost).toBe(55);
+
+    const blocked = makeSim({ level: woodsClearing, seed: 19, settings: { playerCount: 2 } });
+    const ba = playerOf(blocked, 0);
+    const bb = playerOf(blocked, 1);
+    blocked.ctx.bodies.get(ba)?.setPosition({ x: 10, y: 4 });
+    blocked.ctx.bodies.get(bb)?.setPosition({ x: 11.1, y: 4 });
+    ba.set(Transform, { x: 10, y: 4, angle: 0 });
+    bb.set(Transform, { x: 11.1, y: 4, angle: 0 });
+    const tossed = spawnWeapon(blocked.ecs, 'pistol', 10, 5);
+    tossed.add(Held(), HeldBy(ba));
+    tossed.remove(Loose);
+    const hp0 = bb.get(Health)?.hp ?? 100;
+    let bounce = false;
+    for (let i = 0; i < 16; i++) {
+      const ev = blocked.step([
+        hold({ throw: i === 2, aimX: 1, aimY: 0 }),
+        hold({ block: true, aimX: -1, aimY: 0 }),
+        hold({}),
+        hold({}),
+      ]);
+      if (ev.some((e) => e.type === 'block')) bounce = true;
+    }
+    expect(bounce).toBe(true);
+    expect(bb.get(Health)?.hp ?? 100).toBe(hp0);
   });
 });
 

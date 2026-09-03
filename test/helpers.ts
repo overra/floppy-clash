@@ -29,6 +29,12 @@ export function playerOf(sim: SimHandle, slot = 0) {
   return found;
 }
 
+export function pin(sim: SimHandle, entity: ReturnType<typeof playerOf>, x: number, y: number): void {
+  sim.ctx.bodies.get(entity)?.setPosition({ x, y });
+  sim.ctx.bodies.get(entity)?.setLinearVelocity({ x: 0, y: 0 });
+  entity.set(Transform, { x, y, angle: 0 });
+}
+
 export function pos(sim: SimHandle, slot = 0) {
   const t = playerOf(sim, slot).get(Transform);
   if (!t) throw new Error('no transform');

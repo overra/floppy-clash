@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { woodsClearing } from '../src/levels/handauthored';
 import {
+  Combat,
   Crown,
   Dead,
   Health,
@@ -15,6 +16,31 @@ import { nextMatchLevel } from '../src/sim/systems/reset';
 import { hold, hp, makeSim, playerOf } from './helpers';
 
 describe('M2 combat and rounds', () => {
+  it('punch bounces off a block (PLAN 4.7)', () => {
+    const sim = makeSim({ level: woodsClearing, seed: 31, settings: { playerCount: 2, bots: 0 } });
+    const a = playerOf(sim, 0);
+    const b = playerOf(sim, 1);
+    sim.ctx.bodies.get(a)?.setPosition({ x: 10, y: 4 });
+    sim.ctx.bodies.get(b)?.setPosition({ x: 10.8, y: 4 });
+    a.set(Transform, { x: 10, y: 4, angle: 0 });
+    b.set(Transform, { x: 10.8, y: 4, angle: 0 });
+    const combat = b.get(Combat);
+    if (combat) b.set(Combat, { ...combat, blocking: true, blockMeter: 1, blockStartTick: sim.ctx.tick });
+    const before = b.get(Health)?.hp ?? 100;
+    let blocked = false;
+    for (let i = 0; i < 8; i++) {
+      const ev = sim.step([
+        hold({ attack: i === 2, aimX: 1, aimY: 0 }),
+        hold({ block: true, aimX: -1, aimY: 0 }),
+        hold({}),
+        hold({}),
+      ]);
+      if (ev.some((e) => e.type === 'block')) blocked = true;
+    }
+    expect(blocked).toBe(true);
+    expect(b.get(Health)?.hp ?? 100).toBe(before);
+  });
+
   it('punch deals about 22 damage', () => {
     const sim = makeSim({ level: woodsClearing, seed: 5, settings: { playerCount: 2, bots: 0 } });
     const a = playerOf(sim, 0);

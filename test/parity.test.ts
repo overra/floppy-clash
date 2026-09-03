@@ -35,7 +35,7 @@ const PARITY: ParityRow[] = [
   { id: 'military-shotgun', damageMin: 5, damageMax: 6, ammo: 10, kind: 'pellets', count: 5 },
   { id: 'bouncer', damage: 45, ammo: 30, kind: 'bullet' },
   { id: 'grenade-launcher', explodeDamageMin: 50, explodeDamageMax: 80, ammo: 5, kind: 'grenade' },
-  { id: 'thruster', damage: 0, ammo: 20, kind: 'rocket' },
+  { id: 'thruster', damage: 0, ammo: 20, kind: 'rocket', explodeDamageMin: 15, explodeDamageMax: 15 },
   { id: 'rpg', damage: 300, explodeDamageMin: 300, explodeDamageMax: 300, ammo: 3, kind: 'rocket' },
   { id: 'snake-gun', damage: 5, ammo: 6, kind: 'creature' },
   { id: 'snake-shotgun', damage: 5, ammo: 10, kind: 'creature', count: 3 },

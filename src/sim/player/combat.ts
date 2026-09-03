@@ -1,10 +1,11 @@
 import { createQuery, Not, type Entity, type World } from 'koota';
 import { Vec2 } from 'planck';
-import { getContext } from '../context';
+import { emit, getContext } from '../context';
 import { rising } from '../input';
+import { shieldBlocks } from './block';
 import { hitZoneAt, takeDamage } from './health';
 import { weaponByIndex } from '../weapons/defs';
-import { Aim, Combat, Controller, Dead, Held, HeldBy, Loose, Player, Transform, Weapon } from '../traits';
+import { Aim, Combat, Controller, Dead, Health, Held, HeldBy, Loose, Player, Snake, Transform, Weapon } from '../traits';
 
 const fighters = createQuery(Player, Combat, Aim, Controller, Transform);
 
@@ -85,6 +86,12 @@ export function combat(world: World): void {
         const dx = otherT.x - hx;
         const dy = otherT.y - hy;
         if (dx * dx + dy * dy <= t.punchRadius * t.punchRadius) {
+          // PLAN 4.7: punches bounce off a shield (no damage / disarm / knockback).
+          const block = shieldBlocks(world, other, hx, hy, aim.x, aim.y);
+          if (block !== 'none') {
+            emit(world, { type: 'block', player: other, reflected: false });
+            return;
+          }
           const duck = other.get(Controller)?.ducking ?? false;
           const zone = hitZoneAt(hy - otherT.y, t.height, duck);
           takeDamage(world, other, t.punchDamage, zone, entity, otherT.x, otherT.y);
@@ -97,6 +104,14 @@ export function combat(world: World): void {
           }
           disarm(world, other);
         }
+      });
+      // PLAN 4.14: snakes have HP and take punches (head/neck via hitZoneAt).
+      world.query(Snake, Transform, Health).updateEach(([_s, otherT, health], other) => {
+        if (health.hp <= 0) return;
+        const dx = otherT.x - hx;
+        const dy = otherT.y - hy;
+        if (dx * dx + dy * dy > t.punchRadius * t.punchRadius) return;
+        takeDamage(world, other, t.punchDamage, hitZoneAt(hy - otherT.y, t.height, false), entity, otherT.x, otherT.y);
       });
     }
   });

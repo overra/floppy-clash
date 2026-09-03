@@ -6,7 +6,6 @@ import { takeDamage, hitZoneAt } from '../player/health';
 import { assignNetId, createBoxBody, registerBody } from '../physics/bodies';
 import {
   Aim,
-  Combat,
   Controller,
   Dead,
   Destructible,
@@ -24,6 +23,7 @@ import {
   Transform,
   Weapon,
 } from '../traits';
+import { shieldBlocks } from '../player/block';
 import { disarm } from '../player/combat';
 import { weaponByIndex } from './defs';
 import { explodeDamageAt, rollIfRanged } from './mapping';
@@ -135,26 +135,28 @@ function statusTicksFor(world: World, status: string, fallback: number): number 
   return fallback;
 }
 
-function shieldBlocks(world: World, blocker: Entity, hx: number, hy: number, vx: number, vy: number): 'none' | 'absorb' | 'reflect' {
-  const combat = blocker.get(Combat);
-  const aim = blocker.get(Aim);
-  const t = blocker.get(Transform);
-  if (!combat?.blocking || !aim || !t) return 'none';
+function bounceOffShield(
+  world: World,
+  entity: Entity,
+  proj: { vx: number; vy: number },
+  blocker: Entity,
+  mode: 'absorb' | 'reflect',
+  owner: Entity | undefined,
+): void {
   const ctx = getContext(world);
-  const toHitX = hx - t.x;
-  const toHitY = hy - t.y;
-  const incomingX = -vx;
-  const incomingY = -vy;
-  const hitDir = Math.atan2(toHitY, toHitX);
-  const aimDir = Math.atan2(aim.y, aim.x);
-  let delta = Math.abs(hitDir - aimDir);
-  if (delta > Math.PI) delta = 2 * Math.PI - delta;
-  const arc = (ctx.tuning.blockArcDeg * Math.PI) / 180 / 2;
-  if (delta > arc) return 'none';
-  const inWindow = ctx.tick - combat.blockStartTick <= ctx.tuning.perfectBlockTicks;
-  void incomingX;
-  void incomingY;
-  return inWindow ? 'reflect' : 'absorb';
+  // PLAN 4.7: later hits are absorbed (destroyed); only the perfect window reflects.
+  if (mode === 'absorb') {
+    emit(world, { type: 'block', player: blocker, reflected: false });
+    ctx.pendingDestroy.push(entity);
+    return;
+  }
+  proj.vx *= -1;
+  proj.vy *= -1;
+  const body = ctx.bodies.get(entity);
+  if (body) body.setLinearVelocity(new Vec2(proj.vx, proj.vy));
+  if (owner !== undefined) entity.remove(OwnedBy('*'));
+  entity.add(OwnedBy(blocker));
+  emit(world, { type: 'block', player: blocker, reflected: true });
 }
 
 function explode(world: World, x: number, y: number, defId: number, owner?: Entity, rolledDamage?: number): void {
@@ -181,6 +183,8 @@ function explode(world: World, x: number, y: number, defId: number, owner?: Enti
       if (def.projectile.status !== 'none') {
         applyStatus(target, def.projectile.status, statusTicksFor(world, def.projectile.status, 180));
       }
+    } else if (target.has(Snake) && target.has(Health)) {
+      takeDamage(world, target, damage, 'body', owner ?? -1, x, y);
     }
     if (target.has(Destructible)) {
       const d = target.get(Destructible);
@@ -244,6 +248,11 @@ export function projectiles(world: World): void {
             tb.setLinearVelocity(new Vec2(v.x + aim.x * def.knockback, v.y + aim.y * def.knockback));
           }
         });
+        world.query(Snake, Transform, Health).updateEach(([_s, st, health], other) => {
+          if (health.hp <= 0) return;
+          if (!inMeleeArc(ot.x, ot.y, aim.x, aim.y, st.x, st.y, reach)) return;
+          takeDamage(world, other, proj.damage, 'body', owner ?? -1, st.x, st.y);
+        });
       }
       ctx.pendingDestroy.push(entity);
       return;
@@ -262,18 +271,20 @@ export function projectiles(world: World): void {
       if (active && aim && ot) {
         const hit = raycastClosest(world, ot.x, ot.y, ot.x + aim.x * 40, ot.y + aim.y * 40, (h) => h.entity === owner);
         if (hit && world.has(hit.entity as Entity) && (hit.entity as Entity).has(Player)) {
-          takeDamage(world, hit.entity as Entity, proj.damage, 'body', owner ?? -1, hit.x, hit.y);
-          if (def.projectile.status !== 'none') {
-            applyStatus(
-              hit.entity as Entity,
-              def.projectile.status,
-              statusTicksFor(world, def.projectile.status, 90),
-            );
-          }
-          const tb = ctx.bodies.get(hit.entity as Entity);
-          if (tb && def.knockback) {
-            const v = tb.getLinearVelocity();
-            tb.setLinearVelocity(new Vec2(v.x + aim.x * def.knockback, v.y + aim.y * def.knockback));
+          const target = hit.entity as Entity;
+          const block = shieldBlocks(world, target, hit.x, hit.y, aim.x, aim.y);
+          if (block !== 'none') {
+            emit(world, { type: 'block', player: target, reflected: block === 'reflect' });
+          } else {
+            takeDamage(world, target, proj.damage, 'body', owner ?? -1, hit.x, hit.y);
+            if (def.projectile.status !== 'none') {
+              applyStatus(target, def.projectile.status, statusTicksFor(world, def.projectile.status, 90));
+            }
+            const tb = ctx.bodies.get(target);
+            if (tb && def.knockback) {
+              const v = tb.getLinearVelocity();
+              tb.setLinearVelocity(new Vec2(v.x + aim.x * def.knockback, v.y + aim.y * def.knockback));
+            }
           }
         }
       }
@@ -298,7 +309,11 @@ export function projectiles(world: World): void {
       }
       const hit = raycastClosest(world, proj.x, proj.y, nx, ny, (h) => {
         if (h.entity === owner && proj.ownerGrace > 0) return true;
-        if (h.kind === 'projectile') return true;
+        // PLAN 4.14: snakes are projectile bodies but must take hits.
+        if (h.kind === 'projectile') {
+          const e = h.entity as Entity;
+          if (!world.has(e) || !e.has(Snake)) return true;
+        }
         return false;
       });
       if (hit) {
@@ -334,6 +349,8 @@ export function projectiles(world: World): void {
             const dir = Math.hypot(proj.vx, proj.vy) || 1;
             tb.setLinearVelocity(new Vec2(v.x + (proj.vx / dir) * kb, v.y + (proj.vy / dir) * kb));
           }
+        } else if (world.has(target) && target.has(Snake) && target.has(Health)) {
+          takeDamage(world, target, proj.damage, 'body', owner ?? -1, hit.x, hit.y);
         } else if (world.has(target) && target.has(Destructible)) {
           const d = target.get(Destructible);
           if (d) target.set(Destructible, { hp: d.hp - proj.damage, maxHp: d.maxHp });
@@ -377,6 +394,8 @@ export function projectiles(world: World): void {
       proj.kind === ProjectileKind.Field;
     if (explosive) {
       let hitSomething = false;
+      let shielded: Entity | undefined;
+      let shieldMode: 'absorb' | 'reflect' | 'none' = 'none';
       world.query(Player, Transform, Not(Dead)).updateEach(([_pl, pt], other) => {
         if (other === owner && proj.ownerGrace > 0) return;
         const ob = ctx.bodies.get(other);
@@ -384,7 +403,13 @@ export function projectiles(world: World): void {
         const oy = ob?.getPosition().y ?? pt.y;
         const reach = 0.85 + (def.projectile.radius > 1 ? 0.5 : 0);
         if (Math.hypot(ox - proj.x, oy - proj.y) < reach) {
-          hitSomething = true;
+          const block = shieldBlocks(world, other, ox, oy, proj.vx, proj.vy);
+          if (block !== 'none') {
+            shielded = other;
+            shieldMode = block;
+          } else {
+            hitSomething = true;
+          }
         }
       });
       if (!hitSomething && body) {
@@ -396,7 +421,24 @@ export function projectiles(world: World): void {
           proj.y + proj.vy * dt * 2,
           (h) => h.entity === owner || h.entity === entity,
         );
-        if (ahead && ahead.fraction < 1) hitSomething = true;
+        if (ahead && ahead.fraction < 1) {
+          const target = ahead.entity as Entity;
+          if (world.has(target) && target.has(Player) && !target.has(Dead)) {
+            const block = shieldBlocks(world, target, ahead.x, ahead.y, proj.vx, proj.vy);
+            if (block !== 'none') {
+              shielded = target;
+              shieldMode = block;
+            } else {
+              hitSomething = true;
+            }
+          } else {
+            hitSomething = true;
+          }
+        }
+      }
+      if (shielded && shieldMode !== 'none' && !hitSomething) {
+        bounceOffShield(world, entity, proj, shielded, shieldMode, owner);
+        return;
       }
       if (ctx.contactHits.has(entity as unknown as number)) hitSomething = true;
 
@@ -418,6 +460,10 @@ export function projectiles(world: World): void {
         });
         proj.bounces = 1;
         proj.fuse = Math.min(proj.fuse > 0 ? proj.fuse : 24, 24);
+        // Stay on the target so the pop (15) lands after the push, not 10 m downrange.
+        proj.vx = 0;
+        proj.vy = 0;
+        if (body) body.setLinearVelocity(new Vec2(0, 0));
         hitSomething = false;
       }
 
@@ -441,6 +487,28 @@ export function projectiles(world: World): void {
           proj.kind === ProjectileKind.BurstInto ||
           proj.kind === ProjectileKind.Field ||
           (proj.kind === ProjectileKind.Grenade && proj.fuse <= 0));
+      if (
+        hitSomething &&
+        ((proj.kind === ProjectileKind.Grenade && !def.projectile.explodeDamage && def.projectile.explodeDamageMin == null) ||
+          (proj.kind === ProjectileKind.Field &&
+            !def.projectile.explodeDamage &&
+            def.id !== 'black-hole' &&
+            def.id !== 'time-bubble'))
+      ) {
+        world.query(Player, Transform, Not(Dead)).updateEach(([_pl, pt], other) => {
+          if (other === owner && proj.ownerGrace > 0) return;
+          const ob = ctx.bodies.get(other);
+          const ox = ob?.getPosition().x ?? pt.x;
+          const oy = ob?.getPosition().y ?? pt.y;
+          if (Math.hypot(ox - proj.x, oy - proj.y) >= 1.2) return;
+          takeDamage(world, other, Math.max(proj.damage, 0.2), 'body', owner ?? -1, ox, oy);
+          if (def.projectile.status !== 'none') {
+            applyStatus(other, def.projectile.status, statusTicksFor(world, def.projectile.status, 180));
+          }
+        });
+        ctx.pendingDestroy.push(entity);
+        return;
+      }
       if (hitSomething && contactExplode) {
         if (proj.kind === ProjectileKind.BurstInto) {
           const burst = def.projectile.burstInto === 'snake' ? 'snake' : 'spike';
@@ -462,6 +530,20 @@ export function projectiles(world: World): void {
         explode(world, proj.x, proj.y, proj.defId, owner, proj.damage);
         ctx.pendingDestroy.push(entity);
         return;
+      }
+    }
+
+    if (def.id === 'thruster' && proj.bounces === 1) {
+      let best: { x: number; y: number; d: number } | undefined;
+      world.query(Player, Transform, Not(Dead)).updateEach(([_p, pt], other) => {
+        if (other === owner) return;
+        const d = Math.hypot(pt.x - proj.x, pt.y - proj.y);
+        if (!best || d < best.d) best = { x: pt.x, y: pt.y, d };
+      });
+      if (best && best.d < 10) {
+        proj.x = best.x;
+        proj.y = best.y;
+        if (body) body.setPosition(new Vec2(best.x, best.y));
       }
     }
 
@@ -536,28 +618,49 @@ export function projectiles(world: World): void {
       return;
     }
     if (snake.biteCooldown > 0) snake.biteCooldown -= 1;
-    const nearest = { cur: null as { e: Entity; d: number; x: number; y: number } | null };
-    world.query(Player, Transform, Not(Dead)).updateEach(([_p, pt], other) => {
-      const d = Math.hypot(pt.x - st.x, pt.y - st.y);
-      if (!nearest.cur || d < nearest.cur.d) nearest.cur = { e: other, d, x: pt.x, y: pt.y };
-    });
     const body = ctx.bodies.get(entity);
+    const sx = body?.getPosition().x ?? st.x;
+    const sy = body?.getPosition().y ?? st.y;
+    const nearest = { cur: null as { e: Entity; d: number; x: number; y: number } | null };
+    const snakeOwner = ownerOf(entity);
+    world.query(Player, Transform, Not(Dead)).updateEach(([_p, pt], other) => {
+      if (other === snakeOwner) return;
+      const ob = ctx.bodies.get(other);
+      const px = ob?.getPosition().x ?? pt.x;
+      const py = ob?.getPosition().y ?? pt.y;
+      const d = Math.hypot(px - sx, py - sy);
+      if (!nearest.cur || d < nearest.cur.d) nearest.cur = { e: other, d, x: px, y: py };
+    });
     const n = nearest.cur;
-    if (n && body) {
-      const dirx = n.x - st.x;
-      const diry = n.y - st.y;
-      const len = Math.hypot(dirx, diry) || 1;
-      const speed = snake.flying ? 6 : 4;
-      const v = body.getLinearVelocity();
-      body.setLinearVelocity(
-        new Vec2(
-          (dirx / len) * speed,
-          snake.flying ? (diry / len) * speed : v.y + (n.d > 1.5 && body.getLinearVelocity().y < 1 ? 6 : 0),
-        ),
-      );
-      if (n.d < 0.55 && snake.biteCooldown <= 0) {
+    if (!n || !body) return;
+    const dirx = n.x - sx;
+    const diry = n.y - sy;
+    const len = Math.hypot(dirx, diry) || 1;
+    const speed = snake.flying ? 6 : 4;
+    const v = body.getLinearVelocity();
+    const extHx = snake.giant ? 0.35 : 0.18;
+    const extHy = snake.giant ? 0.18 : 0.1;
+    // PLAN 4.14: bite on contact — AABB vs the player capsule, not a tiny center range.
+    const touching =
+      Math.abs(sx - n.x) <= extHx + ctx.tuning.radius + 0.08 &&
+      Math.abs(sy - n.y) <= extHy + ctx.tuning.height / 2 + 0.08;
+    const needHop = !snake.flying && !touching && (n.d > 1.5 || n.y - sy > 0.45) && v.y < 1.2;
+    body.setLinearVelocity(
+      new Vec2((dirx / len) * speed, snake.flying ? (diry / len) * speed : needHop ? 6 : v.y),
+    );
+    if (touching && snake.biteCooldown <= 0) {
+      const aim = n.e.get(Aim);
+      // Flatten incoming to the snake's x-side so a grounded bite at the feet
+      // is still blockable when the shield faces the snake (PLAN M3).
+      const side = Math.sign(n.x - sx);
+      const vx = side !== 0 ? side : -(aim?.x ?? 1);
+      const block = shieldBlocks(world, n.e, sx, sy, vx, 0);
+      if (block !== 'none') {
+        emit(world, { type: 'block', player: n.e, reflected: false });
+        snake.biteCooldown = 20;
+      } else {
         const duck = n.e.get(Controller)?.ducking ?? false;
-        const zone = hitZoneAt(st.y - n.y, ctx.tuning.height, duck);
+        const zone = hitZoneAt(sy - n.y, ctx.tuning.height, duck);
         takeDamage(world, n.e, snake.giant ? 25 : 5, zone, ownerOf(entity) ?? entity, n.x, n.y);
         snake.biteCooldown = 20;
       }

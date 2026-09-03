@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { bulletApproaching, hazardAhead } from '../src/sim/ai/bots';
 import { getLevel } from '../src/levels/catalog';
-import { Bot, Projectile, Transform } from '../src/sim/traits';
-import { makeSim, playerOf } from './helpers';
+import { spawnWeapon } from '../src/sim/systems/weapons';
+import { Bot, Held, HeldBy, Projectile, Transform, Weapon } from '../src/sim/traits';
+import { makeSim, pin, playerOf } from './helpers';
 
 describe('M9 bots', () => {
   it('createSimWorld attaches Bot traits for settings.bots seats', () => {
@@ -27,6 +28,47 @@ describe('M9 bots', () => {
     const x1 = bot.get(Transform)?.x ?? 16;
     expect(Math.abs(x1 - x0)).toBeGreaterThan(0.3);
     expect(sim.getTick()).toBe(90);
+  });
+
+  it('unarmed bot walks toward the nearest loose weapon and picks it up (PLAN 4.14)', () => {
+    const sim = makeSim({ seed: 95, settings: { playerCount: 1, bots: 1 } });
+    const bot = playerOf(sim, 1);
+    pin(sim, bot, 13.6, 4);
+    const gun = spawnWeapon(sim.ecs, 'pistol', 12, 4);
+    const w = gun.get(Weapon)!;
+    gun.set(Weapon, { ...w, pickupCooldown: 0 });
+    const x0 = bot.get(Transform)?.x ?? 13.6;
+    for (let i = 0; i < 50; i++) sim.step();
+    expect(bot.get(Transform)?.x ?? 13.6).toBeLessThan(x0);
+    expect(gun.has(Held)).toBe(true);
+    expect(gun.targetFor(HeldBy) === bot).toBe(true);
+  });
+
+  it('thinkBots raises block when a bullet is approaching, not on a periodic tick', () => {
+    const sim = makeSim({ seed: 96, settings: { playerCount: 1, bots: 1 } });
+    const bot = playerOf(sim, 1);
+    pin(sim, bot, 14, 4);
+    const trait = bot.get(Bot);
+    if (trait) bot.set(Bot, { ...trait, think: 20 });
+    sim.ecs.spawn(
+      Projectile({
+        kind: 0,
+        damage: 10,
+        speed: 40,
+        bounces: 0,
+        fuse: 0,
+        x: 8,
+        y: 4,
+        vx: 40,
+        vy: 0,
+        gravity: 0,
+        ownerGrace: 0,
+        defId: 0,
+      }),
+    );
+    sim.step();
+    const slot = bot.get(Bot)?.slot ?? 1;
+    expect(sim.ctx.inputs[slot]?.block).toBe(true);
   });
 
   it('blocks when a bullet is approaching (PLAN 4.14)', () => {
