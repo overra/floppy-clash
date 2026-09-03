@@ -7,15 +7,18 @@ import {
   Controller,
   Dead,
   Crown,
+  Destructible,
   Hazard,
   HazardKind,
   Held,
   HeldBy,
   MatchState,
+  PhysArm,
   Player,
   PrevTransform,
   Projectile,
   RagdollPart,
+  Snake,
   RoundPhase,
   RoundState,
   Transform,
@@ -31,13 +34,14 @@ import type { Particle } from './fx/particles';
 import { groupBounds, type RenderFrame, type ShapeGroup } from './frame';
 import { poseToPrimitives, secondaryFromVelocity, type LimbState } from './figure';
 import {
+  PRIM_BEZIER,
   PRIM_CAPSULE,
   PRIM_DISK,
   PRIM_PIE,
   PRIM_ROUNDED_BOX,
   PRIM_TRIANGLE,
 } from './sdf/primitives';
-import { PhysArm } from '../sim/traits';
+import { themePassGroups } from './themeDecor';
 
 const COLORS = ['#f2c14e', '#4c8dff', '#e85d4c', '#3dcf7a'];
 const COLORS_CB = ['#f0e442', '#0072b2', '#d55e00', '#009e73'];
@@ -80,11 +84,16 @@ function hazardPrimitives(kind: number, x: number, y: number) {
     ];
   }
   if (kind === HazardKind.Saw) {
-    return [
-      { kind: PRIM_DISK, ax: x, ay: y, bx: x, by: y, r: 0.42 },
-      { kind: PRIM_PIE, ax: x, ay: y, bx: 0.55, by: 0, r: 0.62 },
-      { kind: PRIM_PIE, ax: x, ay: y + 0.02, bx: 0.55, by: 0, r: 0.62 },
-    ];
+    const teeth = 8;
+    const pies = Array.from({ length: teeth }, (_, i) => ({
+      kind: PRIM_PIE,
+      ax: x,
+      ay: y,
+      bx: 0.22,
+      by: (i / teeth) * Math.PI * 2,
+      r: 0.64,
+    }));
+    return [{ kind: PRIM_DISK, ax: x, ay: y, bx: x, by: y, r: 0.36 }, ...pies];
   }
   return [body];
 }
@@ -110,7 +119,7 @@ export function buildFrame(
   const world = sim.ecs;
   const ctx = getContext(world);
   const theme = themeOf(ctx.level.theme);
-  const groups: ShapeGroup[] = [];
+  const groups: ShapeGroup[] = themePassGroups(theme, ctx.level.bounds, cam, viewW, viewH);
   const targets: { x: number; y: number }[] = [];
   const lights: LightEmitter[] = [];
   const palette = opts.colorblind ? COLORS_CB : COLORS;
@@ -125,7 +134,7 @@ export function buildFrame(
     physArms.set(arm.owner, rec);
   });
 
-  world.query(Hazard, Transform, PrevTransform).updateEach(([hz, t, prev]) => {
+  world.query(Hazard, Transform, PrevTransform).updateEach(([hz, t, prev], e) => {
     const x = lerp(prev.x, t.x, alpha);
     const y = lerp(prev.y, t.y, alpha);
     if (hz.kind === HazardKind.Lava) {
@@ -134,12 +143,27 @@ export function buildFrame(
     const color = hz.kind === 4 ? theme.hazard : hz.kind === 3 ? '#222' : theme.solid;
     const fx = hz.kind === HazardKind.Lava ? ('lava' as const) : undefined;
     const primitives = hazardPrimitives(hz.kind, x, y);
+    const dest = e.get(Destructible);
+    if (dest && dest.hp < dest.maxHp) {
+      const cracks = Math.min(3, 1 + Math.floor((1 - dest.hp / dest.maxHp) * 3));
+      for (let i = 0; i < cracks; i++) {
+        primitives.push({
+          kind: PRIM_CAPSULE,
+          ax: x - 0.25 + i * 0.12,
+          ay: y - 0.15,
+          bx: x + 0.2 - i * 0.08,
+          by: y + 0.18,
+          r: 0.025,
+        });
+      }
+    }
+    const cracked = dest !== undefined && dest.hp < dest.maxHp;
     groups.push({
       ...groupBounds(primitives),
       color,
-      blend: 'union',
-      smoothK: 0,
-      layer: 1,
+      blend: cracked ? 'subtract' : 'union',
+      smoothK: cracked ? 0.05 : 0,
+      layer: hz.kind === HazardKind.Solid ? 1 : 2,
       fx,
       primitives,
     });
@@ -168,7 +192,20 @@ export function buildFrame(
     }
   });
 
-  world.query(Weapon, Transform, PrevTransform).updateEach(([w, t, prev]) => {
+  const heldByEntity = new Map<object, { x: number; y: number; length: number }>();
+  world.query(Weapon, Held, Transform, PrevTransform).updateEach(([w, t, prev], we) => {
+    const holder = we.targetFor(HeldBy);
+    if (!holder) return;
+    const def = weaponByIndex(w.defId);
+    heldByEntity.set(holder, {
+      x: lerp(prev.x, t.x, alpha),
+      y: lerp(prev.y, t.y, alpha),
+      length: def.shape.length,
+    });
+  });
+
+  world.query(Weapon, Transform, PrevTransform).updateEach(([w, t, prev], e) => {
+    if (e.has(Held)) return;
     const def = weaponByIndex(w.defId);
     const x = lerp(prev.x, t.x, alpha);
     const y = lerp(prev.y, t.y, alpha);
@@ -204,6 +241,16 @@ export function buildFrame(
           bx: p.x + p.vx * 0.02,
           by: p.y + p.vy * 0.02,
           r: 0.06,
+        },
+        {
+          kind: PRIM_BEZIER,
+          ax: p.x - p.vx * 0.045,
+          ay: p.y - p.vy * 0.045,
+          bx: p.x,
+          by: p.y,
+          r: 0.04,
+          cx: p.x - p.vx * 0.02 + p.vy * 0.012,
+          cy: p.y - p.vy * 0.02 - p.vx * 0.012,
         },
       ],
     });
@@ -254,6 +301,17 @@ export function buildFrame(
         },
         next,
       );
+      const held = heldByEntity.get(e);
+      if (held) {
+        prims.push({
+          kind: PRIM_ROUNDED_BOX,
+          ax: held.x,
+          ay: held.y,
+          bx: held.length * 0.45,
+          by: 0.07,
+          r: 0.03,
+        });
+      }
       groups.push({
         ...groupBounds(prims, 0.5),
         color: palette[p.color % 4] ?? palette[0]!,
@@ -333,6 +391,39 @@ export function buildFrame(
     });
   });
 
+  world.query(Snake, Transform).updateEach(([_s, t]) => {
+    groups.push({
+      ...groupBounds([
+        {
+          kind: PRIM_BEZIER,
+          ax: t.x - 0.35,
+          ay: t.y,
+          bx: t.x + 0.35,
+          by: t.y,
+          r: 0.1,
+          cx: t.x,
+          cy: t.y + 0.28,
+        },
+      ]),
+      color: '#3dcf7a',
+      blend: 'union',
+      smoothK: 0,
+      layer: 3,
+      primitives: [
+        {
+          kind: PRIM_BEZIER,
+          ax: t.x - 0.35,
+          ay: t.y,
+          bx: t.x + 0.35,
+          by: t.y,
+          r: 0.1,
+          cx: t.x,
+          cy: t.y + 0.28,
+        },
+      ],
+    });
+  });
+
   world.query(Projectile).updateEach(([p]) => {
     if (p.kind !== 6) return;
     groups.push({
@@ -351,18 +442,28 @@ export function buildFrame(
 
   for (const d of ctx.level.decor ?? []) {
     const s = d.scale ?? 1;
+    const vine = d.kind === 'vine' || d.kind === 'rope' || d.kind === 'trail';
+    const prims = vine
+      ? [
+          {
+            kind: PRIM_BEZIER,
+            ax: d.x,
+            ay: d.y + 1.8 * s,
+            bx: d.x + 0.8 * s,
+            by: d.y,
+            r: 0.07 * s,
+            cx: d.x - 0.7 * s,
+            cy: d.y + 0.9 * s,
+          },
+        ]
+      : [{ kind: PRIM_CAPSULE, ax: d.x, ay: d.y, bx: d.x, by: d.y + 1.6 * s, r: 0.12 * s }];
     groups.push({
-      minX: d.x - s,
-      minY: d.y,
-      maxX: d.x + s,
-      maxY: d.y + 2 * s,
+      ...groupBounds(prims, 0.4),
       color: theme.accent,
       blend: 'union',
       smoothK: 0,
       layer: 0,
-      primitives: [
-        { kind: PRIM_CAPSULE, ax: d.x, ay: d.y, bx: d.x, by: d.y + 1.6 * s, r: 0.12 * s },
-      ],
+      primitives: prims,
     });
   }
 

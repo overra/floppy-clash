@@ -1,5 +1,5 @@
 import { worldToScreen, type CameraState } from '../camera';
-import type { RenderFrame } from '../frame';
+import type { RenderFrame, ShapeGroup } from '../frame';
 import {
   emptyReadback,
   inspectMappedRgba,
@@ -87,55 +87,35 @@ export function createCanvasRenderer(canvas: HTMLCanvasElement): Renderer {
         shakeY: frame.camera.shakeY,
         shake: 0,
       };
-      blitDecals(ctx, frame, cam, w, h, renderer);
       const layers = [...frame.groups].sort((a, b) => a.layer - b.layer);
-      for (const g of layers) {
-        ctx.save();
-        ctx.strokeStyle = g.color;
-        ctx.fillStyle = g.color;
-        ctx.lineCap = 'round';
-        ctx.lineJoin = 'round';
-        for (const p of g.primitives) {
-          if (p.kind === 0) {
-            const s = worldToScreen(cam, p.ax, p.ay, w, h);
-            ctx.beginPath();
-            ctx.arc(s.x, s.y, p.r * cam.zoom, 0, Math.PI * 2);
-            ctx.fill();
-          } else if (p.kind === 1) {
-            const a = worldToScreen(cam, p.ax, p.ay, w, h);
-            const b = worldToScreen(cam, p.bx, p.by, w, h);
-            ctx.lineWidth = Math.max(2, p.r * 2 * cam.zoom);
-            ctx.beginPath();
-            ctx.moveTo(a.x, a.y);
-            ctx.lineTo(b.x, b.y);
-            ctx.stroke();
-          } else if (p.kind === 3) {
-            const a = worldToScreen(cam, p.ax, p.ay, w, h);
-            const b = worldToScreen(cam, p.bx, p.by, w, h);
-            const c = worldToScreen(cam, p.ax + p.r, p.ay + p.r, w, h);
-            ctx.beginPath();
-            ctx.moveTo(a.x, a.y);
-            ctx.lineTo(b.x, b.y);
-            ctx.lineTo(c.x, c.y);
-            ctx.closePath();
-            ctx.fill();
-          } else if (p.kind === 4) {
-            const s = worldToScreen(cam, p.ax, p.ay, w, h);
-            ctx.beginPath();
-            ctx.moveTo(s.x, s.y);
-            ctx.arc(s.x, s.y, p.r * cam.zoom, -p.bx, p.bx);
-            ctx.closePath();
-            ctx.fill();
-          } else {
-            const s = worldToScreen(cam, p.ax, p.ay, w, h);
-            const rw = p.bx * 2 * cam.zoom;
-            const rh = p.by * 2 * cam.zoom;
-            ctx.beginPath();
-            roundRect(ctx, s.x - rw / 2, s.y - rh / 2, rw, rh, p.r * cam.zoom);
-            ctx.fill();
-          }
-        }
-        ctx.restore();
+      drawCanvasGroups(
+        ctx,
+        layers.filter((g) => g.layer <= 0),
+        cam,
+        w,
+        h,
+      );
+      blitDecals(ctx, frame, cam, w, h, renderer);
+      drawCanvasGroups(
+        ctx,
+        layers.filter((g) => g.layer > 0),
+        cam,
+        w,
+        h,
+      );
+      if (frame.hud.slowmo) {
+        const vig = ctx.createRadialGradient(
+          w / 2,
+          h / 2,
+          Math.min(w, h) * 0.22,
+          w / 2,
+          h / 2,
+          Math.max(w, h) * 0.72,
+        );
+        vig.addColorStop(0, 'rgba(40, 18, 6, 0.06)');
+        vig.addColorStop(1, 'rgba(10, 4, 2, 0.36)');
+        ctx.fillStyle = vig;
+        ctx.fillRect(0, 0, w, h);
       }
       if ((frame.hud.flash ?? 0) > 0) {
         ctx.fillStyle = `rgba(255,255,255,${Math.min(0.35, frame.hud.flash! * 0.12)})`;
@@ -168,6 +148,79 @@ export function createCanvasRenderer(canvas: HTMLCanvasElement): Renderer {
     },
   };
   return renderer;
+}
+
+function drawCanvasGroups(
+  ctx: CanvasRenderingContext2D,
+  groups: ShapeGroup[],
+  cam: CameraState,
+  w: number,
+  h: number,
+): void {
+  for (const g of groups) {
+    ctx.save();
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    g.primitives.forEach((p, pi) => {
+      if (g.blend === 'subtract' && pi > 0) {
+        ctx.strokeStyle = 'rgba(20,12,8,0.45)';
+        ctx.fillStyle = 'rgba(20,12,8,0.45)';
+      } else {
+        ctx.strokeStyle = g.color;
+        ctx.fillStyle = g.color;
+      }
+      if (p.kind === 0) {
+        const s = worldToScreen(cam, p.ax, p.ay, w, h);
+        ctx.beginPath();
+        ctx.arc(s.x, s.y, p.r * cam.zoom, 0, Math.PI * 2);
+        ctx.fill();
+      } else if (p.kind === 1) {
+        const a = worldToScreen(cam, p.ax, p.ay, w, h);
+        const b = worldToScreen(cam, p.bx, p.by, w, h);
+        ctx.lineWidth = Math.max(2, p.r * 2 * cam.zoom);
+        ctx.beginPath();
+        ctx.moveTo(a.x, a.y);
+        ctx.lineTo(b.x, b.y);
+        ctx.stroke();
+      } else if (p.kind === 3) {
+        const a = worldToScreen(cam, p.ax, p.ay, w, h);
+        const b = worldToScreen(cam, p.bx, p.by, w, h);
+        const c = worldToScreen(cam, p.ax + p.r, p.ay + p.r, w, h);
+        ctx.beginPath();
+        ctx.moveTo(a.x, a.y);
+        ctx.lineTo(b.x, b.y);
+        ctx.lineTo(c.x, c.y);
+        ctx.closePath();
+        ctx.fill();
+      } else if (p.kind === 4) {
+        const s = worldToScreen(cam, p.ax, p.ay, w, h);
+        ctx.beginPath();
+        ctx.moveTo(s.x, s.y);
+        ctx.arc(s.x, s.y, p.r * cam.zoom, -p.bx + p.by, p.bx + p.by);
+        ctx.closePath();
+        ctx.fill();
+      } else if (p.kind === 5) {
+        const a = worldToScreen(cam, p.ax, p.ay, w, h);
+        const cx = p.cx ?? (p.ax + p.bx) * 0.5;
+        const cy = p.cy ?? (p.ay + p.by) * 0.5;
+        const c = worldToScreen(cam, cx, cy, w, h);
+        const b = worldToScreen(cam, p.bx, p.by, w, h);
+        ctx.lineWidth = Math.max(2, p.r * 2 * cam.zoom);
+        ctx.beginPath();
+        ctx.moveTo(a.x, a.y);
+        ctx.quadraticCurveTo(c.x, c.y, b.x, b.y);
+        ctx.stroke();
+      } else {
+        const s = worldToScreen(cam, p.ax, p.ay, w, h);
+        const rw = p.bx * 2 * cam.zoom;
+        const rh = p.by * 2 * cam.zoom;
+        ctx.beginPath();
+        roundRect(ctx, s.x - rw / 2, s.y - rh / 2, rw, rh, p.r * cam.zoom);
+        ctx.fill();
+      }
+    });
+    ctx.restore();
+  }
 }
 
 function blitDecals(

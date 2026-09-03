@@ -12,12 +12,15 @@ import {
   type FramebufferReadback,
 } from './readback';
 import {
+  createPostDrawPipeline,
   createSdfDrawPipeline,
   GpuCamera,
   GpuGroup,
+  GpuPost,
   GpuPrimitive,
   MAX_GROUPS,
   MAX_PRIMS,
+  postLayout,
   sdfLayout,
 } from './shaders';
 
@@ -43,6 +46,13 @@ export async function replayFrameReadback(frame: RenderFrame): Promise<Framebuff
     const pipeline = createSdfDrawPipeline(root, format as GPUTextureFormat);
     if (!isRenderPipeline(pipeline)) return emptyReadback('unavailable', 'replay:not-typegpu');
     pipeline.initSync();
+    let postPipeline: ReturnType<typeof createPostDrawPipeline> | null = null;
+    try {
+      postPipeline = createPostDrawPipeline(root, format as GPUTextureFormat);
+      postPipeline.initSync();
+    } catch {
+      postPipeline = null;
+    }
     const cameraBuf = root.createBuffer(GpuCamera).$usage('uniform');
     const groupBuf = root.createBuffer(d.arrayOf(GpuGroup, MAX_GROUPS)).$usage('storage');
     const primBuf = root.createBuffer(d.arrayOf(GpuPrimitive, MAX_PRIMS)).$usage('storage');
@@ -51,6 +61,8 @@ export async function replayFrameReadback(frame: RenderFrame): Promise<Framebuff
       groups: groupBuf,
       prims: primBuf,
     });
+    const postBuf = root.createBuffer(GpuPost).$usage('uniform');
+    const postBind = root.createBindGroup(postLayout, { post: postBuf });
     const w = READBACK_W;
     const h = READBACK_H;
     const bytesPerRow = alignBytesPerRow(w * PIXEL_BYTES);
@@ -74,7 +86,7 @@ export async function replayFrameReadback(frame: RenderFrame): Promise<Framebuff
     const packed = packGroups(frame.groups.slice(0, MAX_GROUPS));
     groupBuf.write(packed.groupBytes);
     primBuf.write(packed.primBytes);
-    const [r, g, b] = parseHex(frame.theme.bottom);
+    const [r, g, b] = parseHex(frame.theme.top);
     const encoder = device.createCommandEncoder();
     const pass = encoder.beginRenderPass({
       colorAttachments: [
@@ -86,8 +98,19 @@ export async function replayFrameReadback(frame: RenderFrame): Promise<Framebuff
         },
       ],
     });
-    if (frame.groups.length) {
-      pipeline.with(pass).with(bind).draw(6, Math.min(frame.groups.length, MAX_GROUPS));
+    const bgCount = packed.layer0Count;
+    const worldCount = packed.groupCount - bgCount;
+    if (bgCount > 0) {
+      pipeline.with(pass).with(bind).draw(6, bgCount);
+    }
+    if (worldCount > 0) {
+      pipeline.with(pass).with(bind).draw(6, worldCount, 0, bgCount);
+    }
+    const flashA = Math.min(0.35, (frame.hud.flash ?? 0) * 0.12);
+    const vigA = frame.hud.slowmo ? 0.36 : 0;
+    if (postPipeline && (flashA > 0.001 || vigA > 0.001)) {
+      postBuf.write({ flash: flashA, vignette: vigA, view: d.vec2f(w, h) });
+      postPipeline.with(pass).with(postBind).draw(3);
     }
     pass.end();
     encoder.copyTextureToBuffer(

@@ -5,12 +5,15 @@ import { isTgpuFragmentFn, isTgpuVertexFn } from 'typegpu';
 import {
   CAMERA_STRIDE,
   createDecalDrawPipeline,
+  createPostDrawPipeline,
   createSdfDrawPipeline,
   GPU_DRAW_BACKEND,
   GPU_DRAW_PIPELINE_API,
   GROUP_STRIDE,
   isTypeGpuDrawShaders,
+  POST_STRIDE,
   PRIM_STRIDE,
+  resolvePostWgsl,
   resolveSdfDrawWgsl,
   sdfFragment,
   sdfVertex,
@@ -42,6 +45,8 @@ describe('TypeGPU live SDF draw path (PLAN §4.11)', () => {
     expect(wgsl).not.toMatch(/fn smin\(/);
     // PLAN §4.11 lava is `@typegpu/noise` displacement, not sin/cos.
     expect(wgsl).toMatch(/perlin|computeJunctionGradient|getJunctionGradient/i);
+    expect(wgsl).toMatch(/sdBezier|bezier/i);
+    expect(wgsl).toMatch(/opSmoothDifference|smoothDifference|smooth_difference/i);
     // Pipeline factories used by the renderer are TypeGPU createRenderPipeline wrappers.
     expect(typeof createSdfDrawPipeline).toBe('function');
     expect(typeof createDecalDrawPipeline).toBe('function');
@@ -55,6 +60,7 @@ describe('TypeGPU live SDF draw path (PLAN §4.11)', () => {
     });
     resolveSdfDrawWgsl();
     resolveGlowWgsl();
+    resolvePostWgsl();
     spy.mockRestore();
     expect(warns.filter((w) => w.includes('implicit-conversion'))).toEqual([]);
   });
@@ -62,7 +68,8 @@ describe('TypeGPU live SDF draw path (PLAN §4.11)', () => {
   it('packs groups to the TypeGPU d.struct strides', () => {
     expect(GROUP_STRIDE).toBe(64);
     expect(CAMERA_STRIDE).toBe(32);
-    expect(PRIM_STRIDE).toBeGreaterThanOrEqual(24);
+    expect(POST_STRIDE).toBe(16);
+    expect(PRIM_STRIDE).toBeGreaterThanOrEqual(32);
     const packed = packGroups([
       {
         minX: 0,
@@ -85,6 +92,44 @@ describe('TypeGPU live SDF draw path (PLAN §4.11)', () => {
     expect(gv.getFloat32(16, true)).toBeCloseTo(1);
     expect(gv.getUint32(36, true)).toBe(1);
   });
+
+  it('packs groups in layer order so pass 1 draws behind the world', () => {
+    const packed = packGroups([
+      {
+        minX: 9,
+        minY: 0,
+        maxX: 10,
+        maxY: 1,
+        color: '#ffffff',
+        blend: 'union',
+        smoothK: 0,
+        layer: 5,
+        primitives: [{ kind: PRIM_DISK, ax: 9, ay: 0, bx: 0, by: 0, r: 0.1 }],
+      },
+      {
+        minX: 1,
+        minY: 0,
+        maxX: 2,
+        maxY: 1,
+        color: '#000000',
+        blend: 'union',
+        smoothK: 0,
+        layer: 0,
+        primitives: [{ kind: PRIM_DISK, ax: 1, ay: 0, bx: 0, by: 0, r: 0.1 }],
+      },
+    ]);
+    const gv = new DataView(packed.groupBytes);
+    expect(gv.getFloat32(0, true)).toBe(1);
+    expect(gv.getFloat32(GROUP_STRIDE, true)).toBe(9);
+    expect(packed.layer0Count).toBe(1);
+  });
+
+  it('resolves the PLAN §4.11 post overlay DualFns', () => {
+    const wgsl = resolvePostWgsl();
+    expect(wgsl).toMatch(/@vertex/);
+    expect(wgsl).toMatch(/@fragment/);
+    expect(typeof createPostDrawPipeline).toBe('function');
+  });
 });
 
 describe('GPU boot order (PLAN §4.11)', () => {
@@ -103,6 +148,8 @@ describe('GPU boot order (PLAN §4.11)', () => {
     expect(renderer).toContain('readFramebuffer');
     expect(renderer).toContain('initFromDevice');
     expect(renderer).toContain('replayFrameReadback');
+    expect(renderer).toContain('layer0Count');
+    expect(renderer).toContain('createPostDrawPipeline');
   });
 });
 

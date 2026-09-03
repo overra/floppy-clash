@@ -2,9 +2,9 @@ import { describe, expect, it } from 'vitest';
 import { getLevel } from '../src/levels/catalog';
 import { createCamera } from '../src/render/camera';
 import { buildFrame } from '../src/render/buildFrame';
-import { PRIM_PIE, PRIM_TRIANGLE } from '../src/render/sdf/primitives';
+import { PRIM_CAPSULE, PRIM_PIE, PRIM_TRIANGLE } from '../src/render/sdf/primitives';
 import { APPENDIX_D_TYPE_IDS, HAZARDS_BY_TYPE, HAZARD_MODULES } from '../src/sim/hazards';
-import { Dead, Health, Transform } from '../src/sim/traits';
+import { Dead, Destructible, Health, Transform } from '../src/sim/traits';
 import { hold, makeSim, playerOf } from './helpers';
 
 describe('M4 hazards', () => {
@@ -105,12 +105,32 @@ describe('M4 hazards', () => {
     expect(spikeFrame.groups.some((g) => g.primitives.some((p) => p.kind === PRIM_TRIANGLE))).toBe(
       true,
     );
-    expect(sawFrame.groups.some((g) => g.primitives.some((p) => p.kind === PRIM_PIE))).toBe(true);
+    const sawPies = sawFrame.groups.flatMap((g) => g.primitives.filter((p) => p.kind === PRIM_PIE));
+    expect(sawPies.length).toBeGreaterThanOrEqual(8);
+    const angles = new Set(sawPies.map((p) => p.by.toFixed(3)));
+    expect(angles.size).toBeGreaterThanOrEqual(8);
     const lava = makeSim({ level: getLevel('test-lava'), seed: 21, settings: { playerCount: 1 } });
     const lavaFrame = buildFrame(lava, createCamera(lava.ctx.level.bounds), 0, 1280, 720, [], {
       freezeCamera: true,
     });
     expect(lavaFrame.groups.some((g) => g.fx === 'lava')).toBe(true);
+  });
+
+  it('damaged destructibles emit subtract-capsule cracks', () => {
+    const sim = makeSim({
+      level: getLevel('test-block.destructible'),
+      seed: 21,
+      settings: { playerCount: 1 },
+    });
+    sim.ecs.query(Destructible).updateEach(([d]) => {
+      d.hp = d.maxHp * 0.25;
+    });
+    const frame = buildFrame(sim, createCamera(sim.ctx.level.bounds), 0, 1280, 720, [], {
+      freezeCamera: true,
+    });
+    const cracked = frame.groups.filter((g) => g.blend === 'subtract');
+    expect(cracked.length).toBeGreaterThan(0);
+    expect(cracked.some((g) => g.primitives.some((p) => p.kind === PRIM_CAPSULE))).toBe(true);
   });
 
   it('registers one module file per Appendix D type id', () => {

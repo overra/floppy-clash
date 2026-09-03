@@ -1,5 +1,13 @@
 import { perlin2d } from '@typegpu/noise';
-import { opSmoothUnion, sdDisk, sdLine, sdPie, sdRoundedBox2d } from '@typegpu/sdf';
+import {
+  opSmoothDifference,
+  opSmoothUnion,
+  sdBezier,
+  sdDisk,
+  sdLine,
+  sdPie,
+  sdRoundedBox2d,
+} from '@typegpu/sdf';
 import tgpu, { isTgpuFragmentFn, isTgpuVertexFn, type TgpuRoot } from 'typegpu';
 import * as d from 'typegpu/data';
 import * as std from 'typegpu/std';
@@ -20,6 +28,8 @@ export const GpuPrimitive = d.struct({
   bx: d.f32,
   by: d.f32,
   r: d.f32,
+  cx: d.f32,
+  cy: d.f32,
 });
 
 export const GpuGroup = d.struct({
@@ -123,11 +133,21 @@ export const primitiveSdfGpu = tgpu.fn(
     );
   }
   if (prim.kind === d.u32(4)) {
-    return sdPie(
-      d.vec2f(p.x - prim.ax, p.y - prim.ay),
-      d.vec2f(std.sin(prim.bx), std.cos(prim.bx)),
-      prim.r,
+    const q = d.vec2f(p.x - prim.ax, p.y - prim.ay);
+    const rot = d.f32(0) - prim.by;
+    const rc = std.cos(rot);
+    const rs = std.sin(rot);
+    const qr = d.vec2f(rc * q.x - rs * q.y, rs * q.x + rc * q.y);
+    return sdPie(qr, d.vec2f(std.sin(prim.bx), std.cos(prim.bx)), prim.r);
+  }
+  if (prim.kind === d.u32(5)) {
+    const curve = sdBezier(
+      p,
+      d.vec2f(prim.ax, prim.ay),
+      d.vec2f(prim.cx, prim.cy),
+      d.vec2f(prim.bx, prim.by),
     );
+    return curve - prim.r;
   }
   return d.f32(1e9);
 });
@@ -196,6 +216,12 @@ export const groupSdfGpu = tgpu.fn(
       const pd = primitiveSdfGpu(pr, p);
       if (g.blend === d.u32(1)) {
         dist = smoothUnionGpu(dist, pd, std.max(g.k, d.f32(0.05)));
+      } else if (g.blend === d.u32(2)) {
+        if (d.u32(i) === d.u32(0)) {
+          dist = pd;
+        } else {
+          dist = opSmoothDifference(dist, pd, std.max(g.k, d.f32(0.04)));
+        }
       } else {
         dist = std.min(dist, pd);
       }
@@ -354,9 +380,90 @@ export function createDecalDrawPipeline(root: TgpuRoot, format: GPUTextureFormat
     .$name('decal-draw');
 }
 
+/** PLAN §4.11 pass (4): slow-mo grade/vignette + hit-stop flash (fullscreen overlay). */
+export const GpuPost = d.struct({
+  flash: d.f32,
+  vignette: d.f32,
+  view: d.vec2f,
+});
+
+export const POST_STRIDE = d.sizeOf(GpuPost);
+
+export const postLayout = tgpu
+  .bindGroupLayout({
+    post: { uniform: GpuPost },
+  })
+  .$idx(0);
+
+export const postVertex = tgpu
+  .vertexFn({
+    in: { vertexIndex: d.builtin.vertexIndex },
+    out: { pos: d.builtin.position },
+  })((input) => {
+    'use gpu';
+    let x = d.f32(-1);
+    let y = d.f32(-1);
+    if (input.vertexIndex === d.u32(1)) {
+      x = d.f32(3);
+    } else if (input.vertexIndex === d.u32(2)) {
+      y = d.f32(3);
+    }
+    return { pos: d.vec4f(x, y, d.f32(0), d.f32(1)) };
+  })
+  .$name('postVertex');
+
+export const postFragment = tgpu
+  .fragmentFn({
+    in: { pos: d.builtin.position },
+    out: d.vec4f,
+  })((input) => {
+    'use gpu';
+    const post = postLayout.$.post;
+    const uvx = input.pos.x / post.view.x - d.f32(0.5);
+    const uvy = input.pos.y / post.view.y - d.f32(0.5);
+    const r2 = uvx * uvx + uvy * uvy;
+    const vig = std.smoothstep(d.f32(0.12), d.f32(0.68), r2) * post.vignette;
+    const flashA = std.saturate(post.flash);
+    const vigA = std.saturate(vig) * (d.f32(1) - flashA);
+    const a = flashA + vigA;
+    if (a < d.f32(0.001)) {
+      std.discard();
+    }
+    const inv = std.max(a, d.f32(1e-4));
+    return d.vec4f(
+      (flashA + vigA * d.f32(0.14)) / inv,
+      (flashA + vigA * d.f32(0.05)) / inv,
+      (flashA + vigA * d.f32(0.02)) / inv,
+      a,
+    );
+  })
+  .$name('postFragment');
+
+export function createPostDrawPipeline(root: TgpuRoot, format: GPUTextureFormat) {
+  return root
+    .createRenderPipeline({
+      vertex: postVertex,
+      fragment: postFragment,
+      primitive: { topology: 'triangle-list' },
+      targets: { format, blend: ALPHA_BLEND },
+    })
+    .$name('post-draw');
+}
+
 /** Resolve the live SDF DualFns to WGSL (no GPU device). Proves the draw shaders are TypeGPU. */
 export function resolveSdfDrawWgsl(): string {
-  return tgpu.resolve([sdfVertex, sdfFragment, decalVertex, decalFragment]);
+  return tgpu.resolve([
+    sdfVertex,
+    sdfFragment,
+    decalVertex,
+    decalFragment,
+    postVertex,
+    postFragment,
+  ]);
+}
+
+export function resolvePostWgsl(): string {
+  return tgpu.resolve([postVertex, postFragment]);
 }
 
 export function isTypeGpuDrawShaders(): boolean {
@@ -372,7 +479,16 @@ export function primitiveSdfCpu(prim: Primitive, px: number, py: number): number
 export function evalPrimitiveSdfGpu(prim: Primitive, px: number, py: number): number {
   try {
     const out = primitiveSdfGpu(
-      { kind: prim.kind, ax: prim.ax, ay: prim.ay, bx: prim.bx, by: prim.by, r: prim.r },
+      {
+        kind: prim.kind,
+        ax: prim.ax,
+        ay: prim.ay,
+        bx: prim.bx,
+        by: prim.by,
+        r: prim.r,
+        cx: prim.cx ?? 0,
+        cy: prim.cy ?? 0,
+      },
       { x: px, y: py } as never,
     );
     const n = Number(out);

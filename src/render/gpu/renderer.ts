@@ -17,6 +17,7 @@ import {
 import { replayFrameReadback } from './replayReadback';
 import {
   createDecalDrawPipeline,
+  createPostDrawPipeline,
   createSdfDrawPipeline,
   decalLayout,
   GPU_DRAW_BACKEND,
@@ -24,9 +25,11 @@ import {
   GpuBounds,
   GpuCamera,
   GpuGroup,
+  GpuPost,
   GpuPrimitive,
   MAX_GROUPS,
   MAX_PRIMS,
+  postLayout,
   sdfLayout,
 } from './shaders';
 
@@ -111,11 +114,22 @@ async function createGpuRenderer(
   } catch (err) {
     return failInit(`createDecalDrawPipeline: ${errMsg(err)}`);
   }
+  let postPipeline: ReturnType<typeof createPostDrawPipeline> | null = null;
+  try {
+    postPipeline = createPostDrawPipeline(root, format);
+  } catch {
+    postPipeline = null;
+  }
   try {
     pipeline.initSync();
     decalPipeline.initSync();
   } catch (err) {
     return failInit(`initSync: ${errMsg(err)}`);
+  }
+  try {
+    postPipeline?.initSync();
+  } catch {
+    postPipeline = null;
   }
 
   const cameraBuf = root.createBuffer(GpuCamera).$usage('uniform');
@@ -135,6 +149,9 @@ async function createGpuRenderer(
       lighting = null;
     }
   }
+
+  const postBuf = root.createBuffer(GpuPost).$usage('uniform');
+  const postBind = root.createBindGroup(postLayout, { post: postBuf });
 
   const decalBoundsBuf = root.createBuffer(GpuBounds).$usage('uniform');
   const decalSampler = root.createSampler({ magFilter: 'linear', minFilter: 'linear' });
@@ -320,12 +337,17 @@ async function createGpuRenderer(
         colorAttachments: [
           {
             view: current.createView(),
-            clearValue: hexToRgb(frame.theme.bottom),
+            clearValue: hexToRgb(frame.theme.top),
             loadOp: 'clear',
             storeOp: 'store',
           },
         ],
       });
+      const bgCount = packed.layer0Count;
+      const worldCount = packed.groupCount - bgCount;
+      if (bgCount > 0) {
+        pipeline.with(pass).with(bind).draw(6, bgCount);
+      }
       if (frame.decalLayer && frame.decalLayer.stamped > 0) {
         const b = frame.decalLayer.bounds;
         decalBoundsBuf.write({ minx: b.x, miny: b.y, maxx: b.x + b.w, maxy: b.y + b.h });
@@ -334,8 +356,14 @@ async function createGpuRenderer(
           decalPipeline.with(pass).with(decalBind).draw(6);
         }
       }
-      if (frame.groups.length) {
-        pipeline.with(pass).with(bind).draw(6, Math.min(frame.groups.length, MAX_GROUPS));
+      if (worldCount > 0) {
+        pipeline.with(pass).with(bind).draw(6, worldCount, 0, bgCount);
+      }
+      const flashA = Math.min(0.35, (frame.hud.flash ?? 0) * 0.12);
+      const vigA = frame.hud.slowmo ? 0.36 : 0;
+      if (postPipeline && (flashA > 0.001 || vigA > 0.001)) {
+        postBuf.write({ flash: flashA, vignette: vigA, view: d.vec2f(w, h) });
+        postPipeline.with(pass).with(postBind).draw(3);
       }
       pass.end();
       if (copyThisFrame && staging && readbackEnabled) {

@@ -1,8 +1,16 @@
 import type { PersistentDecalLayer } from './fx/decals';
 import type { LightEmitter } from './gpu/lighting';
-import type { Primitive } from './sdf/primitives';
+import {
+  PRIM_BEZIER,
+  PRIM_CAPSULE,
+  PRIM_DISK,
+  PRIM_PIE,
+  PRIM_ROUNDED_BOX,
+  PRIM_TRIANGLE,
+  type Primitive,
+} from './sdf/primitives';
 
-export type BlendOp = 'union' | 'smoothUnion';
+export type BlendOp = 'union' | 'smoothUnion' | 'subtract';
 
 export type ShapeGroup = {
   minX: number;
@@ -54,16 +62,54 @@ export function emptyFrame(): RenderFrame {
   };
 }
 
-export function groupBounds(primitives: Primitive[], pad = 0.4): Pick<ShapeGroup, 'minX' | 'minY' | 'maxX' | 'maxY'> {
+export function groupBounds(
+  primitives: Primitive[],
+  pad = 0.4,
+): Pick<ShapeGroup, 'minX' | 'minY' | 'maxX' | 'maxY'> {
   let minX = Infinity,
     minY = Infinity,
     maxX = -Infinity,
     maxY = -Infinity;
   for (const p of primitives) {
-    minX = Math.min(minX, p.ax, p.bx);
-    minY = Math.min(minY, p.ay, p.by);
-    maxX = Math.max(maxX, p.ax, p.bx);
-    maxY = Math.max(maxY, p.ay, p.by);
+    const b = primitiveBounds(p);
+    minX = Math.min(minX, b.minX);
+    minY = Math.min(minY, b.minY);
+    maxX = Math.max(maxX, b.maxX);
+    maxY = Math.max(maxY, b.maxY);
   }
   return { minX: minX - pad, minY: minY - pad, maxX: maxX + pad, maxY: maxY + pad };
+}
+
+/** Kind-aware AABB so GPU instanced quads cover rounded-box extents, not `bx`/`by` as points. */
+export function primitiveBounds(p: Primitive): {
+  minX: number;
+  minY: number;
+  maxX: number;
+  maxY: number;
+} {
+  const r = p.r;
+  if (p.kind === PRIM_ROUNDED_BOX) {
+    return { minX: p.ax - p.bx, minY: p.ay - p.by, maxX: p.ax + p.bx, maxY: p.ay + p.by };
+  }
+  if (p.kind === PRIM_DISK || p.kind === PRIM_PIE) {
+    return { minX: p.ax - r, minY: p.ay - r, maxX: p.ax + r, maxY: p.ay + r };
+  }
+  if (p.kind === PRIM_TRIANGLE) {
+    const cx = p.ax + r;
+    const cy = p.ay + r;
+    return {
+      minX: Math.min(p.ax, p.bx, cx),
+      minY: Math.min(p.ay, p.by, cy),
+      maxX: Math.max(p.ax, p.bx, cx),
+      maxY: Math.max(p.ay, p.by, cy),
+    };
+  }
+  const cx = p.kind === PRIM_BEZIER || p.kind === PRIM_CAPSULE ? (p.cx ?? p.ax) : p.ax;
+  const cy = p.kind === PRIM_BEZIER || p.kind === PRIM_CAPSULE ? (p.cy ?? p.ay) : p.ay;
+  return {
+    minX: Math.min(p.ax, p.bx, cx) - r,
+    minY: Math.min(p.ay, p.by, cy) - r,
+    maxX: Math.max(p.ax, p.bx, cx) + r,
+    maxY: Math.max(p.ay, p.by, cy) + r,
+  };
 }

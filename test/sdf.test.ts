@@ -4,10 +4,12 @@ import {
   coverage,
   opSmoothUnion,
   primitiveSdf,
+  PRIM_BEZIER,
   PRIM_DISK,
   PRIM_PIE,
   PRIM_ROUNDED_BOX,
   PRIM_TRIANGLE,
+  sdBezier,
   sdCapsule,
   sdDisk,
   sdPie,
@@ -70,6 +72,20 @@ describe('TypeGPU use-gpu fns on CPU', () => {
       sdTriangle({ x: 0.2, y: 0.1 }, { x: 0, y: 0 }, { x: 1, y: 0 }, { x: 0.8, y: 0.8 }),
     ).toBeLessThan(0.5);
     expect(Number.isFinite(sdPie({ x: 0.2, y: 0.1 }, { x: 0, y: 0 }, 1, 0.8))).toBe(true);
+    const curve = {
+      kind: PRIM_BEZIER,
+      ax: 0,
+      ay: 0,
+      bx: 2,
+      by: 0,
+      r: 0.1,
+      cx: 1,
+      cy: 0.8,
+    };
+    expect(
+      sdBezier({ x: 1, y: 0.4 }, { x: 0, y: 0 }, { x: 1, y: 0.8 }, { x: 2, y: 0 }, 0.1),
+    ).toBeLessThan(0);
+    expect(evalPrimitiveSdfGpu(curve, 1, 0.4)).toBeLessThan(0);
   });
 });
 
