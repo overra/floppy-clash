@@ -43,14 +43,13 @@ test('GPU renderer initialises or the fallback notice is shown', async ({ page }
     resourceType: window.__floppy?.gpuPipelineResourceType,
     initError: window.__floppy?.gpuInitError ?? '',
   }));
-  // eslint-disable-next-line no-console
-  console.log('gpu-debug', frame);
   expect(frame.kind === 'gpu' || frame.kind === 'canvas').toBe(true);
   expect(frame.groups + frame.colored).toBeGreaterThan(0);
   if (frame.kind === 'gpu') {
     expect(frame.backend).toBe('typegpu');
     expect(frame.api).toBe('root.createRenderPipeline');
     expect(frame.resourceType).toBe('render-pipeline');
+    expect(frame.initError).toBe('');
   } else {
     expect(frame.backend === 'none' || frame.backend === undefined).toBe(true);
   }
