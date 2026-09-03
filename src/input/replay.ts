@@ -9,6 +9,8 @@ export type Replay = {
 
 export function createRecorder(seed: number, levelId: string) {
   const inputs: PlayerInput[][] = [];
+  let lastBytes = 0;
+  let lastName = '';
   return {
     push(tickInputs: PlayerInput[]) {
       inputs.push(tickInputs.map((i) => ({ ...i })));
@@ -16,11 +18,16 @@ export function createRecorder(seed: number, levelId: string) {
     toJSON(): Replay {
       return { seed, levelId, inputs };
     },
+    lastBytes: () => lastBytes,
+    lastName: () => lastName,
     download() {
-      const blob = new Blob([JSON.stringify(this.toJSON())], { type: 'application/json' });
+      const json = JSON.stringify(this.toJSON());
+      lastBytes = json.length;
+      lastName = `replay-${seed}.json`;
+      const blob = new Blob([json], { type: 'application/json' });
       const a = document.createElement('a');
       a.href = URL.createObjectURL(blob);
-      a.download = `replay-${seed}.json`;
+      a.download = lastName;
       a.click();
     },
   };

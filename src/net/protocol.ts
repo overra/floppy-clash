@@ -3,15 +3,20 @@ import type { WorldSnapshot } from '../sim/snapshot';
 
 export type NetMessage =
   | { t: 'hello'; name: string }
-  | { t: 'room'; code: string }
+  | { t: 'room'; code: string; role?: PeerRoleHint }
+  | { t: 'you'; id: string }
+  | { t: 'peer-join'; id: string }
+  | { t: 'peers'; n: number }
   | { t: 'input'; tick: number; slot: number; bundle: PlayerInput[] }
   | { t: 'snapshot'; snap: WorldSnapshot }
   | { t: 'event'; kind: string; payload: string }
   | { t: 'chat'; from: string; text: string }
   | { t: 'level'; json: string }
   | { t: 'settings'; json: string }
-  | { t: 'sdp'; desc: RTCSessionDescriptionInit }
-  | { t: 'ice'; cand: RTCIceCandidateInit };
+  | { t: 'sdp'; desc: RTCSessionDescriptionInit; to?: string; from?: string }
+  | { t: 'ice'; cand: RTCIceCandidateInit; to?: string; from?: string };
+
+export type PeerRoleHint = 'host' | 'client';
 
 export function encode(msg: NetMessage): string {
   return JSON.stringify(msg);

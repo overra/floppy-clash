@@ -33,4 +33,39 @@ describe('signaling rooms', () => {
     b.close();
     await handle.close();
   });
+
+  it('notifies the host of two joining peers for a 4-player star', async () => {
+    const handle = await startSignaling(0);
+    const url = `ws://127.0.0.1:${handle.port}`;
+    const host = new WebSocket(url);
+    const c1 = new WebSocket(url);
+    const c2 = new WebSocket(url);
+    await Promise.all(
+      [host, c1, c2].map(
+        (ws) =>
+          new Promise<void>((res) => {
+            ws.on('open', () => res());
+          }),
+      ),
+    );
+    const joins: string[] = [];
+    const gotTwo = new Promise<void>((res) => {
+      host.on('message', (raw) => {
+        const msg = decode(String(raw));
+        if (msg.t === 'peer-join') {
+          joins.push(msg.id);
+          if (joins.length >= 2) res();
+        }
+      });
+    });
+    host.send(encode({ t: 'room', code: 'FOUR', role: 'host' }));
+    c1.send(encode({ t: 'room', code: 'FOUR', role: 'client' }));
+    c2.send(encode({ t: 'room', code: 'FOUR', role: 'client' }));
+    await gotTwo;
+    expect(joins.length).toBeGreaterThanOrEqual(2);
+    host.close();
+    c1.close();
+    c2.close();
+    await handle.close();
+  });
 });

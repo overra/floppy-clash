@@ -1,4 +1,6 @@
+import type { World } from 'koota';
 import type { Decal } from './particles';
+import { FxDecal, unpackColor } from './world';
 
 export type WorldBounds = { x: number; y: number; w: number; h: number };
 
@@ -140,6 +142,26 @@ function stampDisk(layer: PersistentDecalLayer, d: Decal): void {
     ctx.fill();
     ctx.globalAlpha = 1;
   }
+}
+
+/** Stamp unstamped FxDecal entities once, then mark them consumed. */
+export function stampFxDecals(world: World, layer: PersistentDecalLayer, accept?: (d: Decal) => boolean): number {
+  let n = 0;
+  world.query(FxDecal).updateEach(([d]) => {
+    if (d.stamped) return;
+    const decal: Decal = {
+      x: d.x,
+      y: d.y,
+      r: d.r,
+      color: unpackColor(d.color),
+      kind: d.kind === 1 ? 'scorch' : 'blood',
+    };
+    d.stamped = 1;
+    if (accept && !accept(decal)) return;
+    stampDisk(layer, decal);
+    n += 1;
+  });
+  return n;
 }
 
 export function hashPixels(layer: PersistentDecalLayer): number {

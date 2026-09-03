@@ -20,10 +20,12 @@ import { addShake, createCamera } from './render/camera';
 import { buildFrame } from './render/buildFrame';
 import { createCanvasRenderer, type Renderer } from './render/canvas/renderer';
 import { tryCreateGpuRenderer } from './render/gpu/renderer';
-import { createDecalLayer, type PersistentDecalLayer } from './render/fx/decals';
-import { emitFromEvents, stepParticles, type Decal, type Particle } from './render/fx/particles';
+import { createDecalLayer, stampFxDecals, type PersistentDecalLayer } from './render/fx/decals';
+import { emitIntoWorld, listParticles, stepFxParticles } from './render/fx/particles';
+import { clearFx, createFxWorld } from './render/fx/world';
 import { blankInputs, type PlayerInput } from './sim/input';
-import { Dead, Health, MatchState, Player, RoundPhase, RoundState, Transform } from './sim/traits';
+import { Dead, Health, MatchState, Player, RoundPhase, RoundState, Transform, Weapon } from './sim/traits';
+import { createClientView, type ClientView } from './net/clientView';
 import { createSimWorld, type SimHandle } from './sim/world';
 import { spawnWeapon } from './sim/systems/weapons';
 import { tuning } from './sim/tuning';
@@ -57,6 +59,18 @@ type FloppyDebug = {
   netState: string;
   netReady: boolean;
   lastSnapTick: number;
+  clientViewTick: number;
+  clientAppliedX: number;
+  clientRestored: boolean;
+  weaponCount: number;
+  p0Hp: number;
+  p0Dead: boolean;
+  slowmo: number;
+  rendererSwitches: number;
+  lastReplayBytes: number;
+  lastReplayName: string;
+  netPeers: number;
+  entities: number;
 };
 
 declare global {
@@ -91,9 +105,10 @@ export function createGame(root: HTMLElement): Game {
   let rendererKind: 'gpu' | 'canvas' = 'canvas';
   let sim: SimHandle | null = null;
   let cam = createCamera(gymLevel.bounds);
-  let particles: Particle[] = [];
-  const decals: Decal[] = [];
+  const fx = createFxWorld();
   let decalLayer: PersistentDecalLayer = createDecalLayer(gymLevel.bounds);
+  let clientView: ClientView | null = null;
+  let rendererSwitches = 0;
   let raf = 0;
   let last = performance.now();
   let paused = false;
@@ -135,6 +150,9 @@ export function createGame(root: HTMLElement): Game {
           show();
         },
         start: () => startIfReady(),
+        startOnline: () => {
+          void beginMatch();
+        },
         back: () => {
           menus.screen = 'menu';
           show();
@@ -240,6 +258,24 @@ export function createGame(root: HTMLElement): Game {
       if (msg.t === 'snapshot') {
         menus.lastSnapTick = msg.snap.tick;
         menus.notice = `Late-join snapshot tick ${msg.snap.tick}`;
+        if (session.role === 'client') {
+          if (!clientView) {
+            clientView = createClientView(msg.snap);
+            cam = createCamera(clientView.sim.ctx.level.bounds);
+            clearFx(fx);
+            decalLayer = createDecalLayer(clientView.sim.ctx.level.bounds);
+          }
+          clientView.push(performance.now(), msg.snap);
+          clientView.apply(performance.now());
+          if (menus.screen !== 'play') {
+            menus.screen = 'play';
+            show();
+          }
+        }
+        if (menus.screen === 'lobby') show();
+      }
+      if (msg.t === 'event' && msg.kind === 'disconnect') {
+        menus.notice = 'Peer disconnected';
         if (menus.screen === 'lobby') show();
       }
       if (msg.t === 'hello' && session.role === 'host') {
@@ -332,8 +368,7 @@ export function createGame(root: HTMLElement): Game {
       attachBots(sim.ecs, botSlots);
     }
     cam = createCamera(level.bounds);
-    particles = [];
-    decals.length = 0;
+    clearFx(fx);
     decalLayer = createDecalLayer(level.bounds);
     menus.screen = 'play';
     show();
@@ -423,8 +458,36 @@ export function createGame(root: HTMLElement): Game {
     const dt = Math.min(0.05, (now - last) / 1000);
     last = now;
     if (renderer) renderer.resize(canvas.clientWidth || 1280, canvas.clientHeight || 720);
-    if (sim && menus.screen === 'play' && !paused) {
-      const scale = sim.ecs.get(RoundState)?.phase === RoundPhase.LastKill ? tuning.lastKillSlowmo : 1;
+    const viewSim = menus.netRole === 'client' && clientView ? clientView.sim : sim;
+    if (viewSim && menus.screen === 'play' && !paused) {
+      if (clientView && menus.netRole === 'client') {
+        clientView.apply(performance.now());
+        stepFxParticles(fx, dt);
+        const frame = buildFrame(
+          clientView.sim,
+          cam,
+          clientView.alpha,
+          canvas.clientWidth || 1280,
+          canvas.clientHeight || 720,
+          settings.reduceBlood ? [] : listParticles(fx),
+          {
+            debug: debugDraw,
+            freezeCamera: freezeCam,
+            colorblind: settings.colorblind,
+            decalLayer,
+            flash: hitStop,
+            fxWorld: fx,
+          },
+        );
+        frame.hud.hash = clientView.sim.hash();
+        frame.hud.gpuMs = renderer?.lastGpuMs ?? 0;
+        renderer?.render(frame);
+        drawHud(frame);
+        publishDebug(frame.hud.hash ?? '', frame.hud.tick ?? 0, frame.hud.countdown, frame.hud.physicsMs ?? 0, frame.hud.gpuMs ?? 0, frame.hud.phase ?? 0);
+        raf = requestAnimationFrame(tick);
+        return;
+      }
+      const scale = viewSim.ecs.get(RoundState)?.phase === RoundPhase.LastKill ? tuning.lastKillSlowmo : 1;
       const steps = loop.consume(dt, scale);
       const sampled = sampleInputs();
       for (let i = 0; i < steps; i++) {
@@ -433,16 +496,16 @@ export function createGame(root: HTMLElement): Game {
           continue;
         }
         recorder.push(sampled);
-        const events = sim.step(sampled);
+        const events = viewSim.step(sampled);
         mixer.handle(events);
-        emitFromEvents(events, particles, decals);
-        decalLayer.stampNew(decals, (d) => !settings.reduceBlood || d.kind === 'scorch');
+        emitIntoWorld(events, fx);
+        stampFxDecals(fx, decalLayer, (d) => !settings.reduceBlood || d.kind === 'scorch');
         if (events.some((e) => e.type === 'kill')) {
           hitStop = 3;
           recordKos(events.filter((e) => e.type === 'kill').length);
         }
         if (events.some((e) => e.type === 'round-phase' && e.phase === 'match-over')) {
-          const ms = sim.ecs.get(MatchState);
+          const ms = viewSim.ecs.get(MatchState);
           stats = recordMatch((ms?.wins0 ?? 0) >= (ms?.firstTo || 1));
         }
         if (events.some((e) => e.type === 'explosion' || e.type === 'kill') && !settings.reduceShake) {
@@ -452,24 +515,28 @@ export function createGame(root: HTMLElement): Game {
         else if (events.some((e) => e.type === 'hit')) rumble('hit');
         latches.forEach(consumeLatch);
         keys.consume();
+        if (menus.netRole === 'host' && viewSim.ctx.tick % 3 === 0) {
+          net.send(lateJoinSnapshotMessage(viewSim.snapshot()), false);
+        }
       }
-      particles = stepParticles(particles, dt);
+      stepFxParticles(fx, dt);
       const frame = buildFrame(
-        sim,
+        viewSim,
         cam,
         interpolationAlpha(loop),
         canvas.clientWidth || 1280,
         canvas.clientHeight || 720,
-        settings.reduceBlood ? [] : particles,
+        settings.reduceBlood ? [] : listParticles(fx),
         {
           debug: debugDraw,
           freezeCamera: freezeCam,
           colorblind: settings.colorblind,
           decalLayer,
           flash: hitStop,
+          fxWorld: fx,
         },
       );
-      frame.hud.hash = sim.hash();
+      frame.hud.hash = viewSim.hash();
       frame.hud.gpuMs = renderer?.lastGpuMs ?? 0;
       renderer?.render(frame);
       drawHud(frame);
@@ -509,7 +576,29 @@ export function createGame(root: HTMLElement): Game {
           if (slot !== 0) p.set(Health, { hp: 0, maxHp: p.get(Health)?.maxHp ?? 100 });
         });
       },
+      clientViewTick: clientView?.appliedTick ?? 0,
+      clientAppliedX: clientView?.appliedX ?? 0,
+      clientRestored: clientView?.restored ?? false,
+      weaponCount: countWeapons(),
+      p0Hp: (sim ?? clientView?.sim)?.players()[0]?.get(Health)?.hp ?? 0,
+      p0Dead: (sim ?? clientView?.sim)?.players()[0]?.has(Dead) ?? false,
+      slowmo: tuning.lastKillSlowmo,
+      rendererSwitches,
+      lastReplayBytes: recorder.lastBytes(),
+      lastReplayName: recorder.lastName(),
+      netPeers: net.peerCount,
+      entities: sim?.ctx.bodies.size ?? clientView?.sim.ctx.bodies.size ?? 0,
     };
+  }
+
+  function countWeapons(): number {
+    const w = sim?.ecs ?? clientView?.sim.ecs;
+    if (!w) return 0;
+    let n = 0;
+    w.query(Weapon).updateEach(() => {
+      n += 1;
+    });
+    return n;
   }
 
   function drawHud(frame: ReturnType<typeof buildFrame>) {
@@ -572,8 +661,10 @@ export function createGame(root: HTMLElement): Game {
         `phys ${((frame.hud.physicsMs ?? 0)).toFixed(2)} ms`,
         `gpu  ${((frame.hud.gpuMs ?? 0)).toFixed(2)} ms`,
         `ents ${frame.hud.entities ?? 0}`,
+        `weap ${countWeapons()}`,
         `rend ${rendererKind}`,
         `phase ${frame.hud.phase ?? 0}`,
+        `peers ${net.peerCount}`,
         ...players,
       ].join('\n');
       hudEl.append(dbg);
@@ -611,6 +702,7 @@ export function createGame(root: HTMLElement): Game {
   }
 
   async function switchRenderer() {
+    rendererSwitches += 1;
     if (rendererKind === 'gpu') {
       renderer = createCanvasRenderer(canvas);
       rendererKind = 'canvas';

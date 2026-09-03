@@ -362,6 +362,13 @@ function renderLobby(card: HTMLElement, state: MenuState, settings: UserSettings
       actions.joinRoom?.();
     }),
   );
+  if (state.netRole === 'host' && state.netState === 'up') {
+    card.append(
+      btn('Start match', () => {
+        actions.startOnline?.();
+      }),
+    );
+  }
   card.append(btn('Back', () => actions.back?.()));
 }
 

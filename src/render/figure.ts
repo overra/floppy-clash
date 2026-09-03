@@ -2,6 +2,8 @@ import type { Vec2 } from '../core/math';
 import { lerp } from '../core/math';
 import { PRIM_CAPSULE, PRIM_DISK, type Primitive } from './sdf/primitives';
 
+export type ArmTip = { x: number; y: number };
+
 export type FigurePose = {
   x: number;
   y: number;
@@ -17,6 +19,9 @@ export type FigurePose = {
   blocking: boolean;
   dead: boolean;
   phase: number;
+  /** When `physicsArms` is on, SDF limbs follow the Planck arm bodies (PLAN 4.6). */
+  physicsArmL?: ArmTip;
+  physicsArmR?: ArmTip;
 };
 
 export type LimbState = {
@@ -41,8 +46,8 @@ export function poseToPrimitives(pose: FigurePose, secondary: LimbState = { hipS
   const punch = pose.punching ? 0.55 : 0.28;
   const block = pose.blocking ? 0.35 : 0;
 
-  const armL = end(shoulder, { x: -0.35 * pose.facing, y: -0.15 + run * 0.1 }, 0.45);
-  const armR = end(shoulder, { x: aim.x * punch + block * aim.x, y: aim.y * punch + block * 0.2 }, 0.55);
+  const armL = pose.physicsArmL ?? end(shoulder, { x: -0.35 * pose.facing, y: -0.15 + run * 0.1 }, 0.45);
+  const armR = pose.physicsArmR ?? end(shoulder, { x: aim.x * punch + block * aim.x, y: aim.y * punch + block * 0.2 }, 0.55);
   const legL = end(hip, { x: -0.15 + run * 0.25, y: -1 + air * 0.08 }, 0.7);
   const legR = end(hip, { x: 0.15 - run * 0.25, y: -1 - air * 0.04 }, 0.7);
 

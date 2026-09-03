@@ -111,6 +111,42 @@ test('F3 debug HUD and F1 overlay flags are wired', async ({ page }) => {
   await expect(page.locator('pre', { hasText: 'hash' })).toBeVisible();
 });
 
+test('F4–F9 spawn, kill, slow-mo, freeze, renderer-switch, replay-download', async ({ page }) => {
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Solo vs Bots' }).click();
+  await page.keyboard.press('Enter');
+  await page.waitForTimeout(800);
+  if (await page.getByRole('heading', { name: 'Join' }).isVisible()) {
+    await page.getByRole('button', { name: 'Start' }).click();
+  }
+  await page.waitForFunction(() => window.__floppy?.phase === 2, null, { timeout: 15_000 });
+  const beforeWeapons = await page.evaluate(() => window.__floppy?.weaponCount ?? 0);
+  await page.keyboard.press('F4');
+  await page.waitForFunction(
+    (n) => (window.__floppy?.weaponCount ?? 0) > n,
+    beforeWeapons,
+    { timeout: 5_000 },
+  );
+  const slowBefore = await page.evaluate(() => window.__floppy?.slowmo);
+  await page.keyboard.press('F6');
+  await page.waitForFunction((prev) => window.__floppy?.slowmo !== prev, slowBefore, { timeout: 3_000 });
+  await page.keyboard.press('F7');
+  await page.waitForFunction(() => window.__floppy?.freezeCam === true, null, { timeout: 3_000 });
+  const switches = await page.evaluate(() => window.__floppy?.rendererSwitches ?? 0);
+  await page.keyboard.press('F8');
+  await page.waitForFunction((n) => (window.__floppy?.rendererSwitches ?? 0) > n, switches, { timeout: 5_000 });
+  const kind = await page.evaluate(() => window.__floppy?.rendererKind);
+  expect(kind === 'gpu' || kind === 'canvas').toBe(true);
+  const [download] = await Promise.all([
+    page.waitForEvent('download', { timeout: 8_000 }),
+    page.keyboard.press('F9'),
+  ]);
+  expect(download.suggestedFilename()).toMatch(/replay-/);
+  await page.waitForFunction(() => (window.__floppy?.lastReplayBytes ?? 0) > 0, null, { timeout: 3_000 });
+  await page.keyboard.press('F5');
+  await page.waitForFunction(() => (window.__floppy?.p0Hp ?? 1) <= 0, null, { timeout: 5_000 });
+});
+
 test('service worker registers for PWA offline cache', async ({ page }) => {
   await page.goto('/');
   const state = await page.evaluate(async () => {

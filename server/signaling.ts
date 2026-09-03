@@ -2,12 +2,23 @@ import { createServer, type Server } from 'node:http';
 import { pathToFileURL } from 'node:url';
 import { WebSocketServer, type WebSocket } from 'ws';
 
-type Room = { clients: Set<WebSocket>; lastSdp?: string; ice: string[] };
+type RoomClient = { ws: WebSocket; id: string; role: 'host' | 'client' };
+
+type Room = {
+  clients: Map<string, RoomClient>;
+  lastSdp?: string;
+  ice: string[];
+  hostId?: string;
+};
 
 export type SignalingHandle = {
   port: number;
   close: () => Promise<void>;
 };
+
+function nid(): string {
+  return Math.random().toString(36).slice(2, 8);
+}
 
 export function startSignaling(port = Number(process.env.PORT ?? 8787)): Promise<SignalingHandle> {
   const rooms = new Map<string, Room>();
@@ -19,43 +30,80 @@ export function startSignaling(port = Number(process.env.PORT ?? 8787)): Promise
 
   wss.on('connection', (ws) => {
     let roomId = '';
+    let selfId = '';
     ws.on('message', (raw) => {
-      let msg: { t?: string; code?: string };
+      let msg: { t?: string; code?: string; role?: string; to?: string };
       try {
-        msg = JSON.parse(String(raw)) as { t?: string; code?: string };
+        msg = JSON.parse(String(raw)) as { t?: string; code?: string; role?: string; to?: string };
       } catch {
         return;
       }
       if (msg.t === 'room' && msg.code) {
         roomId = msg.code.toUpperCase();
-        const room = rooms.get(roomId) ?? { clients: new Set(), ice: [] };
-        room.clients.add(ws);
+        selfId = nid();
+        const room = rooms.get(roomId) ?? { clients: new Map(), ice: [] };
+        const role = msg.role === 'host' ? 'host' : 'client';
+        room.clients.set(selfId, { ws, id: selfId, role });
+        if (role === 'host') room.hostId = selfId;
         rooms.set(roomId, room);
-        if (room.lastSdp) ws.send(room.lastSdp);
-        for (const ice of room.ice) ws.send(ice);
-        const n = room.clients.size;
-        const peers = JSON.stringify({ t: 'peers', n });
-        for (const peer of room.clients) {
-          if (peer.readyState === peer.OPEN) peer.send(peers);
+        ws.send(JSON.stringify({ t: 'you', id: selfId }));
+
+        const notifyHost = (clientId: string) => {
+          if (!room.hostId || clientId === room.hostId) return;
+          const host = room.clients.get(room.hostId);
+          if (host && host.ws.readyState === host.ws.OPEN) {
+            host.ws.send(JSON.stringify({ t: 'peer-join', id: clientId }));
+          }
+        };
+
+        if (role === 'host') {
+          for (const id of room.clients.keys()) notifyHost(id);
+        } else {
+          notifyHost(selfId);
+          if (room.lastSdp && !room.hostId) ws.send(room.lastSdp);
+          for (const ice of room.ice) {
+            if (!room.hostId) ws.send(ice);
+          }
+        }
+
+        const peers = JSON.stringify({ t: 'peers', n: room.clients.size });
+        for (const c of room.clients.values()) {
+          if (c.ws.readyState === c.ws.OPEN) c.ws.send(peers);
         }
         return;
       }
       const room = rooms.get(roomId);
       if (!room) return;
       const payload = String(raw);
-      if (msg.t === 'sdp') room.lastSdp = payload;
-      if (msg.t === 'ice') {
+      if (msg.t === 'sdp' && !msg.to) room.lastSdp = payload;
+      if (msg.t === 'ice' && !msg.to) {
         room.ice.push(payload);
         if (room.ice.length > 24) room.ice.shift();
       }
-      for (const peer of room.clients) {
-        if (peer !== ws && peer.readyState === peer.OPEN) peer.send(payload);
+      if (msg.to) {
+        const target = room.clients.get(msg.to);
+        if (target && target.ws.readyState === target.ws.OPEN) {
+          let out = payload;
+          try {
+            const o = JSON.parse(payload) as Record<string, unknown>;
+            o.from = selfId;
+            out = JSON.stringify(o);
+          } catch {
+            /* keep */
+          }
+          target.ws.send(out);
+        }
+        return;
+      }
+      for (const c of room.clients.values()) {
+        if (c.ws !== ws && c.ws.readyState === c.ws.OPEN) c.ws.send(payload);
       }
     });
     ws.on('close', () => {
       const room = rooms.get(roomId);
       if (!room) return;
-      room.clients.delete(ws);
+      room.clients.delete(selfId);
+      if (room.hostId === selfId) room.hostId = undefined;
       if (room.clients.size === 0) rooms.delete(roomId);
     });
   });

@@ -1,3 +1,4 @@
+import type { Entity } from 'koota';
 import { lerp } from '../core/math';
 import { getContext } from '../sim/context';
 import { themeOf } from '../sim/level/themes';
@@ -26,14 +27,36 @@ import { weaponByIndex } from '../sim/weapons/defs';
 import type { SimHandle } from '../sim/world';
 import { updateCamera, type CameraState } from './camera';
 import type { PersistentDecalLayer } from './fx/decals';
+import { FxLimb, type FxWorld } from './fx/world';
 import type { Particle } from './fx/particles';
 import { groupBounds, type RenderFrame, type ShapeGroup } from './frame';
 import { poseToPrimitives, secondaryFromVelocity, type LimbState } from './figure';
 import { PRIM_CAPSULE, PRIM_DISK, PRIM_ROUNDED_BOX } from './sdf/primitives';
+import { PhysArm } from '../sim/traits';
 
 const COLORS = ['#f2c14e', '#4c8dff', '#e85d4c', '#3dcf7a'];
 const COLORS_CB = ['#f0e442', '#0072b2', '#d55e00', '#009e73'];
 const limbs = new Map<number, LimbState>();
+
+function nextLimb(fx: FxWorld | undefined, simId: number, vx: number, vy: number): LimbState {
+  if (!fx) {
+    const sec = limbs.get(simId) ?? { hipSway: 0, shoulderSway: 0 };
+    const next = secondaryFromVelocity(sec, vx, vy);
+    limbs.set(simId, next);
+    return next;
+  }
+  let found: Entity | null = null;
+  let cur: LimbState = { hipSway: 0, shoulderSway: 0 };
+  fx.query(FxLimb).updateEach(([l], e) => {
+    if (l.simId !== simId) return;
+    found = e;
+    cur = { hipSway: l.hipSway, shoulderSway: l.shoulderSway };
+  });
+  const next = secondaryFromVelocity(cur, vx, vy);
+  if (found) found.set(FxLimb, { simId, ...next });
+  else fx.spawn(FxLimb({ simId, ...next }));
+  return next;
+}
 
 export type BuildFrameOpts = {
   debug?: boolean;
@@ -41,6 +64,7 @@ export type BuildFrameOpts = {
   colorblind?: boolean;
   decalLayer?: PersistentDecalLayer;
   flash?: number;
+  fxWorld?: FxWorld;
 };
 
 export function buildFrame(
@@ -59,6 +83,13 @@ export function buildFrame(
   const targets: { x: number; y: number }[] = [];
   const lights: LightEmitter[] = [];
   const palette = opts.colorblind ? COLORS_CB : COLORS;
+  const physArms = new Map<number, { left?: { x: number; y: number }; right?: { x: number; y: number } }>();
+  world.query(PhysArm, Transform).updateEach(([arm, at]) => {
+    const rec = physArms.get(arm.owner) ?? {};
+    if (arm.side < 0) rec.left = { x: at.x, y: at.y };
+    else rec.right = { x: at.x, y: at.y };
+    physArms.set(arm.owner, rec);
+  });
 
   world.query(Hazard, Transform, PrevTransform).updateEach(([hz, t, prev]) => {
     const x = lerp(prev.x, t.x, alpha);
@@ -127,9 +158,8 @@ export function buildFrame(
     const x = lerp(prev.x, t.x, alpha);
     const y = lerp(prev.y, t.y, alpha);
     if (!e.has(Dead)) targets.push({ x, y });
-    const sec = limbs.get(e) ?? { hipSway: 0, shoulderSway: 0 };
-    const next = secondaryFromVelocity(sec, ctrl.vx, ctrl.vy);
-    limbs.set(e, next);
+    const next = nextLimb(opts.fxWorld, e, ctrl.vx, ctrl.vy);
+    const arms = physArms.get(p.slot);
     const prims = poseToPrimitives(
       {
         x,
@@ -146,6 +176,8 @@ export function buildFrame(
         blocking: combat.blocking,
         dead: e.has(Dead),
         phase: ctx.tick / 60,
+        physicsArmL: arms?.left,
+        physicsArmR: arms?.right,
       },
       next,
     );

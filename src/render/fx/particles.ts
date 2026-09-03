@@ -1,4 +1,6 @@
+import type { Entity, World } from 'koota';
 import type { SimEvents } from '../../sim/events';
+import { FxDecal, FxParticle, packColor, unpackColor } from './world';
 
 export type Particle = {
   x: number;
@@ -80,4 +82,78 @@ export function emitFromEvents(events: SimEvents, particles: Particle[], decals:
       });
     }
   }
+}
+
+/** PLAN 4.4: spawn cosmetic particles/decals as render-world entities. */
+export function emitIntoWorld(events: SimEvents, world: World): void {
+  const particles: Particle[] = [];
+  const decals: Decal[] = [];
+  emitFromEvents(events, particles, decals);
+  for (const p of particles) {
+    world.spawn(
+      FxParticle({
+        x: p.x,
+        y: p.y,
+        vx: p.vx,
+        vy: p.vy,
+        r: p.r,
+        life: p.life,
+        color: packColor(p.color),
+      }),
+    );
+  }
+  for (const d of decals) {
+    world.spawn(
+      FxDecal({
+        x: d.x,
+        y: d.y,
+        r: d.r,
+        color: packColor(d.color),
+        kind: d.kind === 'scorch' ? 1 : 0,
+        stamped: 0,
+      }),
+    );
+  }
+}
+
+export function stepFxParticles(world: World, dt: number): void {
+  const dead: Entity[] = [];
+  world.query(FxParticle).updateEach(([p], e) => {
+    p.x += p.vx * dt;
+    p.y += p.vy * dt;
+    p.vy -= 18 * dt;
+    p.life -= dt;
+    if (p.life <= 0) dead.push(e);
+  });
+  for (const e of dead) world.destroy(e);
+}
+
+export function listParticles(world: World): Particle[] {
+  const out: Particle[] = [];
+  world.query(FxParticle).updateEach(([p]) => {
+    out.push({
+      x: p.x,
+      y: p.y,
+      vx: p.vx,
+      vy: p.vy,
+      r: p.r,
+      life: p.life,
+      color: unpackColor(p.color),
+    });
+  });
+  return out;
+}
+
+export function listDecals(world: World): Decal[] {
+  const out: Decal[] = [];
+  world.query(FxDecal).updateEach(([d]) => {
+    out.push({
+      x: d.x,
+      y: d.y,
+      r: d.r,
+      color: unpackColor(d.color),
+      kind: d.kind === 1 ? 'scorch' : 'blood',
+    });
+  });
+  return out;
 }
