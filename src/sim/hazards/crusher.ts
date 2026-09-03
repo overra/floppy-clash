@@ -1,8 +1,28 @@
 import { Vec2 } from 'planck';
 import { getContext } from '../context';
-import { HazardKind, Transform } from '../traits';
+import { HazardKind, PrevTransform, Transform } from '../traits';
 import { createKinematicBox, kill } from './common';
 import type { HazardModule } from './types';
+
+/** PLAN Appendix D: crush = kill on overlap, including the swept AABB so 60 Hz cannot tunnel. */
+export function crusherOverlaps(
+  px: number,
+  py: number,
+  hx: number,
+  hy: number,
+  halfW: number,
+  halfH: number,
+  prevX = hx,
+  prevY = hy,
+): boolean {
+  const minX = Math.min(prevX, hx) - halfW;
+  const maxX = Math.max(prevX, hx) + halfW;
+  const minY = Math.min(prevY, hy) - halfH;
+  const maxY = Math.max(prevY, hy) + halfH;
+  const pr = 0.3;
+  const ph = 0.9;
+  return px + pr >= minX && px - pr <= maxX && py + ph >= minY && py - ph <= maxY;
+}
 
 export const crusher: HazardModule = {
   typeId: 'crusher',
@@ -14,11 +34,14 @@ export const crusher: HazardModule = {
     const body = ctx.bodies.get(entity);
     if (body) body.setLinearVelocity(new Vec2(t * (hz.param1 || 4), 0));
   },
-  contact(world, player, _hz, ht) {
+  contact(world, player, hz, ht, _ctrl, _dt, hazard) {
     const pt = player.get(Transform);
     if (!pt) return;
-    const dx = Math.abs(pt.x - ht.x);
-    const dy = Math.abs(pt.y - ht.y);
-    if (dx < 0.5 && dy < 0.8) kill(world, player, pt.x, pt.y);
+    const prev = hazard.get(PrevTransform);
+    const halfW = hz.param2 || 0.75;
+    const halfH = hz.param3 || 3;
+    if (crusherOverlaps(pt.x, pt.y, ht.x, ht.y, halfW, halfH, prev?.x ?? ht.x, prev?.y ?? ht.y)) {
+      kill(world, player, pt.x, pt.y);
+    }
   },
 };

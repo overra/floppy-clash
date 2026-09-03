@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import { getLevel } from '../src/levels/catalog';
 import { shouldOfferRemap } from '../src/input/remap';
+import { heldWeaponHitKind, heldWeaponIntercept, spawnSnake } from '../src/sim/weapons/projectiles';
 import { spawnWeapon } from '../src/sim/systems/weapons';
 import {
+  Aim,
   Controller,
   Dead,
   Destructible,
@@ -594,6 +596,39 @@ describe('PLAN accept stand-ins', () => {
       });
     }
     expect(Math.max(...xs) - Math.min(...xs)).toBeGreaterThan(0.4);
+  });
+
+  it('held-weapon near-hand hit disarms (PLAN 4.9)', () => {
+    expect(heldWeaponHitKind(0.9)).toBe('deflect');
+    expect(heldWeaponHitKind(0.55)).toBe('deflect');
+    expect(heldWeaponHitKind(0.4)).toBe('disarm');
+    const sim = makeSim({ seed: 410, settings: { playerCount: 2 } });
+    const a = playerOf(sim, 0);
+    const b = playerOf(sim, 1);
+    b.set(Transform, { x: 12.2, y: 4, angle: 0 });
+    const aim = b.get(Aim);
+    if (aim) b.set(Aim, { ...aim, x: 1, y: 0 });
+    const spear = spawnWeapon(sim.ecs, 'spear', 12.2, 5);
+    spear.add(Held(), HeldBy(b));
+    spear.remove(Loose);
+    const kind = heldWeaponIntercept(sim.ecs, 12.55, 4, 12.85, 4, a);
+    expect(kind).toBe('disarm');
+    expect(spear.has(Held)).toBe(false);
+    expect(spear.has(Loose)).toBe(true);
+  });
+
+  it('snake HP scales to match HP; giant snakes are 2× (PLAN 4.14)', () => {
+    const sim = makeSim({ seed: 411, settings: { playerCount: 1, maxHp: 50 } });
+    spawnSnake(sim.ecs, 8, 5, undefined, false, false);
+    spawnSnake(sim.ecs, 10, 5, undefined, true, false);
+    const hps: number[] = [];
+    let giantHp = 0;
+    sim.ecs.query(Snake).updateEach(([s]) => {
+      hps.push(s.hp);
+      if (s.giant) giantHp = s.hp;
+    });
+    expect(hps).toContain(50);
+    expect(giantHp).toBe(100);
   });
 
   it('rolling and dropping spikeballs move without a hang joint', () => {

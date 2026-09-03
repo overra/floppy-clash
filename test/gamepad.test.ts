@@ -1,6 +1,14 @@
 import { describe, expect, it } from 'vitest';
-import { consumeLatch, emptyLatch, radialDeadzone, readPad } from '../src/input/gamepad';
-import { shouldOfferRemap } from '../src/input/remap';
+import {
+  buttonOn,
+  consumeLatch,
+  emptyLatch,
+  radialDeadzone,
+  readPad,
+  smoothStick,
+} from '../src/input/gamepad';
+import { tuning } from '../src/sim/tuning';
+import { DEFAULT_MAP, shouldOfferRemap } from '../src/input/remap';
 import { claimDisconnectedSeat, createMenuState, markDisconnectedSeat } from '../src/ui/menus';
 
 function fakePad(partial: { id?: string; mapping?: GamepadMappingType; axes?: number[]; buttons?: boolean[] }): Gamepad {
@@ -102,6 +110,43 @@ describe('gamepad mapping', () => {
     expect(claim?.padId).toBe('pad-c');
     expect(menus.seats[0]?.padId).toBe('pad-a');
     expect(menus.seats[1]?.padId).toBe('pad-c');
+  });
+
+  it('X / Square throws and does not attack (PLAN 4.12)', () => {
+    const input = readPad(
+      fakePad({ buttons: [false, false, true] }),
+      emptyLatch(),
+      { x: 1, y: 0 },
+    );
+    expect(input.throw).toBe(true);
+    expect(input.attack).toBe(false);
+  });
+
+  it('reads analog triggers at tuning.triggerThreshold', () => {
+    const pad = fakePad({ buttons: [] });
+    pad.buttons[7] = { pressed: false, touched: true, value: 0.6 };
+    pad.buttons[6] = { pressed: false, touched: true, value: 0.6 };
+    const down = readPad(pad, emptyLatch(), { x: 1, y: 0 });
+    expect(down.attack).toBe(true);
+    expect(down.block).toBe(true);
+    expect(buttonOn({ pressed: false, touched: false, value: 0.49 } as GamepadButton)).toBe(false);
+    expect(buttonOn({ pressed: false, touched: true, value: tuning.triggerThreshold } as GamepadButton)).toBe(
+      true,
+    );
+    pad.buttons[7] = { pressed: false, touched: false, value: 0.2 };
+    pad.buttons[6] = { pressed: false, touched: false, value: 0.2 };
+    const up = readPad(pad, emptyLatch(), { x: 1, y: 0 });
+    expect(up.attack).toBe(false);
+    expect(up.block).toBe(false);
+  });
+
+  it('smooths stick motion when memory is provided', () => {
+    expect(smoothStick(0, 1, 0.35)).toBeCloseTo(0.65);
+    const mem = { moveX: 0, moveY: 0 };
+    const a = readPad(fakePad({ axes: [1, 0, 0, 0] }), emptyLatch(), { x: 1, y: 0 }, DEFAULT_MAP, mem);
+    expect(a.moveX).toBeGreaterThan(0.4);
+    expect(a.moveX).toBeLessThan(1);
+    expect(mem.moveX).toBe(a.moveX);
   });
 
   it('honours a custom remap', () => {

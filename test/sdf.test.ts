@@ -38,9 +38,13 @@ describe('sdf primitives', () => {
     expect(u).toBeLessThan(Math.min(-0.2, -0.1));
   });
 
-  it('coverage maps distance to alpha', () => {
+  it('coverage maps distance to alpha with PLAN smoothstep AA', () => {
     expect(coverage(-2, 1)).toBe(1);
     expect(coverage(2, 1)).toBe(0);
+    expect(coverage(0, 1)).toBeCloseTo(0.5);
+    const mid = coverage(-0.2, 1);
+    expect(mid).toBeGreaterThan(0.5);
+    expect(mid).toBeLessThan(1);
   });
 
   it('primitiveSdf dispatches kinds', () => {
@@ -52,7 +56,10 @@ describe('sdf primitives', () => {
 
 describe('TypeGPU use-gpu fns on CPU', () => {
   it('calls DualFn coverage / sdf / smooth-union', () => {
-    expect(evalCoverageGpu(-1)).toBeGreaterThan(0.5);
+    expect(evalCoverageGpu(-1)).toBeGreaterThan(0.9);
+    expect(evalCoverageGpu(0)).toBeCloseTo(0.5);
+    expect(evalCoverageGpu(-0.2)).toBeGreaterThan(0.5);
+    expect(evalCoverageGpu(-0.2)).toBeLessThan(1);
     const inside = evalPrimitiveSdfGpu({ kind: PRIM_DISK, ax: 0, ay: 0, bx: 0, by: 0, r: 1 }, 0, 0);
     expect(inside).toBeLessThan(0);
     const box = evalPrimitiveSdfGpu(

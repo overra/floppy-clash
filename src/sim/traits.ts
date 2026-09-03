@@ -16,7 +16,7 @@ export const replication = {
   Projectile: 'replicated',
   Hazard: 'replicated',
   RagdollPart: 'replicated',
-  Lifetime: 'local',
+  Lifetime: 'replicated',
   Dead: 'replicated',
   Loose: 'replicated',
   Held: 'replicated',

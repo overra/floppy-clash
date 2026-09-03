@@ -159,12 +159,13 @@ export const primitiveSdfGpu = tgpu.fn(
   return d.f32(1e9);
 });
 
+/** PLAN Appendix B: `1 - smoothstep(-0.5, 0.5, dist / pixelWidth)`. DualFn pixelWidth defaults to 1. */
 export const coverageGpu = tgpu.fn(
   [d.f32],
   d.f32,
 )((dist) => {
   'use gpu';
-  return dist < d.f32(0) ? d.f32(1) : d.f32(0);
+  return d.f32(1) - std.smoothstep(d.f32(-0.5), d.f32(0.5), dist);
 });
 
 export const smoothUnionGpu = tgpu.fn(

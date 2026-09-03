@@ -13,6 +13,7 @@ import {
   HeldBy,
   Loose,
   Player,
+  Projectile,
   Transform,
   Weapon,
 } from '../traits';
@@ -42,6 +43,20 @@ function nearestLoose(world: World, x: number, y: number): { x: number; y: numbe
     if (!best || d < best.d) best = { x: lt.x, y: lt.y, d };
   });
   return best;
+}
+
+/** PLAN 4.14: block when a bullet is approaching. */
+export function bulletApproaching(world: World, x: number, y: number): boolean {
+  let danger = false;
+  world.query(Projectile).updateEach(([p]) => {
+    const dx = x - p.x;
+    const dy = y - p.y;
+    const dist = Math.hypot(dx, dy);
+    if (dist > 7 || dist < 1e-4) return;
+    const closing = (p.vx * dx + p.vy * dy) / dist;
+    if (closing > 8) danger = true;
+  });
+  return danger;
 }
 
 function hazardAhead(world: World, x: number, y: number, dir: number): boolean {
@@ -88,10 +103,12 @@ export function thinkBots(world: World): void {
       const dy = target.cur.y - tr.y;
       input.moveX = Math.max(-1, Math.min(1, dx * 0.35));
       const len = Math.hypot(dx, dy) || 1;
-      input.aimX = dx / len;
-      input.aimY = dy / len;
+      const noise = ctx.rng.range(-0.12, 0.12);
+      const noiseY = ctx.rng.range(-0.12, 0.12);
+      input.aimX = dx / len + noise;
+      input.aimY = dy / len + noiseY;
       input.attack = bot.think % 18 < 6;
-      input.block = bot.think % 40 < 6;
+      input.block = bulletApproaching(world, tr.x, tr.y) || bot.think % 40 < 6;
       if (dy > 1.2 || Math.abs(dx) > 3) input.jump = bot.think % 16 < 3;
       const wall = raycastClosest(world, tr.x, tr.y, tr.x + Math.sign(dx) * 0.5, tr.y);
       if (wall && !ctrl.grounded) input.jump = true;

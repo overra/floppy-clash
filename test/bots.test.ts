@@ -1,22 +1,63 @@
 import { describe, expect, it } from 'vitest';
-import { attachBots } from '../src/sim/ai/bots';
-import { Bot, Player } from '../src/sim/traits';
-import { makeSim } from './helpers';
+import { bulletApproaching } from '../src/sim/ai/bots';
+import { Bot, Projectile, Transform } from '../src/sim/traits';
+import { makeSim, playerOf } from './helpers';
 
 describe('M9 bots', () => {
-  it('bots produce inputs and the match advances', () => {
+  it('createSimWorld attaches Bot traits for settings.bots seats', () => {
     const sim = makeSim({ seed: 90, settings: { playerCount: 1, bots: 3 } });
-    const slots: number[] = [];
-    sim.ecs.query(Player).updateEach(([p], e) => {
-      if (p.slot > 0) {
-        e.add(Bot({ slot: p.slot, think: 0 }));
-        slots.push(p.slot);
-      }
+    let bots = 0;
+    sim.ecs.query(Bot).updateEach(() => {
+      bots += 1;
     });
-    attachBots(sim.ecs, slots);
+    expect(bots).toBe(3);
+  });
+
+  it('bots produce non-idle inputs and move toward a living player', () => {
+    const sim = makeSim({ seed: 91, settings: { playerCount: 1, bots: 3 } });
+    const human = playerOf(sim, 0);
+    sim.ctx.bodies.get(human)?.setPosition({ x: 8, y: 4 });
+    human.set(Transform, { x: 8, y: 4, angle: 0 });
+    const bot = playerOf(sim, 1);
+    sim.ctx.bodies.get(bot)?.setPosition({ x: 16, y: 4 });
+    bot.set(Transform, { x: 16, y: 4, angle: 0 });
+    const x0 = bot.get(Transform)?.x ?? 16;
+    for (let i = 0; i < 90; i++) sim.step();
+    const x1 = bot.get(Transform)?.x ?? 16;
+    expect(Math.abs(x1 - x0)).toBeGreaterThan(0.3);
+    expect(sim.getTick()).toBe(90);
+  });
+
+  it('blocks when a bullet is approaching (PLAN 4.14)', () => {
+    const sim = makeSim({ seed: 92, settings: { playerCount: 1, bots: 1 } });
+    sim.ecs.spawn(
+      Projectile({
+        kind: 0,
+        damage: 10,
+        speed: 40,
+        bounces: 0,
+        fuse: 0,
+        x: 8,
+        y: 4,
+        vx: 40,
+        vy: 0,
+        gravity: 0,
+        ownerGrace: 0,
+        defId: 0,
+      }),
+    );
+    expect(bulletApproaching(sim.ecs, 14, 4)).toBe(true);
+    expect(bulletApproaching(sim.ecs, 8, 10)).toBe(false);
+  });
+
+  it('bot soak of 2000 ticks stays finite', { timeout: 30_000 }, () => {
+    const sim = makeSim({ seed: 93, settings: { playerCount: 1, bots: 3 }, boxes: 4 });
     expect(() => {
-      for (let i = 0; i < 240; i++) sim.step();
+      for (let i = 0; i < 2000; i++) sim.step();
     }).not.toThrow();
-    expect(sim.getTick()).toBe(240);
+    sim.ecs.query(Transform).updateEach(([t]) => {
+      expect(Number.isFinite(t.x)).toBe(true);
+      expect(Number.isFinite(t.y)).toBe(true);
+    });
   });
 });

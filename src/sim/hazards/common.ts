@@ -58,7 +58,12 @@ export function paramsFromObject(obj: LevelObject): {
         param3: 0,
       };
     case 'crusher':
-      return { param0: obj.period ?? 60, param1: obj.speed ?? 4, param2: 0, param3: 0 };
+      return {
+        param0: obj.period ?? 60,
+        param1: obj.speed ?? 4,
+        param2: (obj.w ?? 1.5) / 2,
+        param3: (obj.h ?? 6) / 2,
+      };
     case 'platform.disappearing':
       return { param0: obj.period ?? 140, param1: obj.delay ?? 0, param2: 0, param3: 0 };
     case 'platform.collapsing':

@@ -276,7 +276,20 @@ export function serializeWorld(world: World, opts?: { skipOwnedByCache?: boolean
 }
 
 /** Consume change trackers after a full snapshot so the next delta is incremental. */
-const DELTA_TRAITS = [Transform, Status, Combat, HazardPath, Health, Destructible, Weapon, Hazard, Boss, Snake, Aim] as const;
+const DELTA_TRAITS = [
+  Transform,
+  Status,
+  Combat,
+  HazardPath,
+  Health,
+  Destructible,
+  Weapon,
+  Hazard,
+  Boss,
+  Snake,
+  Aim,
+  Lifetime,
+] as const;
 
 export function drainChangeTrackers(world: World): void {
   for (const trait of DELTA_TRAITS) {

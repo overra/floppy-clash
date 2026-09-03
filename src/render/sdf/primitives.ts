@@ -141,8 +141,7 @@ export function opUnion(a: number, b: number): number {
 
 export function coverage(dist: number, pixel = 1): number {
   const w = Math.max(pixel, 1e-4);
-  const t = clamp(dist / w, -0.5, 0.5);
-  return 1 - (t + 0.5);
+  return 1 - smoothstep(-0.5, 0.5, dist / w);
 }
 
 export function primitiveSdf(prim: Primitive, p: Vec2): number {
@@ -181,6 +180,11 @@ export function primitiveSdf(prim: Primitive, p: Vec2): number {
       prim.r,
     );
   return 1e9;
+}
+
+function smoothstep(edge0: number, edge1: number, x: number): number {
+  const t = clamp01((x - edge0) / (edge1 - edge0 || 1));
+  return t * t * (3 - 2 * t);
 }
 
 function clamp01(v: number): number {

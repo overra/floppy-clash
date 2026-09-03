@@ -1,7 +1,7 @@
 import { createWorld, type Entity, type World } from 'koota';
 import { World as PhysicsWorld } from 'planck';
 import { thinkBosses } from './ai/boss';
-import { thinkBots } from './ai/bots';
+import { attachBots, thinkBots } from './ai/bots';
 import { stepArms } from './player/arms';
 import { bindContext, getContext, makeContext, type SimContext } from './context';
 import type { SimEvents } from './events';
@@ -83,6 +83,9 @@ export function createSimWorld(opts: CreateSimOptions): SimHandle {
       const spawn = order[i % order.length]!;
       spawnPlayer(ecs, i, spawn.x, spawn.y + 1, i, i);
     }
+    const botSlots: number[] = [];
+    for (let i = settings.playerCount; i < count; i++) botSlots.push(i);
+    if (botSlots.length) attachBots(ecs, botSlots);
   }
 
   if (opts.boxes && opts.boxes > 0) {

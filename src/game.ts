@@ -3,7 +3,14 @@ import { attachBots } from './sim/ai/bots';
 import { createFixedStepLoop, interpolationAlpha } from './core/loop';
 import { createMixer } from './audio/mixer';
 import { createKeyboardFallback } from './input/keyboard';
-import { consumeLatch, emptyLatch, pollGamepads, readPad, type Latch } from './input/gamepad';
+import {
+  consumeLatch,
+  emptyLatch,
+  pollGamepads,
+  readPad,
+  type Latch,
+  type PadStickMemory,
+} from './input/gamepad';
 import {
   canStartMatch,
   claimDisconnectedSeat,
@@ -138,6 +145,12 @@ export function createGame(root: HTMLElement): Game {
     { x: -1, y: 0 },
     { x: 1, y: 0 },
     { x: -1, y: 0 },
+  ];
+  const stickMem: PadStickMemory[] = [
+    { moveX: 0, moveY: 0 },
+    { moveX: 0, moveY: 0 },
+    { moveX: 0, moveY: 0 },
+    { moveX: 0, moveY: 0 },
   ];
   const joinAHeld = [false, false, false, false];
   const joinStartHeld = [false, false, false, false];
@@ -569,7 +582,7 @@ export function createGame(root: HTMLElement): Game {
         if (startDown && !joinStartHeld[i]) startIfReady();
         joinStartHeld[i] = startDown;
       }
-      inputs[i] = readPad(pad, latch, aim, padMapFor(pad.id));
+      inputs[i] = readPad(pad, latch, aim, padMapFor(pad.id), stickMem[i]);
       lastAim[i] = { x: inputs[i]!.aimX, y: inputs[i]!.aimY };
       if (latch.pause) {
         latch.pause = false;

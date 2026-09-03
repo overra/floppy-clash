@@ -76,11 +76,16 @@ export function inMeleeArc(
   return facing >= Math.cos(halfArc);
 }
 
+/** PLAN 4.9: far-end (`u >= 0.55`) deflects; near-hand disarms. */
+export function heldWeaponHitKind(u: number): 'deflect' | 'disarm' {
+  return u >= 0.55 ? 'deflect' : 'disarm';
+}
+
 /**
  * PLAN 4.9: hits on a held weapon's far end deflect; hits near the hand disarm.
  * Held bodies are deactivated, so this is a line test against the aim-aligned barrel.
  */
-function heldWeaponIntercept(
+export function heldWeaponIntercept(
   world: World,
   x0: number,
   y0: number,
@@ -103,7 +108,7 @@ function heldWeaponIntercept(
     const tipY = handY + aim.y * def.shape.length;
     const hit = segmentHit(x0, y0, x1, y1, handX, handY, tipX, tipY);
     if (!hit) return;
-    if (hit.u >= 0.55) result = 'deflect';
+    if (heldWeaponHitKind(hit.u) === 'deflect') result = 'deflect';
     else {
       result = 'disarm';
       disarm(world, holder);

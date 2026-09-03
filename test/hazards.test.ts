@@ -4,7 +4,8 @@ import { createCamera } from '../src/render/camera';
 import { buildFrame } from '../src/render/buildFrame';
 import { PRIM_CAPSULE, PRIM_PIE, PRIM_TRIANGLE } from '../src/render/sdf/primitives';
 import { APPENDIX_D_TYPE_IDS, HAZARDS_BY_TYPE, HAZARD_MODULES } from '../src/sim/hazards';
-import { Dead, Destructible, Health, Transform } from '../src/sim/traits';
+import { Controller, Dead, Destructible, Hazard, HazardKind, Health, Transform } from '../src/sim/traits';
+import { crusherOverlaps } from '../src/sim/hazards/crusher';
 import { hold, makeSim, playerOf } from './helpers';
 
 describe('M4 hazards', () => {
@@ -18,30 +19,64 @@ describe('M4 hazards', () => {
     expect(p.has(Dead) || (p.get(Health)?.hp ?? 1) <= 0).toBe(true);
   });
 
-  it('moving platform exists and steps without throwing', () => {
+  it('moving platform carries a standing player', () => {
     const sim = makeSim({
       level: getLevel('test-platform.moving'),
       seed: 22,
       settings: { playerCount: 1 },
     });
-    expect(() => {
-      for (let i = 0; i < 120; i++) sim.step();
-    }).not.toThrow();
+    const plat = { x: 16, y: 8 };
+    sim.ecs.query(Hazard, Transform).updateEach(([hz, t]) => {
+      if (hz.kind === HazardKind.MovingPlatform) {
+        plat.x = t.x;
+        plat.y = t.y;
+      }
+    });
+    const p = playerOf(sim);
+    sim.ctx.bodies.get(p)?.setPosition({ x: plat.x, y: plat.y + 1.15 });
+    sim.ctx.bodies.get(p)?.setLinearVelocity({ x: 0, y: 0 });
+    p.set(Transform, { x: plat.x, y: plat.y + 1.15, angle: 0 });
+    let grounded = false;
+    for (let i = 0; i < 12; i++) {
+      sim.step([hold({}), hold({}), hold({}), hold({})]);
+      if (p.get(Controller)?.grounded) grounded = true;
+    }
+    expect(grounded).toBe(true);
+    const x0 = p.get(Transform)?.x ?? 0;
+    let platX0 = plat.x;
+    sim.ecs.query(Hazard, Transform).updateEach(([hz, t]) => {
+      if (hz.kind === HazardKind.MovingPlatform) platX0 = t.x;
+    });
+    for (let i = 0; i < 50; i++) sim.step([hold({}), hold({}), hold({}), hold({})]);
+    let platX1 = platX0;
+    sim.ecs.query(Hazard, Transform).updateEach(([hz, t]) => {
+      if (hz.kind === HazardKind.MovingPlatform) platX1 = t.x;
+    });
+    const x1 = p.get(Transform)?.x ?? 0;
+    expect(Math.abs(platX1 - platX0)).toBeGreaterThan(0.4);
+    expect(Math.sign(x1 - x0)).toBe(Math.sign(platX1 - platX0) || Math.sign(x1 - x0));
+    expect(Math.abs(x1 - x0)).toBeGreaterThan(0.25);
   });
 
   it('does not tunnel a player through a kinematic crusher in 60 Hz', () => {
+    expect(crusherOverlaps(18, 8, 18, 8, 0.75, 3)).toBe(true);
+    expect(crusherOverlaps(16.2, 8, 18, 8, 0.75, 3, 16.4, 8)).toBe(true);
+    expect(crusherOverlaps(10, 3, 18, 8, 0.75, 3)).toBe(false);
     const sim = makeSim({
       level: getLevel('test-crusher'),
       seed: 24,
       settings: { playerCount: 1 },
     });
     const p = playerOf(sim);
-    const start = p.get(Transform);
-    for (let i = 0; i < 180; i++) sim.step([hold({}), hold({}), hold({}), hold({})]);
-    const end = p.get(Transform);
-    expect(Number.isFinite(end?.x)).toBe(true);
-    expect(Number.isFinite(end?.y)).toBe(true);
-    expect(Math.abs((end?.x ?? 0) - (start?.x ?? 0))).toBeLessThan(40);
+    const obj = getLevel('test-crusher').objects.find((o) => o.type === 'crusher');
+    sim.ctx.bodies.get(p)?.setPosition({ x: obj?.x ?? 18, y: obj?.y ?? 8 });
+    p.set(Transform, { x: obj?.x ?? 18, y: obj?.y ?? 8, angle: 0 });
+    for (let i = 0; i < 20; i++) {
+      sim.step([hold({}), hold({}), hold({}), hold({})]);
+      if (p.has(Dead) || (p.get(Health)?.hp ?? 1) <= 0) break;
+    }
+    expect(p.has(Dead) || (p.get(Health)?.hp ?? 1) <= 0).toBe(true);
+    expect(Number.isFinite(p.get(Transform)?.x)).toBe(true);
   });
 
   it('lava damages then respects cooldown', () => {

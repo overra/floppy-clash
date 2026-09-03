@@ -392,7 +392,7 @@ describe('M8 snapshot', () => {
       for (const e of snap.entities) {
         for (const key of Object.keys(e.traits)) {
           if (key === 'RagdollRoot') seen.add('Player');
-          else if (key === 'OwnedBy' || key === 'Lifetime') continue;
+          else if (key === 'OwnedBy') continue;
           else seen.add(key);
         }
       }
@@ -432,6 +432,10 @@ describe('M8 snapshot', () => {
       seed: 106,
       settings: { playerCount: 2 },
     });
+    dest.ecs.query(Destructible, Hazard).updateEach(([d, hz]) => {
+      if (hz.kind === HazardKind.Destructible) d.hp = 0;
+    });
+    dest.step([hold({}), hold({}), hold({}), hold({})]);
     spawnSnake(dest.ecs, 6, 5, playerOf(dest, 0), false, false);
     dest.ecs.spawn(
       Projectile({
