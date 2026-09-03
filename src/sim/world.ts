@@ -12,7 +12,7 @@ import { assignNetId, createBoxBody, registerBody } from './physics/bodies';
 import { bindContactRouter } from './physics/contacts';
 import { cloneTuning } from './tuning';
 import { mergeSettings, type MatchSettings } from './rules/settings';
-import { hashWorld, serializeWorld } from './snapshot';
+import { hashWorld, serializeDelta, serializeWorld } from './snapshot';
 import { combat } from './player/combat';
 import { controller } from './player/controller';
 import { rules } from './rules/rounds';
@@ -42,6 +42,7 @@ export type SimHandle = {
   getTick: () => number;
   hash: () => string;
   snapshot: () => ReturnType<typeof serializeWorld>;
+  snapshotDelta: () => ReturnType<typeof serializeDelta>;
   players: () => Entity[];
 };
 
@@ -122,6 +123,7 @@ export function createSimWorld(opts: CreateSimOptions): SimHandle {
     getTick: () => ctx.tick,
     hash: () => hashWorld(ecs),
     snapshot: () => serializeWorld(ecs),
+    snapshotDelta: () => serializeDelta(ecs),
     players: () => ctx.players.slice(),
   };
 }

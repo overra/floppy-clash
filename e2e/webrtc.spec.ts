@@ -49,6 +49,12 @@ test('late-join snapshot restores a client interpolation view', async ({ browser
   const x = await guest.evaluate(() => window.__floppy?.clientAppliedX ?? 0);
   expect(Number.isFinite(x)).toBe(true);
   await expect.poll(async () => guest.evaluate(() => window.__floppy?.netSlot ?? 0), { timeout: 10_000 }).toBeGreaterThan(0);
+  await expect(host.locator('#matchchat')).toBeVisible();
+  await host.keyboard.press('Enter');
+  await expect(host.locator('#matchchat-in')).toBeVisible();
+  await host.locator('#matchchat-in').fill('ingame-hi');
+  await host.keyboard.press('Enter');
+  await expect(guest.locator('#matchchat')).toContainText('ingame-hi', { timeout: 10_000 });
   await hostCtx.close();
   await guestCtx.close();
 });

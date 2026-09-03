@@ -2,7 +2,7 @@ import { gymLevel } from '../levels/gym';
 import { getLevel } from '../levels/catalog';
 import type { LevelDef } from '../sim/level/schema';
 import { NetId, Player, PrevTransform, Transform } from '../sim/traits';
-import { restoreWorld, type WorldSnapshot } from '../sim/snapshot';
+import { mergeSnapshot, restoreWorld, type WorldSnapshot } from '../sim/snapshot';
 import { createSimWorld, type SimHandle } from '../sim/world';
 import { createInterpBuffer } from './interp';
 
@@ -61,6 +61,7 @@ export function createClientView(first: WorldSnapshot, delayMs = 120, level?: Le
   const sim = worldFromSnapshot(first, level);
   restoreWorld(sim.ecs, first);
   const buffer = createInterpBuffer(delayMs);
+  let acc: WorldSnapshot = first.full === false ? { ...first, full: true } : first;
   const view: ClientView = {
     sim,
     appliedTick: first.tick,
@@ -68,7 +69,9 @@ export function createClientView(first: WorldSnapshot, delayMs = 120, level?: Le
     restored: true,
     alpha: 1,
     push(at, snap) {
-      buffer.push(at, snap);
+      const merged = snap.full === false ? mergeSnapshot(acc, snap) : snap;
+      acc = merged;
+      buffer.push(at, merged);
     },
     apply(now) {
       const pair = buffer.samplePair(now);

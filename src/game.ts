@@ -32,6 +32,7 @@ import { tuning } from './sim/tuning';
 import { loadSettings, saveSettings, type UserSettings } from './ui/settingsStore';
 import { loadStats, recordKos, recordMatch } from './ui/statsStore';
 import { hostContentMessages, lateJoinSnapshotMessage } from './net/protocol';
+import { drainChangeTrackers } from './sim/snapshot';
 import { applyInputBundle, bundleInputs } from './net/simnet';
 import { createEditorState, fromHash, loadLibrary, type EditorState } from './editor/editor';
 import { mountEditor } from './editor/view';
@@ -73,6 +74,8 @@ type FloppyDebug = {
   netPeers: number;
   netSlot: number;
   entities: number;
+  chatOpen: boolean;
+  lastChat: string;
 };
 
 declare global {
@@ -117,6 +120,8 @@ export function createGame(root: HTMLElement): Game {
   let pendingLevel: LevelDef | undefined;
   const remoteBySlot: Array<PlayerInput | null> = [null, null, null, null];
   const inputHist: PlayerInput[] = [];
+  let chatOpen = false;
+  let matchChatEl: HTMLDivElement | null = null;
   let raf = 0;
   let last = performance.now();
   let paused = false;
@@ -310,7 +315,10 @@ export function createGame(root: HTMLElement): Game {
         )) {
           session.send(m);
         }
-        if (sim) session.send(lateJoinSnapshotMessage(sim.snapshot()));
+        if (sim) {
+          session.send(lateJoinSnapshotMessage(sim.snapshot()));
+          drainChangeTrackers(sim.ecs);
+        }
       }
     });
   }
@@ -403,6 +411,7 @@ export function createGame(root: HTMLElement): Game {
     show();
     net.send({ t: 'level', json: JSON.stringify(level) });
     net.send(lateJoinSnapshotMessage(sim.snapshot()));
+    drainChangeTrackers(sim.ecs);
   }
 
   function padMapFor(id: string) {
@@ -410,6 +419,7 @@ export function createGame(root: HTMLElement): Game {
   }
 
   function sampleInputs(): PlayerInput[] {
+    if (chatOpen) return blankInputs(4);
     const inputs = blankInputs(4);
     const pads = pollGamepads();
     pads.forEach((pad, i) => {
@@ -555,10 +565,23 @@ export function createGame(root: HTMLElement): Game {
         }
         if (events.some((e) => e.type === 'explosion')) rumble('boom');
         else if (events.some((e) => e.type === 'hit')) rumble('hit');
+        if (menus.netRole === 'host') {
+          for (const ev of events) {
+            if (ev.type === 'round-phase') net.send({ t: 'event', kind: 'round-phase', payload: ev.phase });
+            if (ev.type === 'spawn' || ev.type === 'despawn') {
+              net.send({ t: 'event', kind: ev.type, payload: JSON.stringify(ev) });
+            }
+          }
+        }
         latches.forEach(consumeLatch);
         keys.consume();
         if (menus.netRole === 'host' && viewSim.ctx.tick % 3 === 0) {
-          net.send(lateJoinSnapshotMessage(viewSim.snapshot()), false);
+          if (viewSim.ctx.tick % 60 === 0) {
+            net.send(lateJoinSnapshotMessage(viewSim.snapshot()), false);
+            drainChangeTrackers(viewSim.ecs);
+          } else {
+            net.send({ t: 'snapshot', snap: viewSim.snapshotDelta() }, false);
+          }
         }
       }
       stepFxParticles(fx, dt);
@@ -631,6 +654,8 @@ export function createGame(root: HTMLElement): Game {
       netPeers: net.peerCount,
       netSlot,
       entities: sim?.ctx.bodies.size ?? clientView?.sim.ctx.bodies.size ?? 0,
+      chatOpen,
+      lastChat: menus.chat[menus.chat.length - 1] ?? '',
     };
   }
 
@@ -645,6 +670,7 @@ export function createGame(root: HTMLElement): Game {
   }
 
   function drawHud(frame: ReturnType<typeof buildFrame>) {
+    if (matchChatEl && matchChatEl.parentElement === hudEl) matchChatEl.remove();
     hudEl.innerHTML = '';
     if (frame.hud.countdown > 0) {
       const d = document.createElement('div');
@@ -711,6 +737,32 @@ export function createGame(root: HTMLElement): Game {
         ...players,
       ].join('\n');
       hudEl.append(dbg);
+    }
+    if (menus.netRole === 'host' || menus.netRole === 'client') {
+      if (!matchChatEl) {
+        matchChatEl = document.createElement('div');
+        matchChatEl.id = 'matchchat';
+        matchChatEl.dataset.matchChat = '1';
+        matchChatEl.style.cssText =
+          'position:absolute;left:12px;bottom:12px;min-width:220px;max-width:40%;padding:8px;background:rgba(10,12,16,0.65);border-radius:8px;font:12px/1.4 monospace;white-space:pre-wrap';
+        const log = document.createElement('pre');
+        log.id = 'matchchat-log';
+        log.style.cssText = 'margin:0 0 6px;max-height:120px;overflow:auto';
+        matchChatEl.append(log);
+      }
+      const log = matchChatEl.querySelector('#matchchat-log');
+      if (log) log.textContent = menus.chat.slice(-6).join('\n') || '(chat — Enter to type)';
+      let input = matchChatEl.querySelector('#matchchat-in') as HTMLInputElement | null;
+      if (chatOpen && !input) {
+        input = document.createElement('input');
+        input.id = 'matchchat-in';
+        input.placeholder = 'Message';
+        input.style.cssText = 'width:100%;box-sizing:border-box';
+        matchChatEl.append(input);
+        requestAnimationFrame(() => input?.focus());
+      }
+      if (!chatOpen && input) input.remove();
+      hudEl.append(matchChatEl);
     }
   }
 
@@ -790,6 +842,28 @@ export function createGame(root: HTMLElement): Game {
         }
       });
       window.addEventListener('keydown', (e) => {
+        const online = menus.netRole === 'host' || menus.netRole === 'client';
+        if (menus.screen === 'play' && online && (e.code === 'Enter' || e.code === 'Escape')) {
+          if (e.code === 'Enter') {
+            e.preventDefault();
+            if (!chatOpen) {
+              chatOpen = true;
+            } else {
+              const typed = (document.querySelector('#matchchat-in') as HTMLInputElement | null)?.value.trim();
+              if (typed) {
+                menus.chat.push(`you: ${typed}`);
+                net.send({ t: 'chat', from: netName || menus.netRole || 'you', text: typed });
+              }
+              chatOpen = false;
+            }
+            return;
+          }
+          if (e.code === 'Escape' && chatOpen) {
+            e.preventDefault();
+            chatOpen = false;
+            return;
+          }
+        }
         if (menus.screen === 'join') {
           if (e.code === 'ArrowLeft' || e.code === 'ArrowRight') {
             const seat = [...menus.seats].reverse().find((s) => s.taken) ?? menus.seats[0];

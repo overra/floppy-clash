@@ -11,8 +11,15 @@ Floppy Clash is host-authoritative. The host runs `src/sim`; clients send `Playe
 ## Snapshots
 
 - Host broadcasts quantized binary snapshots at 20 Hz (`encodeSnapshotBinary`).
+- **Full** snapshots go to late joiners and as a periodic fallback (`serializeWorld`).
+- **Delta** snapshots use Koota `Changed(Transform)` plus `Added`/`Removed` on `NetId` (`serializeDelta`). Clients merge deltas onto the last full view, then interpolate.
 - Budget: **< 30 KB/s** per client with 4 players (asserted by `test/net.test.ts`).
 - Clients keep a ~100–150 ms interpolation buffer (`src/net/interp.ts`). There is **no client prediction** and **no rollback**.
+
+## Chat
+
+- Lobby chat stays on the Online screen.
+- Mid-match: Enter opens an in-HUD composer (`#matchchat`); Enter sends on the reliable channel; Escape cancels.
 
 ## Inputs
 
