@@ -100,6 +100,12 @@ export function addObject(state: EditorState, x: number, y: number): void {
     w: 2,
     h: 1,
   };
+  if (state.tool === 'laser') {
+    obj.onTicks = 40;
+    obj.offTicks = 50;
+    obj.warningTicks = 12;
+    obj.reach = 14;
+  }
   state.level.objects.push(obj);
   state.selected = state.level.objects.length - 1;
 }

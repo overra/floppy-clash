@@ -79,6 +79,7 @@ describe('editor tools', () => {
     const fields = objectSchemaFields();
     expect(fields.some((f) => f.key === 'type')).toBe(true);
     expect(fields.some((f) => f.key === 'dir' && f.kind === 'enum')).toBe(true);
+    expect(fields.some((f) => f.key === 'reach' && f.kind === 'number')).toBe(true);
     const state = createEditorState();
     state.tool = 'spikes';
     addObject(state, 8, 4);
@@ -89,5 +90,18 @@ describe('editor tools', () => {
     expect(state.level.spawns.length).toBeGreaterThanOrEqual(5);
     setDropEdge(state, 2);
     expect(state.level.drops?.xMin).toBeLessThanOrEqual(2);
+  });
+
+  it('laser reach is an editable zod field (PLAN 4.15)', () => {
+    const state = createEditorState();
+    state.tool = 'laser';
+    addObject(state, 12, 6);
+    const laser = state.level.objects[state.selected]!;
+    expect(laser.type).toBe('laser');
+    expect(laser.reach).toBe(14);
+    applyField(laser, 'reach', '8');
+    expect(laser.reach).toBe(8);
+    applyField(laser, 'reach', '0');
+    expect(laser.reach).toBe(0);
   });
 });

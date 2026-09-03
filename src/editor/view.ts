@@ -278,6 +278,8 @@ export function mountEditor(root: HTMLElement, state: EditorState, fns: EditorVi
       row.textContent = `${field.key} `;
       if (field.kind === 'enum' && field.options) {
         const sel = document.createElement('select');
+        sel.name = field.key;
+        sel.dataset.field = field.key;
         for (const opt of field.options) {
           const o = document.createElement('option');
           o.value = opt;
@@ -292,6 +294,8 @@ export function mountEditor(root: HTMLElement, state: EditorState, fns: EditorVi
         row.append(sel);
       } else {
         const input = document.createElement('input');
+        input.name = field.key;
+        input.dataset.field = field.key;
         input.value = fieldValue(obj, field.key);
         input.style.width = '70%';
         input.onchange = () => {

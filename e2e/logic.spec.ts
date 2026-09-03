@@ -1012,6 +1012,21 @@ test('editor Rotate writes angle into the draft JSON', async ({ page }) => {
   await expect(page.locator('#edjson')).not.toContainText('"angle":');
 });
 
+test('editor property panel edits laser.reach into the draft JSON', async ({ page }) => {
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Level Editor' }).click();
+  await expect(page.locator('text=Level Editor')).toBeVisible();
+  await page.getByRole('button', { name: 'laser', exact: true }).click();
+  await page.getByRole('button', { name: 'Add at 12,6' }).click();
+  await expect(page.locator('#edjson')).toContainText('"type": "laser"');
+  await expect(page.locator('#edjson')).toContainText('"reach": 14');
+  const reach = page.locator('#edfields input[name="reach"]');
+  await expect(reach).toBeVisible();
+  await reach.fill('9');
+  await reach.blur();
+  await expect(page.locator('#edjson')).toContainText('"reach": 9');
+});
+
 test('local play: an already-connected pad claims a seat without a new connect event', async ({
   page,
 }) => {

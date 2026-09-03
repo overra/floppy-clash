@@ -470,6 +470,7 @@ async function createGpuRenderer(
           device.queue.submit([encoder.finish()]);
           void finishRead();
           renderer.lastGpuMs = performance.now() - t0;
+          if (opts.lighting) lighting?.apply(frame, renderer.lastGpuMs, true);
           return;
         } catch (err) {
           readbackEnabled = false;

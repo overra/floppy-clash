@@ -175,6 +175,13 @@ describe('PLAN §6 GPU e2e gate', () => {
     expect(spec).toContain('webgpu-copy');
     expect(spec).not.toMatch(/if \(canvas\.getContext\('webgpu'\)\)/);
   });
+
+  it('applies lighting on the framebuffer-copy return path', () => {
+    const src = readFileSync(resolve(process.cwd(), 'src/render/gpu/renderer.ts'), 'utf8');
+    const copyIdx = src.indexOf('encoder.copyTextureToBuffer');
+    const afterCopy = src.slice(copyIdx, copyIdx + 900);
+    expect(afterCopy).toContain('lighting?.apply');
+  });
 });
 
 describe('TypeGPU glow pass', () => {

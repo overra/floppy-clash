@@ -1,8 +1,9 @@
 /**
  * Optional 2D lighting (M5 stretch).
- * `@typegpu/radiance-cascades` + Jump Flood SDF (`createJumpFlood`) feed a GI pass
- * when a TypeGPU root is available. A cheaper emitter glow composite always runs
- * when the toggle is on and the last GPU frame stayed under the budget.
+ * CPU Jump Flood of layer-1 solids occludes lava / muzzle / explosion emitters
+ * (PLAN 4.11). When a TypeGPU root exists, `createJumpFlood` + radiance-cascades
+ * also run; a cheaper emitter glow composite always composites when the toggle
+ * is on and the last GPU frame stayed under the budget.
  * Real iGPU 4 ms / 500-group sign-off is hardware-only and is not asserted here.
  */
 import { createJumpFlood } from '@typegpu/sdf';
@@ -34,6 +35,131 @@ export function lightingEnabled(opts: LightingOpts, lastGpuMs: number): boolean 
   return opts.enabled && lastGpuMs < opts.budgetMs;
 }
 
+export type SolidRect = { minX: number; minY: number; maxX: number; maxY: number };
+
+export type JumpFloodField = {
+  dist: Float32Array;
+  width: number;
+  height: number;
+  bounds: { x: number; y: number; w: number; h: number };
+};
+
+/** Layer-1 groups are level solids (PLAN 4.11 Jump Flood input). */
+export function solidRectsFromFrame(frame: RenderFrame): SolidRect[] {
+  const out: SolidRect[] = [];
+  for (const g of frame.groups) {
+    if (g.layer !== 1) continue;
+    out.push({ minX: g.minX, minY: g.minY, maxX: g.maxX, maxY: g.maxY });
+  }
+  return out;
+}
+
+function pixelInside(solids: SolidRect[], wx: number, wy: number): boolean {
+  for (const s of solids) {
+    if (wx >= s.minX && wx <= s.maxX && wy >= s.minY && wy <= s.maxY) return true;
+  }
+  return false;
+}
+
+/**
+ * CPU Jump Flood of solids → signed distance (negative inside).
+ * This is the automated stand-in for `createJumpFlood` of the scene SDF.
+ */
+export function jumpFloodSdf(
+  solids: SolidRect[],
+  bounds: { x: number; y: number; w: number; h: number },
+  width: number,
+  height: number,
+): JumpFloodField {
+  const n = width * height;
+  const inside = new Uint8Array(n);
+  const seedX = new Int32Array(n);
+  const seedY = new Int32Array(n);
+  seedX.fill(-1);
+  seedY.fill(-1);
+  const wxAt = (i: number) => bounds.x + ((i + 0.5) / width) * bounds.w;
+  const wyAt = (j: number) => bounds.y + ((j + 0.5) / height) * bounds.h;
+  for (let j = 0; j < height; j++) {
+    for (let i = 0; i < width; i++) {
+      const idx = j * width + i;
+      inside[idx] = pixelInside(solids, wxAt(i), wyAt(j)) ? 1 : 0;
+    }
+  }
+  for (let j = 0; j < height; j++) {
+    for (let i = 0; i < width; i++) {
+      const idx = j * width + i;
+      const inn = inside[idx]!;
+      let boundary = i === 0 || j === 0 || i === width - 1 || j === height - 1;
+      if (!boundary) {
+        boundary =
+          inside[idx - 1] !== inn ||
+          inside[idx + 1] !== inn ||
+          inside[idx - width] !== inn ||
+          inside[idx + width] !== inn;
+      }
+      if (boundary) {
+        seedX[idx] = i;
+        seedY[idx] = j;
+      }
+    }
+  }
+  for (let step = Math.max(width, height) >> 1; step >= 1; step >>= 1) {
+    const nx = seedX.slice();
+    const ny = seedY.slice();
+    for (let j = 0; j < height; j++) {
+      for (let i = 0; i < width; i++) {
+        const idx = j * width + i;
+        let best = Infinity;
+        let bx = nx[idx]!;
+        let by = ny[idx]!;
+        if (bx >= 0) best = (i - bx) * (i - bx) + (j - by) * (j - by);
+        for (let oy = -step; oy <= step; oy += step) {
+          for (let ox = -step; ox <= step; ox += step) {
+            const ii = i + ox;
+            const jj = j + oy;
+            if (ii < 0 || jj < 0 || ii >= width || jj >= height) continue;
+            const sx = seedX[jj * width + ii]!;
+            const sy = seedY[jj * width + ii]!;
+            if (sx < 0) continue;
+            const d = (i - sx) * (i - sx) + (j - sy) * (j - sy);
+            if (d < best) {
+              best = d;
+              bx = sx;
+              by = sy;
+            }
+          }
+        }
+        nx[idx] = bx;
+        ny[idx] = by;
+      }
+    }
+    seedX.set(nx);
+    seedY.set(ny);
+  }
+  const dist = new Float32Array(n);
+  const cellW = bounds.w / width;
+  const cellH = bounds.h / height;
+  for (let j = 0; j < height; j++) {
+    for (let i = 0; i < width; i++) {
+      const idx = j * width + i;
+      const sx = seedX[idx]!;
+      const sy = seedY[idx]!;
+      const mag = sx >= 0 ? Math.hypot((i - sx) * cellW, (j - sy) * cellH) : 1e6;
+      dist[idx] = inside[idx] ? -mag : mag;
+    }
+  }
+  return { dist, width, height, bounds };
+}
+
+export function sampleJumpFlood(field: JumpFloodField, wx: number, wy: number): number {
+  const u = (wx - field.bounds.x) / field.bounds.w;
+  const v = (wy - field.bounds.y) / field.bounds.h;
+  if (u < 0 || v < 0 || u > 1 || v > 1) return 1e6;
+  const i = Math.min(field.width - 1, Math.max(0, Math.floor(u * field.width)));
+  const j = Math.min(field.height - 1, Math.max(0, Math.floor(v * field.height)));
+  return field.dist[j * field.width + i]!;
+}
+
 /** CPU reference for lava / muzzle / explosion falloff (also used when GPU GI is off). */
 export function emitterContribution(
   emitters: LightEmitter[],
@@ -48,6 +174,45 @@ export function emitterContribution(
     const t = 1 - Math.min(1, dist / Math.max(e.radius, 0.01));
     if (t <= 0) continue;
     const w = e.intensity * t * t;
+    r += e.r * w;
+    g += e.g * w;
+    b += e.b * w;
+  }
+  return { r: Math.min(1, r), g: Math.min(1, g), b: Math.min(1, b) };
+}
+
+/**
+ * Same falloff as `emitterContribution`, but rays that enter the solid SDF
+ * (Jump Flood of layer-1 groups) before reaching the emitter are dropped.
+ */
+export function occludedEmitterContribution(
+  field: JumpFloodField,
+  emitters: LightEmitter[],
+  wx: number,
+  wy: number,
+): { r: number; g: number; b: number } {
+  let r = 0,
+    g = 0,
+    b = 0;
+  for (const e of emitters) {
+    const dx = e.x - wx;
+    const dy = e.y - wy;
+    const dist = Math.hypot(dx, dy);
+    if (dist > e.radius) continue;
+    let blocked = false;
+    if (dist > 0.05) {
+      const steps = Math.max(8, Math.ceil(dist / 0.2));
+      for (let s = 1; s < steps; s++) {
+        const t = s / steps;
+        if (sampleJumpFlood(field, wx + dx * t, wy + dy * t) < -0.04) {
+          blocked = true;
+          break;
+        }
+      }
+    }
+    if (blocked) continue;
+    const fall = 1 - dist / Math.max(e.radius, 0.01);
+    const w = e.intensity * fall * fall;
     r += e.r * w;
     g += e.g * w;
     b += e.b * w;
@@ -170,11 +335,28 @@ function tryCreateGlow(root: TgpuRoot, format: GPUTextureFormat) {
   }
 }
 
+function tryCreateJfa(root: TgpuRoot) {
+  try {
+    return createJumpFlood({
+      root,
+      size: { width: 256, height: 144 },
+      classify: (coord, size) => {
+        'use gpu';
+        return coord.x > size.x / 4 && coord.x < (size.x * 3) / 4;
+      },
+      getSdf: (_c, _s, signedDist) => signedDist,
+      getColor: () => d.vec4f(1, 0.8, 0.4, 1),
+    });
+  } catch {
+    return null;
+  }
+}
+
 function tryCreateCascades(root: TgpuRoot): { run: () => void; destroy: () => void } | null {
   try {
     const dim = getCascadeDim(256, 144);
     void dim;
-    const runner = createRadianceCascades({
+    return createRadianceCascades({
       root,
       size: { width: 256, height: 144 },
       sdfResolution: { width: 256, height: 144 },
@@ -188,21 +370,6 @@ function tryCreateCascades(root: TgpuRoot): { run: () => void; destroy: () => vo
         return d.vec3f(1.2 * glow, 0.45 * glow, 0.15 * glow);
       },
     });
-    try {
-      createJumpFlood({
-        root,
-        size: { width: 256, height: 144 },
-        classify: (coord, size) => {
-          'use gpu';
-          return coord.x > size.x / 4 && coord.x < (size.x * 3) / 4;
-        },
-        getSdf: (_c, _s, signedDist) => signedDist,
-        getColor: () => d.vec4f(1, 0.8, 0.4, 1),
-      });
-    } catch {
-      /* JFA is optional when classify slots reject the JS fn */
-    }
-    return runner;
   } catch {
     return null;
   }
@@ -216,12 +383,18 @@ export function createLightingPass(
   canvas?: HTMLCanvasElement,
 ): LightingPass {
   const cascades = root ? tryCreateCascades(root) : null;
+  const jfa = root ? tryCreateJfa(root) : null;
   const glow = root ? tryCreateGlow(root, format as GPUTextureFormat) : null;
 
   return {
     kind: cascades ? 'cascades' : glow ? 'glow' : 'off',
     apply(frame, lastGpuMs, enabled) {
       if (!lightingEnabled({ enabled, budgetMs: LIGHTING_BUDGET_MS }, lastGpuMs)) return false;
+      try {
+        jfa?.run();
+      } catch {
+        /* JFA classify may reject on SwiftShader — glow still applies */
+      }
       try {
         cascades?.run();
       } catch {
@@ -272,6 +445,11 @@ export function createLightingPass(
     },
     destroy() {
       try {
+        jfa?.destroy();
+      } catch {
+        /* ignore */
+      }
+      try {
         cascades?.destroy();
       } catch {
         /* ignore */
@@ -279,7 +457,3 @@ export function createLightingPass(
     },
   };
 }
-
-void createJumpFlood;
-void createRadianceCascades;
-void getCascadeDim;
