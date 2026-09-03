@@ -14,10 +14,10 @@ export const tuning = {
   coyoteTicks: 5,
   jumpBufferTicks: 6,
   wallSlideMaxFall: 3,
-  wallJumpX: 7,
-  wallJumpY: 10,
+  wallJumpX: 6.5,
+  wallJumpY: 12,
   wallJumpLockTicks: 8,
-  wallDetectDistance: 0.42,
+  wallDetectDistance: 0.55,
   maxFallSpeed: 28,
   maxHorizontalSpeed: 40,
 

@@ -129,8 +129,11 @@ export function hazardsStep(world: World): void {
           }
           break;
         case HazardKind.Laser:
-          if (hz.armed && Math.abs(pt.y - ht.y) < 0.25 && pt.x > ht.x && pt.x < ht.x + (hz.param3 || 12)) {
-            kill(world, player, pt.x, pt.y);
+          if (hz.armed) {
+            const reach = hz.param3 || 14;
+            if (Math.abs(pt.y - ht.y) < 0.35 && pt.x > ht.x && pt.x < ht.x + reach) {
+              kill(world, player, pt.x, pt.y);
+            }
           }
           break;
         case HazardKind.Conveyor: {
@@ -157,8 +160,15 @@ export function hazardsStep(world: World): void {
           break;
         case HazardKind.MovingPlatform:
         case HazardKind.RotatingPlatform:
-          if (ctrl.grounded && dx < 2 && pt.y > ht.y && pt.y < ht.y + 1.3) {
+          if (ctrl.grounded && dx < 2.4 && pt.y > ht.y && pt.y < ht.y + 1.4) {
             player.add(StandingOn(hazard));
+            const pb = ctx.bodies.get(hazard);
+            const body = ctx.bodies.get(player);
+            if (pb && body) {
+              const pv = pb.getLinearVelocity();
+              const v = body.getLinearVelocity();
+              body.setLinearVelocity(new Vec2(v.x + pv.x * dt * 10, v.y + pv.y));
+            }
           }
           break;
         default:

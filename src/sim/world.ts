@@ -7,6 +7,8 @@ import { blankInputs, normalizeInput, type PlayerInput } from './input';
 import { loadLevel, spawnPlayer } from './level/loader';
 import type { LevelDef } from './level/schema';
 import { assignNetId, createBoxBody, registerBody } from './physics/bodies';
+import type { FixtureUserData } from './physics/categories';
+import { cloneTuning } from './tuning';
 import { mergeSettings, type MatchSettings } from './rules/settings';
 import { hashWorld, serializeWorld } from './snapshot';
 import { applyInputs } from './systems/applyInputs';
@@ -43,9 +45,16 @@ export type SimHandle = {
 export function createSimWorld(opts: CreateSimOptions): SimHandle {
   const settings = mergeSettings(opts.settings);
   const ecs = createWorld();
-  const physics = new PhysicsWorld({ gravity: { x: 0, y: -30 } });
+  const g = cloneTuning().gravity;
+  const physics = new PhysicsWorld({ gravity: { x: 0, y: -g } });
   const ctx = makeContext(ecs, physics, opts.level, opts.seed, settings);
   bindContext(ecs, ctx);
+  physics.on('begin-contact', (contact) => {
+    const a = contact.getFixtureA().getBody().getUserData() as FixtureUserData | undefined;
+    const b = contact.getFixtureB().getBody().getUserData() as FixtureUserData | undefined;
+    if (a?.kind === 'projectile') ctx.contactHits.add(a.entity);
+    if (b?.kind === 'projectile') ctx.contactHits.add(b.entity);
+  });
 
   ecs.add(
     RoundState({ phase: RoundPhase.Loading, ticks: 0, aliveMask: 0, lastKiller: -1, seed: opts.seed }),
@@ -82,6 +91,7 @@ export function createSimWorld(opts: CreateSimOptions): SimHandle {
 
   const step = (inputs?: PlayerInput[]): SimEvents => {
     ctx.events = [];
+    ctx.contactHits.clear();
     ctx.prevInputs = ctx.inputs.map((i) => ({ ...i }));
     ctx.inputs = (inputs ?? blankInputs(4)).map(normalizeInput);
     thinkBots(ecs);

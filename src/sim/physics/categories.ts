@@ -14,7 +14,7 @@ export const Mask = {
   Player: Category.Static | Category.Prop | Category.Player | Category.Ragdoll | Category.Weapon | Category.Projectile,
   Ragdoll: Category.Static | Category.Prop | Category.Player | Category.Ragdoll | Category.Weapon | Category.Projectile,
   Weapon: Category.Static | Category.Prop | Category.Player | Category.Ragdoll | Category.Weapon | Category.Projectile,
-  Projectile: Category.Static | Category.Prop | Category.Player | Category.Ragdoll | Category.Weapon,
+  Projectile: Category.Static | Category.Prop | Category.Ragdoll | Category.Weapon,
   Sensor: Category.Player | Category.Ragdoll | Category.Prop,
 } as const;
 

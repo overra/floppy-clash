@@ -2,6 +2,8 @@
 
 A 2–4 player couch physics brawler inspired by the *feel* of Landfall's Stick Fight — original name, art, audio, and levels. Stick figures punch, wall-jump, grab weapons that fall from the sky, and try to be the last one standing.
 
+![Floppy Clash](public/favicon.svg)
+
 ## Play
 
 ```bash
@@ -28,6 +30,12 @@ Pads only appear after you press a button. Keyboard/mouse is a development fallb
 ### Solo
 
 **Solo vs Bots** starts a match against three utility bots from the main menu.
+
+### Static hosting / PWA
+
+`npm run build` emits `dist/`. Deploy that folder to any static host (GitHub Pages, Netlify, nginx). The [pages workflow](.github/workflows/pages.yml) publishes `dist/` when this branch is merged to `main`. Install from the browser as a PWA (`public/manifest.webmanifest` + `sw.js`) for offline couch play.
+
+Until Pages is enabled on the repo, serve locally with `npm run preview`.
 
 ## Commands
 

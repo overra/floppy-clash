@@ -58,7 +58,7 @@ function spawnBullet(
       damage: def.projectile.damage,
       speed,
       bounces: def.projectile.bounce,
-      fuse: def.projectile.fuse,
+      fuse: def.projectile.kind === 'rocket' && def.projectile.fuse === 0 ? 180 : def.projectile.fuse,
       x,
       y,
       vx,
@@ -151,13 +151,11 @@ export function weapons(world: World): void {
           weaponEntity.remove(Loose);
           weaponEntity.add(Held(), HeldBy(entity));
           const def = weaponByIndex(wep.defId);
-          weaponEntity.set(Weapon, {
-            ...wep,
-            ammo: ctx.tuning.refillOnPickup ? def.ammo : wep.ammo,
-            thrown: false,
-            thrownHit: false,
-            pickupCooldown: 0,
-          });
+          // Mutate the updateEach view so Koota writeback keeps the refill.
+          wep.ammo = ctx.tuning.refillOnPickup ? def.ammo : wep.ammo;
+          wep.thrown = false;
+          wep.thrownHit = false;
+          wep.pickupCooldown = 0;
           const body = ctx.bodies.get(weaponEntity);
           body?.setActive(false);
           held = weaponEntity;

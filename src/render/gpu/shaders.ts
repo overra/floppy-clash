@@ -1,21 +1,40 @@
-import { sdCapsule, sdDisk } from '../sdf/primitives';
+import tgpu from 'typegpu';
+import * as d from 'typegpu/data';
+import { sdDisk, sdLine, opSmoothUnion } from '@typegpu/sdf';
+import { primitiveSdf, type Primitive } from '../sdf/primitives';
 
-/** CPU-callable SDF used by tests and as the GPU shader's reference. */
-export function primitiveSdfGpu(
-  kind: number,
-  ax: number,
-  ay: number,
-  bx: number,
-  by: number,
-  r: number,
-  px: number,
-  py: number,
-): number {
-  if (kind === 0) return sdDisk({ x: px, y: py }, { x: ax, y: ay }, r);
-  if (kind === 1) return sdCapsule({ x: px, y: py }, { x: ax, y: ay }, { x: bx, y: by }, r);
+/** GPU-side primitive layout (TypeGPU `'use gpu'` + `@typegpu/sdf`). */
+export const GpuPrimitive = d.struct({
+  kind: d.u32,
+  ax: d.f32,
+  ay: d.f32,
+  bx: d.f32,
+  by: d.f32,
+  r: d.f32,
+});
+
+export const primitiveSdfGpu = tgpu.fn([GpuPrimitive, d.vec2f], d.f32)((prim, p) => {
+  'use gpu';
+  if (prim.kind === 0) return sdDisk(d.vec2f(p.x - prim.ax, p.y - prim.ay), prim.r);
+  if (prim.kind === 1) return sdLine(p, d.vec2f(prim.ax, prim.ay), d.vec2f(prim.bx, prim.by)) - prim.r;
   return 1e9;
+});
+
+export const coverageGpu = tgpu.fn([d.f32], d.f32)((dist) => {
+  'use gpu';
+  return dist < 0 ? 1 : 0;
+});
+
+export const smoothUnionGpu = tgpu.fn([d.f32, d.f32, d.f32], d.f32)((a, b, k) => {
+  'use gpu';
+  return opSmoothUnion(a, b, k);
+});
+
+/** CPU reference used by tests and the Canvas path — same math as the `'use gpu'` fns. */
+export function primitiveSdfCpu(prim: Primitive, px: number, py: number): number {
+  return primitiveSdf(prim, { x: px, y: py });
 }
 
-export function coverageGpu(dist: number): number {
-  return dist < 0 ? 1 : 0;
-}
+void primitiveSdfGpu;
+void coverageGpu;
+void smoothUnionGpu;

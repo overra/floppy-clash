@@ -1,6 +1,7 @@
-import { createQuery, Not, type World } from 'koota';
+import { createQuery, type World } from 'koota';
 import { emit, getContext } from '../context';
 import { Crown, Dead, MatchState, Player, RoundPhase, RoundState } from '../traits';
+import { nextMatchLevel, respawnPlayers } from './reset';
 
 const playersQ = createQuery(Player);
 
@@ -18,6 +19,10 @@ export function rules(world: World): void {
   round.ticks += 1;
 
   if (round.phase === RoundPhase.Loading) {
+    if (round.ticks <= 1 && match.round > 0) {
+      nextMatchLevel(world);
+      respawnPlayers(world);
+    }
     round.phase = RoundPhase.Countdown;
     round.ticks = 0;
     emit(world, { type: 'round-phase', phase: 'countdown' });
@@ -28,20 +33,24 @@ export function rules(world: World): void {
       emit(world, { type: 'round-phase', phase: 'fighting' });
     }
   } else if (round.phase === RoundPhase.Fighting) {
-    if (living.length <= 1) {
+    if (living.length <= 1 && ctx.players.length > 1) {
       round.phase = RoundPhase.LastKill;
       round.ticks = 0;
       if (living.length === 1) {
         const slot = living[0]!;
-        const key = (`wins${slot}` as 'wins0' | 'wins1' | 'wins2' | 'wins3');
+        const key = `wins${slot}` as 'wins0' | 'wins1' | 'wins2' | 'wins3';
         match[key] += 1;
         emit(world, { type: 'score', slot, wins: match[key] });
         world.query(Player).updateEach(([p], e) => {
           if (p.slot === slot) e.add(Crown());
           else if (e.has(Crown)) e.remove(Crown);
         });
+        if (match.firstTo > 0 && match[key] >= match.firstTo) {
+          round.phase = RoundPhase.MatchOver;
+          emit(world, { type: 'round-phase', phase: 'match-over' });
+        }
       }
-      emit(world, { type: 'round-phase', phase: 'last-kill' });
+      if (round.phase === RoundPhase.LastKill) emit(world, { type: 'round-phase', phase: 'last-kill' });
     }
   } else if (round.phase === RoundPhase.LastKill) {
     if (round.ticks >= ctx.tuning.slowmoTicks) {
@@ -60,7 +69,6 @@ export function rules(world: World): void {
 
   world.set(RoundState, round);
   world.set(MatchState, match);
-  void Not;
 }
 
 export function stepScaleForPhase(world: World): number {

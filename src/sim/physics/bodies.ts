@@ -152,7 +152,10 @@ export function createPlayerCapsule(
   });
   body.setUserData(userData);
   registerBody(world, entity, body);
-  entity.add(Transform({ x, y, angle: 0 }), PrevTransform({ x, y, angle: 0 }));
+  if (!entity.get(Transform)) entity.add(Transform({ x, y, angle: 0 }));
+  else entity.set(Transform, { x, y, angle: 0 });
+  if (!entity.get(PrevTransform)) entity.add(PrevTransform({ x, y, angle: 0 }));
+  else entity.set(PrevTransform, { x, y, angle: 0 });
   return body;
 }
 

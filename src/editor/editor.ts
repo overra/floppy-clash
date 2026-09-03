@@ -81,6 +81,44 @@ export function addObject(state: EditorState, x: number, y: number): void {
   state.selected = state.level.objects.length - 1;
 }
 
+export function moveSelected(state: EditorState, x: number, y: number): void {
+  const obj = state.level.objects[state.selected];
+  if (!obj) return;
+  obj.x = snap(x, state.grid);
+  obj.y = snap(y, state.grid);
+}
+
+export function resizeSelected(state: EditorState, w: number, h: number): void {
+  const obj = state.level.objects[state.selected];
+  if (!obj) return;
+  obj.w = Math.max(state.grid, snap(w, state.grid));
+  obj.h = Math.max(state.grid, snap(h, state.grid));
+}
+
+export function rotateSelected(state: EditorState, delta: number): void {
+  const obj = state.level.objects[state.selected];
+  if (!obj) return;
+  obj.angle = (obj.angle ?? 0) + delta;
+}
+
+export function selectAt(state: EditorState, x: number, y: number): number {
+  let best = -1;
+  let bestD = 1.2;
+  state.level.objects.forEach((obj, i) => {
+    const d = Math.hypot(obj.x - x, obj.y - y);
+    if (d < bestD) {
+      bestD = d;
+      best = i;
+    }
+  });
+  if (best >= 0) state.selected = best;
+  return best;
+}
+
+export function hitTest(state: EditorState, x: number, y: number): number {
+  return selectAt(state, x, y);
+}
+
 export function exportLevel(state: EditorState): string {
   return JSON.stringify(parseLevel(state.level), null, 2);
 }

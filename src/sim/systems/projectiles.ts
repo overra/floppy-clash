@@ -186,6 +186,57 @@ export function projectiles(world: World): void {
       proj.x += proj.vx * dt;
       proj.y += proj.vy * dt;
     }
+    if (proj.ownerGrace > 0) proj.ownerGrace -= 1;
+
+    const explosive =
+      proj.kind === ProjectileKind.Grenade ||
+      proj.kind === ProjectileKind.Rocket ||
+      proj.kind === ProjectileKind.BurstInto ||
+      proj.kind === ProjectileKind.Field;
+    if (explosive && proj.ownerGrace <= 0) {
+      let hitSomething = false;
+      world.query(Player, Transform, Not(Dead)).updateEach(([_pl, pt], other) => {
+        if (other === owner) return;
+        const ob = ctx.bodies.get(other);
+        const ox = ob?.getPosition().x ?? pt.x;
+        const oy = ob?.getPosition().y ?? pt.y;
+        const reach = 0.85 + (def.projectile.radius > 1 ? 0.5 : 0);
+        if (Math.hypot(ox - proj.x, oy - proj.y) < reach) {
+          hitSomething = true;
+        }
+      });
+      if (!hitSomething && body) {
+        const ahead = raycastClosest(
+          world,
+          proj.x,
+          proj.y,
+          proj.x + proj.vx * dt * 2,
+          proj.y + proj.vy * dt * 2,
+          (h) => h.entity === owner || h.entity === entity,
+        );
+        if (ahead && ahead.fraction < 1) hitSomething = true;
+      }
+      if (ctx.contactHits.has(entity as unknown as number)) hitSomething = true;
+      const contactExplode =
+        proj.kind === ProjectileKind.Rocket ||
+        proj.kind === ProjectileKind.BurstInto ||
+        proj.kind === ProjectileKind.Field ||
+        (proj.kind === ProjectileKind.Grenade && proj.fuse <= 0);
+      if (hitSomething && contactExplode) {
+        if (proj.kind === ProjectileKind.BurstInto) {
+          const burst = def.projectile.burstInto === 'snake' ? 'snake' : 'spike';
+          const count = def.projectile.burstCount ?? 4;
+          for (let i = 0; i < count; i++) {
+            const a = (i / count) * Math.PI * 2;
+            if (burst === 'snake') spawnSnake(world, proj.x, proj.y, owner, false, false);
+            else spawnBulletLike(world, proj.x, proj.y, Math.cos(a) * 18, Math.sin(a) * 18, 10, owner);
+          }
+        }
+        explode(world, proj.x, proj.y, proj.defId, owner);
+        ctx.pendingDestroy.push(entity);
+        return;
+      }
+    }
 
     if (proj.fuse > 0) {
       proj.fuse -= 1;

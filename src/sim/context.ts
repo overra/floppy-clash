@@ -25,6 +25,8 @@ export type SimContext = {
   pendingDestroy: Entity[];
   tick: number;
   fireCd: Map<number, number>;
+  contactHits: Set<number>;
+  lastPhysicsMs: number;
 };
 
 const contexts = new WeakMap<World, SimContext>();
@@ -67,5 +69,7 @@ export function makeContext(
     pendingDestroy: [],
     tick: 0,
     fireCd: new Map(),
+    contactHits: new Set(),
+    lastPhysicsMs: 0,
   };
 }

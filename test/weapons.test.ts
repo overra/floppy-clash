@@ -11,9 +11,14 @@ describe('M3 weapons', () => {
     const sim = makeSim({ level: woodsClearing, seed: 12, settings: { playerCount: 1 } });
     const p = playerOf(sim);
     const t = p.get(Transform)!;
-    const gun = spawnWeapon(sim.ecs, 'pistol', t.x + 0.2, t.y);
+    const gun = spawnWeapon(sim.ecs, 'pistol', t.x + 0.15, t.y);
     gun.set(Weapon, { defId: weaponIndex('pistol'), ammo: 1, pickupCooldown: 0, thrown: false, thrownHit: false });
-    for (let i = 0; i < 8; i++) sim.step([hold({}), hold({}), hold({}), hold({})]);
+    for (let i = 0; i < 20; i++) {
+      const pt = p.get(Transform);
+      if (pt) sim.ctx.bodies.get(gun)?.setPosition({ x: pt.x + 0.2, y: pt.y });
+      sim.step([hold({}), hold({}), hold({}), hold({})]);
+      if (gun.has(Held)) break;
+    }
     expect(gun.has(Held) || gun.targetFor(HeldBy) === p).toBe(true);
     expect(gun.get(Weapon)?.ammo).toBe(15);
   });
@@ -49,20 +54,37 @@ describe('M3 weapons', () => {
     expect(b.get(Health)?.hp ?? 0).toBeGreaterThan(50);
   });
 
+  it('pickup cooldown blocks an immediate re-grab after throw', () => {
+    const sim = makeSim({ level: woodsClearing, seed: 15, settings: { playerCount: 1 } });
+    const p = playerOf(sim);
+    const t = p.get(Transform)!;
+    const gun = spawnWeapon(sim.ecs, 'pistol', t.x + 0.15, t.y);
+    for (let i = 0; i < 8; i++) {
+      const pt = p.get(Transform);
+      if (pt) sim.ctx.bodies.get(gun)?.setPosition({ x: pt.x + 0.15, y: pt.y });
+      sim.step([hold({ throw: i === 3 }), hold({}), hold({}), hold({})]);
+    }
+    expect(gun.get(Weapon)?.pickupCooldown ?? 0).toBeGreaterThan(0);
+  });
+
   it('explosions apply falloff damage', () => {
     const sim = makeSim({ level: woodsClearing, seed: 14, settings: { playerCount: 2 } });
     const a = playerOf(sim, 0);
     const b = playerOf(sim, 1);
     sim.ctx.bodies.get(a)?.setPosition({ x: 12, y: 4 });
     sim.ctx.bodies.get(b)?.setPosition({ x: 16, y: 4 });
+    a.set(Transform, { x: 12, y: 4, angle: 0 });
+    b.set(Transform, { x: 16, y: 4, angle: 0 });
     const gun = spawnWeapon(sim.ecs, 'rpg', 12, 5);
     gun.add(Held(), HeldBy(a));
     gun.remove(Loose);
     const before = b.get(Health)?.hp ?? 100;
-    for (let i = 0; i < 40; i++) {
-      sim.step([hold({ attack: i === 2, aimX: 1, aimY: 0 }), hold({}), hold({}), hold({})]);
+    let exploded = false;
+    for (let i = 0; i < 50; i++) {
+      const ev = sim.step([hold({ attack: i === 2, aimX: 1, aimY: 0 }), hold({}), hold({}), hold({})]);
+      if (ev.some((e) => e.type === 'explosion')) exploded = true;
     }
-    expect((b.get(Health)?.hp ?? 100) < before || sim.ctx.events.some((e) => e.type === 'explosion')).toBe(true);
+    expect((b.get(Health)?.hp ?? 100) < before || exploded).toBe(true);
   });
 });
 

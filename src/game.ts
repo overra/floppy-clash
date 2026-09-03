@@ -16,18 +16,8 @@ import { createSimWorld, type SimHandle } from './sim/world';
 import { tuning } from './sim/tuning';
 import { createMenuState, renderMenus } from './ui/menus';
 import { loadSettings, saveSettings } from './ui/settingsStore';
-import {
-  addObject,
-  createEditorState,
-  exportLevel,
-  fromHash,
-  PALETTE,
-  redo,
-  saveLibrary,
-  shareHash,
-  undo,
-  type EditorState,
-} from './editor/editor';
+import { createEditorState, fromHash, type EditorState } from './editor/editor';
+import { mountEditor } from './editor/view';
 import { createLocalLoopback } from './net/transport';
 import type { LevelDef } from './sim/level/schema';
 
@@ -128,95 +118,14 @@ export function createGame(root: HTMLElement): Game {
       if (loaded) editor.level = loaded;
     }
     menus.screen = 'editor';
-    menusEl.innerHTML = '';
-    const wrap = document.createElement('div');
-    wrap.style.cssText =
-      'position:absolute;inset:0;background:#111318;color:#fff;padding:16px;overflow:auto;pointer-events:auto';
-    wrap.innerHTML = `<h2>Level Editor</h2><p>Palette, undo/redo, JSON export, URL share, IndexedDB library.</p>`;
-    const pal = document.createElement('div');
-    for (const t of PALETTE) {
-      const b = document.createElement('button');
-      b.textContent = t;
-      b.onclick = () => {
-        if (editor) editor.tool = t;
-      };
-      pal.append(b);
-    }
-    wrap.append(pal);
-    wrap.append(
-      button('Add at 12,6', () => {
-        if (!editor) return;
-        addObject(editor, 12, 6);
-        paint();
-      }),
-    );
-    wrap.append(
-      button('Undo', () => {
-        if (editor) {
-          undo(editor);
-          paint();
-        }
-      }),
-    );
-    wrap.append(
-      button('Redo', () => {
-        if (editor) {
-          redo(editor);
-          paint();
-        }
-      }),
-    );
-    wrap.append(
-      button('Export', () => {
-        if (!editor) return;
-        const blob = new Blob([exportLevel(editor)], { type: 'application/json' });
-        const a = document.createElement('a');
-        a.href = URL.createObjectURL(blob);
-        a.download = `${editor.level.id}.json`;
-        a.click();
-      }),
-    );
-    wrap.append(
-      button('Share URL', () => {
-        if (!editor) return;
-        location.hash = `l=${shareHash(editor)}`;
-      }),
-    );
-    wrap.append(
-      button('Save library', () => {
-        if (editor) void saveLibrary(editor.level);
-      }),
-    );
-    wrap.append(
-      button('Playtest', () => {
-        if (!editor) return;
-        startSim(editor.level, { playerCount: 1, bots: 1 });
-      }),
-    );
-    wrap.append(
-      button('Back', () => {
+    mountEditor(menusEl, editor, {
+      playtest: (level) => startSim(level, { playerCount: 1, bots: 1 }),
+      back: () => {
         menus.screen = 'menu';
         editor = null;
         show();
-      }),
-    );
-    const pre = document.createElement('pre');
-    pre.id = 'edjson';
-    wrap.append(pre);
-    menusEl.append(wrap);
-    function paint() {
-      const el = wrap.querySelector('#edjson');
-      if (el && editor) el.textContent = exportLevel(editor);
-    }
-    paint();
-  }
-
-  function button(label: string, fn: () => void): HTMLButtonElement {
-    const b = document.createElement('button');
-    b.textContent = label;
-    b.onclick = fn;
-    b.style.margin = '4px';
-    return b;
+      },
+    });
   }
 
   function beginMatch() {

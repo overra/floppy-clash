@@ -21,6 +21,17 @@ describe('M4 hazards', () => {
     }).not.toThrow();
   });
 
+  it('does not tunnel a player through a kinematic crusher in 60 Hz', () => {
+    const sim = makeSim({ level: getLevel('test-crusher'), seed: 24, settings: { playerCount: 1 } });
+    const p = playerOf(sim);
+    const start = p.get(Transform);
+    for (let i = 0; i < 180; i++) sim.step([hold({}), hold({}), hold({}), hold({})]);
+    const end = p.get(Transform);
+    expect(Number.isFinite(end?.x)).toBe(true);
+    expect(Number.isFinite(end?.y)).toBe(true);
+    expect(Math.abs((end?.x ?? 0) - (start?.x ?? 0))).toBeLessThan(40);
+  });
+
   it('lava damages then respects cooldown', () => {
     const sim = makeSim({ level: getLevel('test-lava'), seed: 23, settings: { playerCount: 1 } });
     const p = playerOf(sim);

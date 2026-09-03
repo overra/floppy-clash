@@ -16,10 +16,8 @@ const applyOne = ([player, controller, aim]: [
   if (!raw) return;
   const input = normalizeInput(raw);
   const t = ctx.tuning;
-  const aimLen = Math.hypot(input.aimX, input.aimY);
-  const stickActive = aimLen > 0.01 && (Math.abs(input.aimX) > 0.001 || Math.abs(input.aimY) > 0.001);
-  // aim is already normalized by normalizeInput; treat as active unless it's the fallback default and move says otherwise
-  if (Math.abs(raw.aimX) + Math.abs(raw.aimY) > 0.01) {
+  const stickActive = Math.hypot(raw.aimX, raw.aimY) > 0.01;
+  if (stickActive) {
     aim.x = input.aimX;
     aim.y = input.aimY;
     aim.holdTicks = t.aimHoldAtRestTicks;
@@ -31,7 +29,6 @@ const applyOne = ([player, controller, aim]: [
     aim.x = controller.facing;
     aim.y = 0;
   }
-  void stickActive;
 };
 
 export function applyInputs(world: World): void {

@@ -143,6 +143,7 @@ export const RoundPhase = {
   Fighting: 2,
   LastKill: 3,
   Scoreboard: 4,
+  MatchOver: 5,
 } as const;
 
 export const HazardKind = {

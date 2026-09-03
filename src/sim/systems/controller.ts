@@ -2,10 +2,16 @@ import { createQuery, type World } from 'koota';
 import { Vec2 } from 'planck';
 import { getContext } from '../context';
 import { rising } from '../input';
-import { raycastClosest } from '../physics/queries';
+import { raycastClosest, type RayHit } from '../physics/queries';
 import { Aim, Controller, Dead, Player, Status } from '../traits';
 
 const movers = createQuery(Player, Controller, Aim);
+
+function ignoreMover(self: number, hit: RayHit): boolean {
+  if (hit.entity === self) return true;
+  if (hit.kind === 'sensor' || hit.kind === 'projectile') return true;
+  return false;
+}
 
 export function controller(world: World): void {
   const ctx = getContext(world);
@@ -30,19 +36,24 @@ export function controller(world: World): void {
     let vx = vel.x;
     let vy = vel.y;
     const pos = body.getPosition();
+    const skip = (h: RayHit) => ignoreMover(entity as unknown as number, h);
 
-    const leftWall = raycastClosest(world, pos.x, pos.y, pos.x - t.wallDetectDistance, pos.y, (h) => h.entity === entity);
-    const rightWall = raycastClosest(world, pos.x, pos.y, pos.x + t.wallDetectDistance, pos.y, (h) => h.entity === entity);
-    const ground = raycastClosest(world, pos.x, pos.y - t.height * 0.35, pos.x, pos.y - t.height * 0.55, (h) => h.entity === entity);
-    ctrl.grounded = !!ground && (ground.ny > 0.4 || pos.y > ground.y);
-    if (!ctrl.grounded && Math.abs(vy) < 0.4 && ground) ctrl.grounded = true;
+    const foot = raycastClosest(world, pos.x, pos.y, pos.x, pos.y - t.height * 0.52 - 0.1, skip);
+    ctrl.grounded = !!foot && foot.ny > 0.55;
+
+    const leftWall = raycastClosest(world, pos.x, pos.y + 0.15, pos.x - t.wallDetectDistance, pos.y + 0.15, skip);
+    const rightWall = raycastClosest(world, pos.x, pos.y + 0.15, pos.x + t.wallDetectDistance, pos.y + 0.15, skip);
+    const leftHit = !!leftWall && Math.abs(leftWall.nx) > 0.35;
+    const rightHit = !!rightWall && Math.abs(rightWall.nx) > 0.35;
 
     ctrl.wallDir = 0;
     if (!ctrl.grounded) {
-      if (leftWall && input.moveX < -0.2) ctrl.wallDir = -1;
-      if (rightWall && input.moveX > 0.2) ctrl.wallDir = 1;
+      if (leftHit && input.moveX < -0.2) ctrl.wallDir = -1;
+      if (rightHit && input.moveX > 0.2) ctrl.wallDir = 1;
     }
-    ctrl.wallSliding = ctrl.wallDir !== 0;
+    const wantSlide = ctrl.wallDir !== 0;
+    const becameSlide = wantSlide && !ctrl.wallSliding;
+    ctrl.wallSliding = wantSlide;
     if (ctrl.wallSliding && vy < -t.wallSlideMaxFall) vy = -t.wallSlideMaxFall;
 
     if (ctrl.grounded) ctrl.coyote = t.coyoteTicks;
@@ -50,6 +61,11 @@ export function controller(world: World): void {
 
     if (rising(prev?.jump ?? false, input.jump)) ctrl.jumpBuffer = t.jumpBufferTicks;
     else if (ctrl.jumpBuffer > 0) ctrl.jumpBuffer -= 1;
+
+    // One held-jump wall-jump per new slide contact (climbing).
+    if (becameSlide && input.jump && ctrl.lockTicks === 0 && ctrl.jumpBuffer <= 0) {
+      ctrl.jumpBuffer = 1;
+    }
 
     ctrl.ducking = input.down && ctrl.grounded;
     const speed = t.runSpeed * (ctrl.ducking ? t.duckSpeedScale : 1) * (slowed ? 0.45 : 1) * (glued ? 0.15 : 1);

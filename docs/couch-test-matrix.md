@@ -4,7 +4,7 @@ Record results before a public couch release. v1 needs two or more pads.
 
 | Browser | Xbox | DualSense | Switch Pro | Keyboard fallback |
 | --- | --- | --- | --- | --- |
-| Chrome | | | | dev only |
+| Chrome | pending device | pending device | pending device | pass (e2e/logic) |
 | Edge | | | | dev only |
 | Firefox | | | | dev only |
 | Safari | | | | needs a page gesture first |

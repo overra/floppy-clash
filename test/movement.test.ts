@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { gymLevel } from '../src/levels/gym';
+import { gymLevel, runTrack } from '../src/levels/gym';
 import { Controller, Transform } from '../src/sim/traits';
 import { hold, makeSim, playerOf, pos, stepMany } from './helpers';
 
@@ -36,27 +36,32 @@ describe('M1 movement', () => {
   });
 
   it('climbs a 6-tile shaft in <= 4 wall jumps', () => {
-    const sim = makeSim({ level: gymLevel, seed: 3 });
+    const sim = makeSim({ level: gymLevel, seed: 3, settings: { playerCount: 1 } });
     const e = playerOf(sim);
-    e.get(Transform);
     const body = sim.ctx.bodies.get(e);
-    body?.setPosition({ x: 5, y: 3.2 });
-    let jumps = 0;
-    let prevJump = false;
-    for (let i = 0; i < 240; i++) {
-      const input = hold({ moveX: -1, jump: i % 12 < 3, aimX: -1, aimY: 0 });
-      if (input.jump && !prevJump) jumps += 1;
-      prevJump = input.jump;
-      sim.step([input, hold({}), hold({}), hold({})]);
-      if ((e.get(Transform)?.y ?? 0) >= 9) break;
+    body?.setPosition({ x: 3.2, y: 3.2 });
+    body?.setLinearVelocity({ x: 0, y: 0 });
+    let wallJumps = 0;
+    let prevLock = 0;
+    for (let i = 0; i < 300; i++) {
+      const ctrl = e.get(Controller);
+      const sliding = ctrl?.wallSliding ?? false;
+      const jump = sliding || i < 8;
+      const lock = ctrl?.lockTicks ?? 0;
+      if (lock > prevLock) wallJumps += 1;
+      prevLock = lock;
+      sim.step([hold({ moveX: -1, jump, aimX: -1, aimY: 0.2 }), hold({}), hold({}), hold({})]);
+      if ((e.get(Transform)?.y ?? 0) >= 8.5) break;
     }
     expect(e.get(Transform)?.y ?? 0).toBeGreaterThanOrEqual(8.5);
-    expect(jumps).toBeLessThanOrEqual(24);
+    expect(wallJumps).toBeLessThanOrEqual(4);
   });
 
   it('runs ~30 m in about 4 seconds', () => {
-    const sim = makeSim({ seed: 4 });
-    stepMany(sim, 20);
+    const sim = makeSim({ level: runTrack, seed: 4, settings: { playerCount: 1 } });
+    const e = playerOf(sim);
+    sim.ctx.bodies.get(e)?.setPosition({ x: 4, y: 3.2 });
+    stepMany(sim, 40);
     const start = pos(sim).x;
     stepMany(sim, 240, hold({ moveX: 1 }));
     const dist = pos(sim).x - start;

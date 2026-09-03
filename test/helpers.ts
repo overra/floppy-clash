@@ -1,4 +1,5 @@
-import { gymLevel } from '../src/levels/gym';
+import { universe } from 'koota';
+import { gymLevel, runTrack } from '../src/levels/gym';
 import { woodsClearing } from '../src/levels/handauthored';
 import { getLevel } from '../src/levels/catalog';
 import { blankInputs, type PlayerInput } from '../src/sim/input';
@@ -6,6 +7,7 @@ import { createSimWorld, type CreateSimOptions, type SimHandle } from '../src/si
 import { Controller, Health, Player, Transform } from '../src/sim/traits';
 
 export function makeSim(partial?: Partial<CreateSimOptions>): SimHandle {
+  universe.reset();
   return createSimWorld({
     level: partial?.level ?? gymLevel,
     seed: partial?.seed ?? 1,
@@ -47,4 +49,4 @@ export function stepMany(sim: SimHandle, n: number, input: PlayerInput | PlayerI
   }
 }
 
-export { gymLevel, woodsClearing, getLevel };
+export { gymLevel, runTrack, woodsClearing, getLevel };

@@ -1,5 +1,6 @@
 import type { Entity, World } from 'koota';
 import { getContext } from '../context';
+import { RevoluteJoint } from 'planck';
 import { assignNetId, createBoxBody, createCircleBody, createPlayerCapsule, registerBody } from '../physics/bodies';
 import { spawnWeapon } from '../systems/weapons';
 import {
@@ -129,18 +130,32 @@ function spawnObject(world: World, obj: LevelObject): Entity {
     entity.add(Static());
   } else if (obj.type === 'chain') {
     const links = obj.links ?? 5;
-    let prev = entity;
+    entity.add(Static(), Destructible({ hp: 40, maxHp: 40 }));
+    const anchor = createBoxBody(ctx.physics, entity, 'solid', obj.x, obj.y, 0.1, 0.1, 'static');
+    registerBody(world, entity, anchor);
+    let prevBody = anchor;
     for (let i = 0; i < links; i++) {
-      const link = world.spawn(Transform({ x: obj.x, y: obj.y - i * 0.35, angle: 0 }), Hazard({ kind: HazardKind.Chain, param0: i, param1: 0, param2: 0, param3: 0, hp: 20, armed: 1 }));
+      const link = world.spawn(
+        Transform({ x: obj.x, y: obj.y - (i + 1) * 0.35, angle: 0 }),
+        Hazard({ kind: HazardKind.Chain, param0: i, param1: 0, param2: 0, param3: 0, hp: 20, armed: 1 }),
+        Destructible({ hp: 20, maxHp: 20 }),
+      );
       assignNetId(world, link);
-      const body = createBoxBody(ctx.physics, link, 'prop', obj.x, obj.y - i * 0.35, 0.08, 0.16, 'dynamic', {
+      const body = createBoxBody(ctx.physics, link, 'prop', obj.x, obj.y - (i + 1) * 0.35, 0.08, 0.16, 'dynamic', {
         density: 0.4,
         friction: 0.3,
         fixedRotation: false,
       });
       registerBody(world, link, body);
-      void prev;
-      prev = link;
+      ctx.physics.createJoint(
+        new RevoluteJoint(
+          { collideConnected: false, enableLimit: true, lowerAngle: -0.8, upperAngle: 0.8 },
+          prevBody,
+          body,
+          { x: obj.x, y: obj.y - i * 0.35 },
+        ),
+      );
+      prevBody = body;
     }
   }
   return entity;

@@ -73,7 +73,21 @@ export function renderMenus(root: HTMLElement, state: MenuState, actions: Record
     card.innerHTML = `<h2>Settings</h2>
       <label>HP <input id="hp" type="number" value="${state.maxHp}"></label><br/>
       <label>First to <input id="ft" type="number" value="${state.firstTo}"></label><br/>
-      <label>Bots <input id="bots" type="number" value="${state.bots}"></label>`;
+      <label>Bots <input id="bots" type="number" value="${state.bots}"></label><br/>
+      <label>Show wins <input id="wins" type="checkbox" checked></label><br/>
+      <label>Haptics <input id="hap" type="checkbox" checked></label><br/>
+      <label>Colorblind palette <input id="cb" type="checkbox"></label><br/>
+      <label>Reduce shake <input id="rs" type="checkbox"></label><br/>
+      <label>Reduce blood <input id="rb" type="checkbox"></label><br/>
+      <label>2D lighting (stretch) <input id="lit" type="checkbox"></label><br/>
+      <label>Renderer
+        <select id="ren">
+          <option value="auto">Auto</option>
+          <option value="gpu">SDF / WebGPU</option>
+          <option value="canvas">Canvas</option>
+        </select>
+      </label>
+      <p style="color:#9aa3b2">Weapon and level toggles apply from the host; per-pad remap is offered on non-standard mappings.</p>`;
     card.append(btn('Save', () => {
       state.maxHp = Number((card.querySelector('#hp') as HTMLInputElement).value);
       state.firstTo = Number((card.querySelector('#ft') as HTMLInputElement).value);

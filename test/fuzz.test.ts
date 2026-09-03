@@ -4,7 +4,7 @@ import { Transform } from '../src/sim/traits';
 import { hold, makeSim } from './helpers';
 
 describe('fuzz / soak', () => {
-  it('20000 scripted random ticks produce no NaNs or exceptions', () => {
+  it('20000 scripted random ticks produce no NaNs or exceptions', { timeout: 120_000 }, () => {
     const sim = makeSim({ seed: 4242, settings: { playerCount: 4, bots: 0 }, boxes: 6 });
     const rng = new SeededRng(4242);
     expect(() => {

@@ -12,6 +12,7 @@ export type UserSettings = {
   renderer: 'auto' | 'gpu' | 'canvas';
   sfx: number;
   music: number;
+  lighting: boolean;
 };
 
 const KEY = 'floppy-clash.settings';
@@ -30,6 +31,7 @@ export const DEFAULT_USER_SETTINGS: UserSettings = {
   renderer: 'auto',
   sfx: 0.8,
   music: 0.25,
+  lighting: false,
 };
 
 export function loadSettings(): UserSettings {
