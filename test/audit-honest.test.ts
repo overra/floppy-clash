@@ -875,24 +875,24 @@ describe('honest PLAN stand-ins (no pin/pred OR, no scoreboard shrink)', () => {
       id: 'sweep-lava-prev',
       objects: [
         { type: 'solid' as const, x: 12, y: 1, w: 24, h: 2 },
-        { type: 'lava' as const, x: 16, y: 1.6, w: 8, h: 1.2, rate: 0 },
+        // High bed so the skip is not jammed into the floor solid.
+        { type: 'lava' as const, x: 16, y: 6, w: 8, h: 1.2, rate: 0 },
       ],
     };
     const sim = makeSim({ level, seed: 166, settings: { playerCount: 1 } });
     const p = playerOf(sim);
     freezeHazardKinematics(sim, HazardKind.Lava);
-    // Start just under the band so neither endpoint stays in the current-pose volume.
-    place(sim, p, 16, 0.45);
+    // Band is hy-1 .. hy+0.6 (5 .. 6.6). Start just under so endpoints miss.
+    place(sim, p, 16, 4.85);
     sim.ctx.bodies.get(p)?.setLinearVelocity({ x: 0, y: 200 });
     sim.ctx.holdHazards = true;
     sim.step([hold({}), hold({}), hold({}), hold({})]);
     sim.ctx.holdHazards = false;
     const prev = p.get(PrevTransform);
-    const now = p.get(Transform);
-    expect(prev?.y ?? 2).toBeLessThan(0.6);
-    expect(now?.y ?? 0).toBeGreaterThan(2.2);
-    place(sim, p, 16, 10);
-    expect(p.get(PrevTransform)?.y ?? 2).toBeLessThan(0.6);
+    expect(prev?.y ?? 6).toBeLessThan(5);
+    place(sim, p, 16, 12);
+    expect(p.get(PrevTransform)?.y ?? 6).toBeLessThan(5);
+    expect(p.get(Transform)?.y ?? 0).toBeGreaterThan(10);
     sim.ctx.bodies.get(p)?.setLinearVelocity({ x: 0, y: 0 });
     const before = p.get(Health)?.hp ?? 100;
     sim.step([hold({}), hold({}), hold({}), hold({})]);
@@ -905,19 +905,19 @@ describe('honest PLAN stand-ins (no pin/pred OR, no scoreboard shrink)', () => {
       id: 'sweep-lava-collapsed',
       objects: [
         { type: 'solid' as const, x: 12, y: 1, w: 24, h: 2 },
-        { type: 'lava' as const, x: 16, y: 1.6, w: 8, h: 1.2, rate: 0 },
+        { type: 'lava' as const, x: 16, y: 6, w: 8, h: 1.2, rate: 0 },
       ],
     };
     const sim = makeSim({ level, seed: 167, settings: { playerCount: 1 } });
     const p = playerOf(sim);
     freezeHazardKinematics(sim, HazardKind.Lava);
-    place(sim, p, 16, 0.45);
+    place(sim, p, 16, 4.85);
     sim.ctx.bodies.get(p)?.setLinearVelocity({ x: 0, y: 200 });
     sim.ctx.holdHazards = true;
     sim.step([hold({}), hold({}), hold({}), hold({})]);
     sim.ctx.holdHazards = false;
-    place(sim, p, 16, 10);
-    p.set(PrevTransform, { x: 16, y: 10, angle: 0 });
+    place(sim, p, 16, 12);
+    p.set(PrevTransform, { x: 16, y: 12, angle: 0 });
     sim.ctx.bodies.get(p)?.setLinearVelocity({ x: 0, y: 0 });
     const before = p.get(Health)?.hp ?? 100;
     sim.step([hold({}), hold({}), hold({}), hold({})]);
@@ -950,7 +950,7 @@ describe('honest PLAN stand-ins (no pin/pred OR, no scoreboard shrink)', () => {
         id: 'conveyor-omitted-w',
         objects: [
           { type: 'solid' as const, x: 12, y: 1, w: 24, h: 2 },
-          { type: 'conveyor' as const, x: 16, y: 2.2, speed: 4 },
+          { type: 'conveyor' as const, x: 16, y: 2.2, h: 0.4, speed: 4 },
         ],
       },
       seed: 169,
@@ -993,7 +993,7 @@ describe('honest PLAN stand-ins (no pin/pred OR, no scoreboard shrink)', () => {
         id: 'bounce-omitted-w',
         objects: [
           { type: 'solid' as const, x: 12, y: 1, w: 24, h: 2 },
-          { type: 'bounce' as const, x: 13, y: 2.3, speed: 16 },
+          { type: 'bounce' as const, x: 13, y: 2.3, h: 0.4, speed: 16 },
         ],
       },
       seed: 171,
@@ -1037,12 +1037,12 @@ describe('honest PLAN stand-ins (no pin/pred OR, no scoreboard shrink)', () => {
 
   it('a spikeball with param0 = 0 does not kill at the substituted 0.4 radius', () => {
     const sim = makeSim({
-      level: getLevel('test-spikeball'),
+      level: getLevel('test-spikeball-roll'),
       seed: 173,
       settings: { playerCount: 1 },
     });
     const p = playerOf(sim);
-    const ball = { x: 12, y: 6 };
+    const ball = { x: 10, y: 3.2 };
     sim.ecs.query(Hazard, Transform).updateEach(([hz, t]) => {
       if (hz.kind !== HazardKind.Spikeball) return;
       hz.param0 = 0;
@@ -1050,7 +1050,8 @@ describe('honest PLAN stand-ins (no pin/pred OR, no scoreboard shrink)', () => {
       ball.y = t.y;
     });
     freezeHazardKinematics(sim, HazardKind.Spikeball);
-    pin(sim, p, ball.x + 0.55, ball.y);
+    // Honest reach is 0.35+0.3; `|| 0.4` reach is 0.75+0.3. 0.80 sits in the gap.
+    pin(sim, p, ball.x + 0.8, ball.y);
     sim.step([hold({}), hold({}), hold({}), hold({})]);
     expect(p.has(Dead)).toBe(false);
     expect(p.get(Health)?.hp ?? 1).toBeGreaterThan(0);
