@@ -1,4 +1,3 @@
-import type { Entity } from 'koota';
 import { lerp } from '../core/math';
 import { getContext } from '../sim/context';
 import { themeOf } from '../sim/level/themes';
@@ -45,17 +44,22 @@ function nextLimb(fx: FxWorld | undefined, simId: number, vx: number, vy: number
     limbs.set(simId, next);
     return next;
   }
-  let found: Entity | null = null;
   let cur: LimbState = { hipSway: 0, shoulderSway: 0 };
-  fx.query(FxLimb).updateEach(([l], e) => {
+  let updated = false;
+  fx.query(FxLimb).updateEach(([l]) => {
     if (l.simId !== simId) return;
-    found = e;
     cur = { hipSway: l.hipSway, shoulderSway: l.shoulderSway };
+    const next = secondaryFromVelocity(cur, vx, vy);
+    l.hipSway = next.hipSway;
+    l.shoulderSway = next.shoulderSway;
+    cur = next;
+    updated = true;
   });
-  const next = secondaryFromVelocity(cur, vx, vy);
-  if (found) found.set(FxLimb, { simId, ...next });
-  else fx.spawn(FxLimb({ simId, ...next }));
-  return next;
+  if (!updated) {
+    cur = secondaryFromVelocity(cur, vx, vy);
+    fx.spawn(FxLimb({ simId, ...cur }));
+  }
+  return cur;
 }
 
 export type BuildFrameOpts = {

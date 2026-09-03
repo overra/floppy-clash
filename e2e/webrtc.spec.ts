@@ -55,7 +55,10 @@ test('late-join snapshot restores a client interpolation view', async ({ browser
 test('four localhost peers connect; 100ms/2% shaping still delivers chat', async ({ browser }) => {
   const ctxs = await Promise.all(Array.from({ length: 4 }, () => browser.newContext()));
   const pages = await Promise.all(ctxs.map((c) => c.newPage()));
-  const [host, g1, g2, g3] = pages;
+  const host = pages[0]!;
+  const g1 = pages[1]!;
+  const g2 = pages[2]!;
+  const g3 = pages[3]!;
   const room = 'FOURP1';
   for (const p of pages) {
     await p.goto(`/?signal=ws://127.0.0.1:8787&net=100,2`);

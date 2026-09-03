@@ -41,7 +41,7 @@ export function startSignaling(port = Number(process.env.PORT ?? 8787)): Promise
       if (msg.t === 'room' && msg.code) {
         roomId = msg.code.toUpperCase();
         selfId = nid();
-        const room = rooms.get(roomId) ?? { clients: new Map(), ice: [] };
+        const room: Room = rooms.get(roomId) ?? { clients: new Map(), ice: [] };
         const role = msg.role === 'host' ? 'host' : 'client';
         room.clients.set(selfId, { ws, id: selfId, role });
         if (role === 'host') room.hostId = selfId;

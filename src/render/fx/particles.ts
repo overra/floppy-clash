@@ -125,7 +125,7 @@ export function stepFxParticles(world: World, dt: number): void {
     p.life -= dt;
     if (p.life <= 0) dead.push(e);
   });
-  for (const e of dead) world.destroy(e);
+  for (const e of dead) e.destroy();
 }
 
 export function listParticles(world: World): Particle[] {

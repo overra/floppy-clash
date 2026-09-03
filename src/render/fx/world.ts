@@ -57,7 +57,7 @@ export function clearFx(world: World): void {
   world.query(FxLimb).updateEach((_, e) => {
     kill.push(e);
   });
-  for (const e of kill) world.destroy(e);
+  for (const e of kill) e.destroy();
   if (world.has(FxShake)) world.set(FxShake, { amount: 0 });
 }
 

@@ -17,7 +17,7 @@ describe('render-side Koota world (PLAN 4.4)', () => {
       [
         { type: 'blood', x: 3, y: 2, amount: 40 },
         { type: 'explosion', x: 5, y: 3, radius: 2, damage: 20 },
-        { type: 'shot', x: 1, y: 1, aimX: 1, aimY: 0 },
+        { type: 'shot', source: 0, weaponId: 'pistol', x: 1, y: 1, aimX: 1, aimY: 0 },
       ],
       fx,
     );
