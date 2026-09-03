@@ -46,7 +46,7 @@ export function createMixer(): Mixer {
   let ctx: AudioContext | null = null;
   let sfxGain: GainNode | null = null;
   let musicGain: GainNode | null = null;
-  let musicTimer: ReturnType<typeof setInterval> | undefined;
+  let musicTimer = 0;
   const mixer: Mixer = {
     sfx: 0.8,
     music: 0.25,
@@ -87,11 +87,8 @@ export function createMixer(): Mixer {
       if (typeof window !== 'undefined') musicTimer = window.setInterval(schedule, 1500);
     },
     stopMusic() {
-      if (musicTimer !== undefined) {
-        if (typeof window !== 'undefined') window.clearInterval(musicTimer);
-        else clearInterval(musicTimer);
-        musicTimer = undefined;
-      }
+      if (musicTimer && typeof window !== 'undefined') window.clearInterval(musicTimer);
+      musicTimer = 0;
     },
     applyGains() {
       apply();
