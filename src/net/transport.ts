@@ -20,7 +20,22 @@ export type NetSession = {
   bytesOut: number;
   ready: boolean;
   peerCount: number;
+  /** True when the last inbound DataChannel payload was ArrayBuffer / typed-array, not JSON. */
+  lastInboundBinary: boolean;
+  lastInboundBytes: number;
 };
+
+function noteInbound(session: NetSession, data: unknown): void {
+  if (typeof data === 'string') {
+    session.lastInboundBinary = false;
+    session.lastInboundBytes = data.length;
+    return;
+  }
+  const buf = data instanceof ArrayBuffer ? new Uint8Array(data) : data instanceof Uint8Array ? data : null;
+  const view = !buf && ArrayBuffer.isView(data) ? new Uint8Array(data.buffer, data.byteOffset, data.byteLength) : buf;
+  session.lastInboundBinary = view !== null;
+  session.lastInboundBytes = view?.byteLength ?? 0;
+}
 
 export function signalingUrlFromLocation(loc: { protocol: string; hostname: string; search: string } = location): string {
   const q = new URLSearchParams(loc.search).get('signal');
@@ -39,15 +54,18 @@ export async function connectSignaling(url: string): Promise<WebSocket> {
 
 export function createLocalLoopback(): NetSession {
   const handlers: ((msg: NetMessage) => void)[] = [];
-  return {
+  const session: NetSession = {
     role: 'host',
     room: 'LOCAL',
     bytesOut: 0,
     ready: true,
     peerCount: 0,
+    lastInboundBinary: false,
+    lastInboundBytes: 0,
     send(msg) {
       const wire = encodeWire(msg);
-      this.bytesOut += typeof wire === 'string' ? wire.length : wire.byteLength;
+      session.bytesOut += typeof wire === 'string' ? wire.length : wire.byteLength;
+      noteInbound(session, wire);
       const delivered = typeof wire === 'string' ? decode(wire) : decodeWire(wire);
       for (const h of handlers) h(delivered);
     },
@@ -58,6 +76,7 @@ export function createLocalLoopback(): NetSession {
       handlers.length = 0;
     },
   };
+  return session;
 }
 
 type PeerLink = {
@@ -115,6 +134,8 @@ export async function createWebRtcSession(
     bytesOut: 0,
     ready: false,
     peerCount: 0,
+    lastInboundBinary: false,
+    lastInboundBytes: 0,
     send(msg, rel = true, except) {
       const data = encodeWire(msg);
       session.bytesOut += typeof data === 'string' ? data.length : data.byteLength;
@@ -140,6 +161,7 @@ export async function createWebRtcSession(
   };
 
   const onData = (peerId: string) => (ev: MessageEvent) => {
+    noteInbound(session, ev.data);
     let msg: NetMessage;
     try {
       msg = decodeWire(ev.data);

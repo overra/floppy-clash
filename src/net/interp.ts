@@ -9,6 +9,9 @@ export function createInterpBuffer(delayMs = 120) {
       samples.push({ at, snap });
       if (samples.length > 32) samples.shift();
     },
+    reset() {
+      samples.length = 0;
+    },
     sample(now: number): WorldSnapshot | null {
       return this.samplePair(now)?.to ?? samples[0]?.snap ?? null;
     },

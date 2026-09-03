@@ -293,6 +293,53 @@ describe('PLAN Appendix C range / duration mapping', () => {
     expectLiveRange(spikes, 5, 10, 7.5);
   });
 
+  it('bouncer bullets start at 6 bounces and decrement on a wall hit', () => {
+    expect(WEAPON_BY_ID.get('bouncer')!.projectile.bounce).toBe(6);
+    const sim = makeSim({ seed: 350, settings: { playerCount: 1 } });
+    const p = playerOf(sim);
+    // Gym climb-shaft walls sit at x≈2.5/5.5; stand in open air so the fire tick
+    // does not consume a bounce before we can read the catalog start value.
+    sim.ctx.bodies.get(p)?.setPosition({ x: 16, y: 4 });
+    p.set(Transform, { x: 16, y: 4, angle: 0 });
+    const gun = spawnWeapon(sim.ecs, 'bouncer', 16, 5);
+    gun.add(Held(), HeldBy(p));
+    gun.remove(Loose);
+    sim.step([hold({ attack: true, aimX: -1, aimY: 0 }), hold({}), hold({}), hold({})]);
+    let start = -1;
+    sim.ecs.query(Projectile).updateEach(([proj]) => {
+      start = proj.bounces;
+    });
+    expect(start).toBe(6);
+    let after = start;
+    for (let i = 0; i < 40; i++) {
+      sim.step([hold({ aimX: -1, aimY: 0 }), hold({}), hold({}), hold({})]);
+      sim.ecs.query(Projectile).updateEach(([proj]) => {
+        after = proj.bounces;
+      });
+      if (after < start) break;
+    }
+    expect(after).toBeLessThan(start);
+    expect(after).toBeGreaterThanOrEqual(0);
+  });
+
+  it('snake grenade bursts into 4 snakes (Appendix C)', () => {
+    const sim = makeSim({ seed: 351, settings: { playerCount: 1 } });
+    const p = playerOf(sim);
+    const gun = spawnWeapon(sim.ecs, 'snake-grenade', 8, 6);
+    gun.add(Held(), HeldBy(p));
+    gun.remove(Loose);
+    sim.step([hold({ attack: true, aimX: 0, aimY: 1 }), hold({}), hold({}), hold({})]);
+    sim.ecs.query(Projectile).updateEach(([proj]) => {
+      proj.fuse = 1;
+    });
+    sim.step([hold({}), hold({}), hold({}), hold({})]);
+    let snakes = 0;
+    sim.ecs.query(Snake).updateEach(() => {
+      snakes += 1;
+    });
+    expect(snakes).toBe(4);
+  });
+
   it('RPG 300+ deals at least 300 on a blast', () => {
     const sim = makeSim({ seed: 340, settings: { playerCount: 2 } });
     const a = playerOf(sim, 0);

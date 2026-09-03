@@ -39,6 +39,7 @@ import {
   RagdollPart,
   Snake,
   Status,
+  Transform,
   Weapon,
   replication,
 } from '../src/sim/traits';
@@ -51,6 +52,29 @@ function countJoints(physics: PhysicsWorld): number {
 }
 
 describe('M8 snapshot', () => {
+  it('ensureSeat spawns a missing late-join slot and snapshots it', () => {
+    const host = makeSim({ seed: 210, settings: { playerCount: 1 } });
+    expect(host.players().length).toBe(1);
+    expect(host.ensureSeat(1)).toBe(true);
+    expect(host.ensureSeat(1)).toBe(false);
+    expect(host.players().length).toBe(2);
+    const snap = host.snapshot();
+    expect(snap.playerCount).toBeGreaterThanOrEqual(2);
+    expect(snap.entities.some((e) => Number(e.traits.Player?.slot) === 1)).toBe(true);
+    const view = createClientView(snap);
+    expect(playerOf(view.sim, 1).get(Transform)).toBeTruthy();
+  });
+
+  it('restoreWorld spawns a seat that joined after the client view was created', () => {
+    const host = makeSim({ seed: 211, settings: { playerCount: 2 } });
+    const view = createClientView(host.snapshot());
+    expect(view.sim.players().length).toBe(2);
+    expect(host.ensureSeat(2)).toBe(true);
+    restoreWorld(view.sim.ecs, host.snapshot());
+    expect(view.sim.players().length).toBe(3);
+    expect(playerOf(view.sim, 2).get(Transform)).toBeTruthy();
+  });
+
   it('round-trips transforms and rng', () => {
     const sim = makeSim({ seed: 77, settings: { playerCount: 2 } });
     for (let i = 0; i < 80; i++) sim.step([hold({ moveX: 1 }), hold({ moveX: -1 }), hold({}), hold({})]);

@@ -187,6 +187,36 @@ describe('client interpolation view', () => {
     expect(playerOf(view.sim, 1).get(Health)?.hp ?? 0).toBeGreaterThan(50);
   });
 
+  it('rebuilds the client world when the host rotates levels', () => {
+    const host = makeSim({
+      seed: 88,
+      settings: { playerCount: 2, rotation: 'ordered', firstTo: 0 },
+    });
+    host.ctx.tuning.countdownTicks = 2;
+    host.ctx.tuning.slowmoTicks = 1;
+    host.ctx.tuning.scoreboardTicks = 1;
+    const first = host.snapshot();
+    const view = createClientView(first);
+    expect(view.sim.ctx.level.id).toBe(first.levelId);
+    for (let i = 0; i < 500; i++) {
+      const phase = host.ecs.get(RoundState)?.phase;
+      if (phase === RoundPhase.Fighting) {
+        const victim = playerOf(host, 1);
+        if ((victim.get(Health)?.hp ?? 0) > 0) victim.set(Health, { hp: 0, maxHp: 100 });
+      }
+      host.step([hold({}), hold({}), hold({}), hold({})]);
+      if (host.ctx.level.id !== first.levelId) break;
+    }
+    expect(host.ctx.level.id).not.toBe(first.levelId);
+    const snap = host.snapshot();
+    expect(snap.levelId).toBe(host.ctx.level.id);
+    view.push(0, first);
+    view.push(50, snap);
+    view.apply(200);
+    expect(view.sim.ctx.level.id).toBe(host.ctx.level.id);
+    expect(view.sim.ctx.level.bounds.w).toBe(host.ctx.level.bounds.w);
+  });
+
   it('host custom-level JSON is decoded and used by createClientView', () => {
     const custom = parseLevel({
       id: 'wire-custom',

@@ -33,7 +33,7 @@ import { getLastGpuInitError, tryCreateGpuRenderer } from './render/gpu/renderer
 import { createDecalLayer, stampFxDecals, type PersistentDecalLayer } from './render/fx/decals';
 import { emitIntoWorld, listParticles, stepFxParticles } from './render/fx/particles';
 import { clearFx, createFxWorld } from './render/fx/world';
-import { blankInputs, type PlayerInput } from './sim/input';
+import { blankInputs, EMPTY_INPUT, type PlayerInput } from './sim/input';
 import { inspectWorld, formatInspect } from './sim/inspect';
 import { primitiveSdf } from './render/sdf/primitives';
 import {
@@ -54,7 +54,13 @@ import { loadSettings, saveSettings, type UserSettings } from './ui/settingsStor
 import { loadStats, recordKos, recordMatch } from './ui/statsStore';
 import { hostContentMessages, lateJoinSnapshotMessage, snapshotBytes } from './net/protocol';
 import { drainChangeTrackers } from './sim/snapshot';
-import { applyInputBundle, bundleInputs } from './net/simnet';
+import {
+  acceptInputBundle,
+  applyRemoteInboxes,
+  bundleInputs,
+  emptyRemoteInbox,
+  type RemoteInbox,
+} from './net/simnet';
 import { createEditorState, fromHash, loadLibrary, type EditorState } from './editor/editor';
 import { mountEditor } from './editor/view';
 import {
@@ -90,6 +96,13 @@ type FloppyDebug = {
   netReady: boolean;
   lastSnapTick: number;
   lastSnapBytes: number;
+  lastSnapBinary: boolean;
+  lastSnapWireBytes: number;
+  lastInputTick: number;
+  lastInputBundleLen: number;
+  playerXs: number[];
+  holdInput: (partial: Partial<PlayerInput>) => void;
+  clearInput: () => void;
   clientViewTick: number;
   clientAppliedX: number;
   clientRestored: boolean;
@@ -163,12 +176,24 @@ export function createGame(root: HTMLElement): Game {
   let decalLayer: PersistentDecalLayer = createDecalLayer(gymLevel.bounds);
   let clientView: ClientView | null = null;
   let lastSnapBytes = 0;
+  let lastSnapBinary = false;
+  let lastSnapWireBytes = 0;
+  let lastClientLevelId = '';
+  let lastInputTick = -1;
+  let lastInputBundleLen = 0;
+  let inputSeq = 0;
+  let heldNetInput: PlayerInput | null = null;
   let rendererSwitches = 0;
   let netName = 'guest';
   let netSlot = 0;
   let nextGuestSlot = 0;
   let pendingLevel: LevelDef | undefined;
-  const remoteBySlot: Array<PlayerInput | null> = [null, null, null, null];
+  const remoteInboxes: RemoteInbox[] = [
+    emptyRemoteInbox(),
+    emptyRemoteInbox(),
+    emptyRemoteInbox(),
+    emptyRemoteInbox(),
+  ];
   const inputHist: PlayerInput[] = [];
   let chatOpen = false;
   let replayLoaded = false;
@@ -363,11 +388,15 @@ export function createGame(root: HTMLElement): Game {
             /* id-only payload */
           }
         }
+        if (pendingLevel) clientView?.useLevel(pendingLevel);
         if (menus.screen === 'lobby') show();
       }
       if (msg.t === 'input' && session.role === 'host') {
-        const last = msg.bundle[msg.bundle.length - 1];
-        if (last && msg.slot > 0 && msg.slot < 4) remoteBySlot[msg.slot] = last;
+        if (msg.slot > 0 && msg.slot < 4) {
+          remoteInboxes[msg.slot] = acceptInputBundle(remoteInboxes[msg.slot]!, msg.tick, msg.bundle);
+          lastInputTick = remoteInboxes[msg.slot]!.tick;
+          lastInputBundleLen = remoteInboxes[msg.slot]!.bundleLen;
+        }
       }
       if (msg.t === 'event' && msg.kind === 'slot') {
         const [name, slot] = msg.payload.split(':');
@@ -375,17 +404,18 @@ export function createGame(root: HTMLElement): Game {
       }
       if (msg.t === 'snapshot') {
         menus.lastSnapTick = msg.snap.tick;
-        lastSnapBytes = snapshotBytes(msg.snap);
+        lastSnapBinary = session.lastInboundBinary;
+        lastSnapWireBytes = session.lastInboundBytes;
+        lastSnapBytes = lastSnapWireBytes || snapshotBytes(msg.snap);
         menus.notice = `Late-join snapshot tick ${msg.snap.tick}`;
         if (session.role === 'client') {
+          if (pendingLevel) clientView?.useLevel(pendingLevel);
           if (!clientView) {
             clientView = createClientView(msg.snap, 120, pendingLevel);
-            cam = createCamera(clientView.sim.ctx.level.bounds);
-            clearFx(fx);
-            decalLayer = createDecalLayer(clientView.sim.ctx.level.bounds);
           }
           clientView.push(performance.now(), msg.snap);
           clientView.apply(performance.now());
+          syncClientLevelChrome();
           if (menus.screen !== 'play') {
             menus.screen = 'play';
             show();
@@ -407,6 +437,7 @@ export function createGame(root: HTMLElement): Game {
           session.send(m);
         }
         if (sim) {
+          sim.ensureSeat(nextGuestSlot);
           session.send(lateJoinSnapshotMessage(sim.snapshot()));
           drainChangeTrackers(sim.ecs);
         }
@@ -465,6 +496,16 @@ export function createGame(root: HTMLElement): Game {
       return;
     }
     void beginMatch();
+  }
+
+  function syncClientLevelChrome(): void {
+    if (!clientView) return;
+    const id = clientView.sim.ctx.level.id;
+    if (id === lastClientLevelId) return;
+    lastClientLevelId = id;
+    cam = createCamera(clientView.sim.ctx.level.bounds);
+    clearFx(fx);
+    decalLayer = createDecalLayer(clientView.sim.ctx.level.bounds);
   }
 
   function startSim(
@@ -642,14 +683,17 @@ export function createGame(root: HTMLElement): Game {
     if (viewSim && menus.screen === 'play' && !paused) {
       if (clientView && menus.netRole === 'client') {
         clientView.apply(performance.now());
+        syncClientLevelChrome();
         const sampled = sampleInputs();
-        const mine = sampled[0];
+        const mine = heldNetInput ?? sampled[0];
         if (mine && netSlot > 0) {
           inputHist.push(mine);
+          if (inputHist.length > 8) inputHist.splice(0, inputHist.length - 3);
+          inputSeq += 1;
           net.send(
             {
               t: 'input',
-              tick: clientView.appliedTick,
+              tick: inputSeq,
               slot: netSlot,
               bundle: bundleInputs(inputHist),
             },
@@ -695,12 +739,7 @@ export function createGame(root: HTMLElement): Game {
         viewSim.ecs.get(RoundState)?.phase === RoundPhase.LastKill ? tuning.lastKillSlowmo : 1;
       const steps = loop.consume(dt, scale);
       let sampled = sampleInputs();
-      if (menus.netRole === 'host') {
-        for (let s = 1; s < 4; s++) {
-          const remote = remoteBySlot[s];
-          if (remote) sampled = applyInputBundle(sampled, s, [remote]);
-        }
-      }
+      if (menus.netRole === 'host') sampled = applyRemoteInboxes(sampled, remoteInboxes);
       for (let i = 0; i < steps; i++) {
         if (hitStop > 0) {
           hitStop -= 1;
@@ -729,8 +768,19 @@ export function createGame(root: HTMLElement): Game {
         else if (events.some((e) => e.type === 'hit')) rumble('hit');
         if (menus.netRole === 'host') {
           for (const ev of events) {
-            if (ev.type === 'round-phase')
+            if (ev.type === 'round-phase') {
               net.send({ t: 'event', kind: 'round-phase', payload: ev.phase });
+              if (ev.phase === 'countdown' || ev.phase === 'loading') {
+                for (const m of hostContentMessages(
+                  JSON.stringify({ maxHp: settings.maxHp, firstTo: settings.firstTo }),
+                  JSON.stringify(viewSim.ctx.level),
+                )) {
+                  net.send(m, true);
+                }
+                net.send(lateJoinSnapshotMessage(viewSim.snapshot()), true);
+                drainChangeTrackers(viewSim.ecs);
+              }
+            }
             if (ev.type === 'spawn' || ev.type === 'despawn' || ev.type === 'shot') {
               net.send({ t: 'event', kind: ev.type, payload: JSON.stringify(ev) });
             }
@@ -818,6 +868,17 @@ export function createGame(root: HTMLElement): Game {
       netReady: net.ready,
       lastSnapTick: menus.lastSnapTick,
       lastSnapBytes,
+      lastSnapBinary,
+      lastSnapWireBytes,
+      lastInputTick,
+      lastInputBundleLen,
+      playerXs: readPlayerXs(handle),
+      holdInput: (partial) => {
+        heldNetInput = { ...EMPTY_INPUT, ...partial };
+      },
+      clearInput: () => {
+        heldNetInput = null;
+      },
       lastLevelId: handle?.ctx.level.id ?? pendingLevel?.id ?? '',
       pendingLevelId: pendingLevel?.id ?? '',
       loadLevel: (raw: unknown) => {
@@ -893,6 +954,15 @@ export function createGame(root: HTMLElement): Game {
       }
     }
     return { groups: frame.groups.length, colored };
+  }
+
+  function readPlayerXs(world: SimHandle | null | undefined): number[] {
+    const xs = [0, 0, 0, 0];
+    if (!world) return xs;
+    world.ecs.query(Player, Transform).updateEach(([p, t]) => {
+      if (p.slot >= 0 && p.slot < 4) xs[p.slot] = t.x;
+    });
+    return xs;
   }
 
   function countWeapons(): number {

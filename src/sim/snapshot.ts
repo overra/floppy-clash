@@ -2,6 +2,7 @@ import { createAdded, createChanged, createRemoved, type Entity, type World } fr
 import { fnv1a, hashToHex, quantize } from '../core/hash';
 import { createBoxBody, createCircleBody, destroyBody, registerBody } from './physics/bodies';
 import { getContext } from './context';
+import { spawnPlayer } from './level/loader';
 import { attachRagdollJoints, isRagdollRoot, ragdollPartSpec, RAGDOLL_JOINTS } from './player/ragdoll';
 import { assignCrownToLeader } from './rules/rounds';
 import {
@@ -939,6 +940,17 @@ function spawnMissing(world: World, rec: TraitSnapshot, newRootNetIds: Set<numbe
   }
 }
 
+function safeDestroyEntity(world: World, entity: Entity): void {
+  if (!world.has(entity)) return;
+  destroyBody(world, entity);
+  if (!world.has(entity)) return;
+  try {
+    entity.destroy();
+  } catch {
+    /* already destroyed after death/respawn/level swap */
+  }
+}
+
 function pruneMissingFromFull(world: World, snap: WorldSnapshot): void {
   if (snap.full === false) return;
   const keep = new Set(snap.entities.map((e) => e.netId));
@@ -948,9 +960,23 @@ function pruneMissingFromFull(world: World, snap: WorldSnapshot): void {
     if (entity.has(Player) && entity.has(Controller)) return;
     kill.push(entity);
   });
-  for (const entity of kill) {
-    destroyBody(world, entity);
-    entity.destroy();
+  for (const entity of kill) safeDestroyEntity(world, entity);
+}
+
+/** PLAN 4.13: a full snap may include seats that joined after this client world was built. */
+function ensureSnapshotSeats(world: World, snap: WorldSnapshot): void {
+  const fromPlayers = snap.entities.filter((e) => e.traits.Player).length;
+  const seats = Math.min(4, Math.max(1, snap.playerCount ?? fromPlayers));
+  const ctx = getContext(world);
+  for (let slot = 0; slot < seats; slot++) {
+    let exists = false;
+    world.query(Player, Controller).updateEach(([p]) => {
+      if (p.slot === slot) exists = true;
+    });
+    if (exists) continue;
+    const spawn = ctx.level.spawns[slot % Math.max(1, ctx.level.spawns.length)] ?? { x: 8, y: 6 };
+    spawnPlayer(world, slot, spawn.x, spawn.y + 1, slot, slot);
+    ctx.settings.playerCount = Math.max(ctx.settings.playerCount, slot + 1);
   }
 }
 
@@ -994,11 +1020,9 @@ export function restoreWorld(world: World, snap: WorldSnapshot): void {
       if (!drop.has(net.id) || entity.has(Player)) return;
       kill.push(entity);
     });
-    for (const entity of kill) {
-      destroyBody(world, entity);
-      entity.destroy();
-    }
+    for (const entity of kill) safeDestroyEntity(world, entity);
   }
+  ensureSnapshotSeats(world, snap);
   pruneMissingFromFull(world, snap);
   applyWorldTraits(world, snap);
   const byNet = new Map<number, TraitSnapshot>();

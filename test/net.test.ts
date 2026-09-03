@@ -1,6 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import { createInterpBuffer } from '../src/net/interp';
-import { applyInputBundle, bundleInputs, createSimulatedLink } from '../src/net/simnet';
+import {
+  acceptInputBundle,
+  applyInputBundle,
+  applyRemoteInboxes,
+  bundleInputs,
+  createSimulatedLink,
+  emptyRemoteInbox,
+} from '../src/net/simnet';
 import {
   decode,
   decodeSnapshotBinary,
@@ -58,6 +65,20 @@ describe('M8 netcode', () => {
     if (back.t !== 'snapshot') throw new Error('expected snapshot');
     expect(back.snap.levelId).toBe('gym');
     expect(decodeWire(encode({ t: 'snapshot', snap })).t).toBe('snapshot');
+  });
+
+  it('loopback snapshot send is binary on the inbound wire, not JSON', () => {
+    const host = makeSim({ settings: { playerCount: 2 } });
+    const snap = host.snapshot();
+    const session = createLocalLoopback();
+    session.send({ t: 'snapshot', snap });
+    expect(session.lastInboundBinary).toBe(true);
+    expect(session.lastInboundBytes).toBe(snapshotBytes(snap));
+    expect(session.lastInboundBytes).toBeGreaterThan(20);
+    const json = encode({ t: 'snapshot', snap });
+    expect(session.lastInboundBytes).toBeLessThan(json.length);
+    session.send({ t: 'chat', from: 'a', text: 'hi' });
+    expect(session.lastInboundBinary).toBe(false);
   });
 
   it('loopback session encode→wire→decode restores a held weapon', () => {
@@ -121,6 +142,8 @@ describe('M8 netcode', () => {
     const delay = 6;
     const q: ReturnType<typeof blankInputs>[] = [];
     let bytes = 0;
+    let view: ReturnType<typeof createClientView> | null = null;
+    let lastLevelId = host.ctx.level.id;
     for (let i = 0; i < 6000; i++) {
       const raw = [hold({ moveX: 0.2 }), hold({}), hold({}), hold({})];
       q.push(raw);
@@ -128,12 +151,22 @@ describe('M8 netcode', () => {
       const dropped = rng.next() < 0.02;
       const delayed = q[Math.max(0, q.length - 1 - delay)] ?? raw;
       host.step(dropped ? (q[Math.max(0, q.length - 2 - delay)] ?? raw) : delayed);
-      if (i % 3 === 0) {
-        const full = i % 60 === 0;
+      const levelChanged = host.ctx.level.id !== lastLevelId;
+      if (levelChanged) lastLevelId = host.ctx.level.id;
+      if (i % 3 === 0 || levelChanged) {
+        const full = i % 60 === 0 || levelChanged;
         const snap = full ? host.snapshot() : host.snapshotDelta();
         if (full) drainChangeTrackers(host.ecs);
         bytes += wireBytes({ t: 'snapshot', snap });
         link.send(1, { t: 'snapshot', snap });
+      }
+      for (const msg of link.receive(1)) {
+        if (msg.t !== 'snapshot') continue;
+        if (!view) view = createClientView(msg.snap);
+        else {
+          view.push(i * (1000 / 60), msg.snap);
+          view.apply(i * (1000 / 60) + 120);
+        }
       }
       const phase = host.ecs.get(RoundState)?.phase;
       if (phase === RoundPhase.Fighting) {
@@ -149,6 +182,10 @@ describe('M8 netcode', () => {
     expect(host.ecs.get(MatchState)?.round ?? 0).toBeGreaterThanOrEqual(10);
     expect(kBps).toBeLessThan(30);
     expect(link.sent()).toBeGreaterThan(0);
+    expect(view).toBeTruthy();
+    expect(view!.restored).toBe(true);
+    expect(view!.appliedTick).toBeGreaterThan(0);
+    expect(Number.isFinite(view!.appliedX)).toBe(true);
   }, 60_000);
 
   it('host applies a remote 3-input bundle to the matching seat', () => {
@@ -158,6 +195,56 @@ describe('M8 netcode', () => {
     for (let i = 0; i < 36; i++) {
       const inputs = applyInputBundle([hold({}), hold({}), hold({}), hold({})], 1, bundle);
       host.step(inputs);
+    }
+    expect(pos(host, 1).x).toBeGreaterThan(x0 + 0.4);
+  });
+
+  it('drops a stale unordered bundle and keeps the newer tick', () => {
+    let inbox = emptyRemoteInbox();
+    inbox = acceptInputBundle(inbox, 10, [hold({ moveX: 1 }), hold({ moveX: 1 }), hold({ moveX: 1 })]);
+    expect(inbox.tick).toBe(10);
+    expect(inbox.bundleLen).toBe(3);
+    inbox = acceptInputBundle(inbox, 8, [hold({ moveX: -1 }), hold({ moveX: -1 }), hold({ moveX: -1 })]);
+    expect(inbox.tick).toBe(10);
+    expect(inbox.input?.moveX).toBe(1);
+    inbox = acceptInputBundle(inbox, 11, [hold({ moveX: 0.5 }), hold({ moveX: 0.5 }), hold({ moveX: 0.25 })]);
+    expect(inbox.tick).toBe(11);
+    expect(inbox.input?.moveX).toBe(0.25);
+    const sampled = applyRemoteInboxes([hold({}), hold({}), hold({}), hold({})], [
+      emptyRemoteInbox(),
+      inbox,
+      emptyRemoteInbox(),
+      emptyRemoteInbox(),
+    ]);
+    expect(sampled[1]?.moveX).toBe(0.25);
+    expect(sampled[0]?.moveX).toBe(0);
+  });
+
+  it('a 3-input bundle on the simulated link still moves a seat after two dropped packets', () => {
+    const rng = new SeededRng(3);
+    const link = createSimulatedLink({ latencyMs: 0, loss: 0, rng: () => rng.next() });
+    const host = makeSim({ settings: { playerCount: 2 } });
+    const x0 = pos(host, 1).x;
+    const a = hold({ moveX: 1 });
+    const b = hold({ moveX: 1 });
+    const c = hold({ moveX: 1 });
+    link.send(0, { t: 'input', tick: 1, slot: 1, bundle: [a] });
+    link.send(0, { t: 'input', tick: 2, slot: 1, bundle: [a, b] });
+    link.send(0, { t: 'input', tick: 3, slot: 1, bundle: [a, b, c] });
+    const firstTwo = link.receive(0);
+    expect(firstTwo).toHaveLength(3);
+    let inbox = emptyRemoteInbox();
+    inbox = acceptInputBundle(inbox, 1, [a]);
+    inbox = acceptInputBundle(inbox, 3, [a, b, c]);
+    inbox = acceptInputBundle(inbox, 2, [a, b]);
+    expect(inbox.tick).toBe(3);
+    for (let i = 0; i < 36; i++) {
+      host.step(applyRemoteInboxes([hold({}), hold({}), hold({}), hold({})], [
+        emptyRemoteInbox(),
+        inbox,
+        emptyRemoteInbox(),
+        emptyRemoteInbox(),
+      ]));
     }
     expect(pos(host, 1).x).toBeGreaterThan(x0 + 0.4);
   });

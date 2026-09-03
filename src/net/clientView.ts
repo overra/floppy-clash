@@ -12,6 +12,8 @@ export type ClientView = {
   appliedX: number;
   restored: boolean;
   alpha: number;
+  /** Host custom-level JSON for the next rebuild (rotation / late user maps). */
+  useLevel: (level: LevelDef) => void;
   push: (at: number, snap: WorldSnapshot) => void;
   apply: (now: number) => WorldSnapshot | null;
 };
@@ -64,17 +66,28 @@ export function applyLateJoinSnapshot(sim: SimHandle, snap: WorldSnapshot, prev?
 }
 
 export function createClientView(first: WorldSnapshot, delayMs = 120, level?: LevelDef): ClientView {
-  const sim = worldFromSnapshot(first, level);
+  let levelOverride = level;
+  let sim = worldFromSnapshot(first, levelOverride);
   restoreWorld(sim.ecs, first);
   const buffer = createInterpBuffer(delayMs);
   let acc: WorldSnapshot = first.full === false ? { ...first, full: true } : first;
+
   const view: ClientView = {
     sim,
     appliedTick: first.tick,
     appliedX: 0,
     restored: true,
     alpha: 1,
+    useLevel(next) {
+      levelOverride = next;
+    },
     push(at, snap) {
+      if (isForeignLevel(snap)) {
+        if (snap.full === false) return;
+        adoptLevel(snap);
+        buffer.push(at, snap);
+        return;
+      }
       const merged = snap.full === false ? mergeSnapshot(acc, snap) : snap;
       acc = merged;
       buffer.push(at, merged);
@@ -83,10 +96,16 @@ export function createClientView(first: WorldSnapshot, delayMs = 120, level?: Le
       const pair = buffer.samplePair(now);
       const snap = pair?.to ?? buffer.sample(now);
       if (!snap) return null;
-      if (pair?.from && pair.from !== pair.to) applyPrevFromSnap(sim.ecs, pair.from);
+      if (snap.levelId && snap.levelId !== sim.ctx.level.id && snap.full !== false) {
+        adoptLevel(snap);
+      }
+      const from = pair?.from;
+      const sameLevel =
+        !from || !from.levelId || !snap.levelId || from.levelId === snap.levelId;
+      if (from && from !== snap && sameLevel) applyPrevFromSnap(sim.ecs, from);
       restoreWorld(sim.ecs, snap);
-      if (pair?.from && pair.from !== pair.to) {
-        applyInterpolatedBodyVel(sim.ecs, pair.from, pair.to, pair.alpha);
+      if (from && from !== snap && sameLevel) {
+        applyInterpolatedBodyVel(sim.ecs, from, snap, pair?.alpha ?? 1);
       }
       view.alpha = pair?.alpha ?? 1;
       view.appliedTick = snap.tick;
@@ -97,6 +116,20 @@ export function createClientView(first: WorldSnapshot, delayMs = 120, level?: Le
       return snap;
     },
   };
+
+  function isForeignLevel(snap: WorldSnapshot): boolean {
+    return Boolean(snap.levelId && snap.levelId !== (acc.levelId ?? sim.ctx.level.id));
+  }
+
+  function adoptLevel(snap: WorldSnapshot): void {
+    const override = levelOverride && snap.levelId === levelOverride.id ? levelOverride : undefined;
+    sim = worldFromSnapshot(snap, override);
+    restoreWorld(sim.ecs, snap);
+    buffer.reset();
+    acc = snap.full === false ? { ...snap, full: true } : snap;
+    view.sim = sim;
+  }
+
   sim.ecs.query(Player, Transform).updateEach(([p, t]) => {
     if (p.slot === 0) view.appliedX = t.x;
   });

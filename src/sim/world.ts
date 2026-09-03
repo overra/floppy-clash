@@ -24,7 +24,16 @@ import { hazardsStep } from './systems/hazards';
 import { physicsStep, syncTransforms } from './systems/syncTransforms';
 import { projectiles } from './weapons/projectiles';
 import { syncHeldWeapons, weapons } from './weapons/systems';
-import { DropState, MatchState, PrevTransform, RoundPhase, RoundState, SimClock, Transform } from './traits';
+import {
+  DropState,
+  MatchState,
+  Player,
+  PrevTransform,
+  RoundPhase,
+  RoundState,
+  SimClock,
+  Transform,
+} from './traits';
 
 export type CreateSimOptions = {
   level: LevelDef;
@@ -44,6 +53,8 @@ export type SimHandle = {
   snapshot: () => ReturnType<typeof serializeWorld>;
   snapshotDelta: () => ReturnType<typeof serializeDelta>;
   players: () => Entity[];
+  /** Mid-match late join: spawn a missing seat so the guest's input slot exists. */
+  ensureSeat: (slot: number) => boolean;
 };
 
 export function createSimWorld(opts: CreateSimOptions): SimHandle {
@@ -129,7 +140,23 @@ export function createSimWorld(opts: CreateSimOptions): SimHandle {
     snapshot: () => serializeWorld(ecs),
     snapshotDelta: () => serializeDelta(ecs),
     players: () => ctx.players.slice(),
+    ensureSeat: (slot) => ensurePlayerSeat(ecs, slot),
   };
+}
+
+/** PLAN 4.13 late join: a guest who arrives after start still gets a living capsule. */
+export function ensurePlayerSeat(world: World, slot: number): boolean {
+  if (slot < 0 || slot > 3) return false;
+  let exists = false;
+  world.query(Player).updateEach(([p]) => {
+    if (p.slot === slot) exists = true;
+  });
+  if (exists) return false;
+  const ctx = getContext(world);
+  const spawn = ctx.level.spawns[slot % Math.max(1, ctx.level.spawns.length)] ?? { x: 8, y: 6 };
+  spawnPlayer(world, slot, spawn.x, spawn.y + 1, slot, slot);
+  ctx.settings.playerCount = Math.max(ctx.settings.playerCount, slot + 1);
+  return true;
 }
 
 function spawnTestBoxes(world: World, count: number): void {

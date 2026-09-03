@@ -12,8 +12,9 @@ Floppy Clash is host-authoritative. The host runs `src/sim`; clients send `Playe
 ## Snapshots
 
 - Host broadcasts quantized binary `WorldSnapshot`s at 20 Hz on the unreliable channel (`encodeSnapshotBinary` / `decodeSnapshotBinary`, wire version 2).
-- **Full** snapshots go to late joiners (reliable) and as a periodic 1 Hz fallback on unreliable (`serializeWorld`).
+- **Full** snapshots go to late joiners (reliable), on each new-round countdown (level JSON + full snap, reliable), and as a periodic 1 Hz fallback on unreliable (`serializeWorld`).
 - **Delta** snapshots use Koota `Changed(Transform)` plus `Added`/`Removed` on `NetId` (`serializeDelta`). Clients merge deltas onto the last full view, then interpolate.
+- A full snapshot with a new `levelId` **rebuilds** the client world (`createSimWorld` + restore). Cross-level deltas are dropped — `restoreWorld` cannot reconstruct solids/hazards as the correct static bodies. A later-joining seat in a full snap is spawned on already-connected clients.
 - The binary frame carries every replicated trait (transform, BodyVel, combat, weapons, ragdolls, world traits, added/removed), not just motion.
 - Dynamic bodies (loose weapons, projectile bodies, props, ragdoll parts) carry `BodyVel` `{ vx, vy, omega }` so late-join / interp restore continues in-flight motion (PLAN 4.13). Players also keep `Controller.vx/vy`.
 - Budget: **< 30 KB/s** per client with 4 players (asserted by `test/net.test.ts` against the binary wire size).
@@ -26,8 +27,9 @@ Floppy Clash is host-authoritative. The host runs `src/sim`; clients send `Playe
 
 ## Inputs
 
-- Last 3 inputs are bundled for loss tolerance.
-- Simulated 100 ms / 2 % loss 10-round match is a unit test (same numbers the plan allows Playwright shaping for).
+- Last 3 inputs are bundled for loss tolerance on the unreliable/unordered channel.
+- Each bundle carries a monotonic `tick`. The host drops stale (older) ticks so a delayed packet cannot clobber a newer one.
+- Simulated 100 ms / 2 % loss 10-round match is a unit test (same numbers the plan allows Playwright shaping for). The test restores those binary snapshots onto a client view. Live WebRTC e2e asserts the DataChannel payload was `ArrayBuffer` (not JSON) and that a held remote `moveX` moves the host seat.
 
 ## Documented limitation: reflect / parry delay
 
