@@ -21,7 +21,7 @@ import {
   Transform,
   Weapon,
 } from '../src/sim/traits';
-import { gymLevel, makeSim, pin, playerOf, woodsClearing } from './helpers';
+import { gymLevel, hold, makeSim, pin, playerOf, woodsClearing } from './helpers';
 
 describe('M9 bots', () => {
   it('a human seat past playerCount is not tagged as a bot', () => {

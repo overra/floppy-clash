@@ -260,7 +260,7 @@ describe('M4 hazards', () => {
       id: 'sweep-laser-up',
       objects: [
         { type: 'solid' as const, x: 12, y: 1, w: 24, h: 2 },
-        { type: 'laser' as const, x: 10, y: 2, dir: 'up', onTicks: 80, offTicks: 1, warningTicks: 0 },
+        { type: 'laser' as const, x: 10, y: 2, dir: 'up' as const, onTicks: 80, offTicks: 1, warningTicks: 0 },
       ],
     };
     expect(playerCrossesBeam(6, 8, 14, 8, 10, 2, 10, 16)).toBeTruthy();
