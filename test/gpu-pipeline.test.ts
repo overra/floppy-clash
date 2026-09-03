@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { isTgpuFragmentFn, isTgpuVertexFn } from 'typegpu';
 import {
   CAMERA_STRIDE,
+  createBgDrawPipeline,
   createDecalDrawPipeline,
   createPostDrawPipeline,
   createSdfDrawPipeline,
@@ -13,6 +14,7 @@ import {
   isTypeGpuDrawShaders,
   POST_STRIDE,
   PRIM_STRIDE,
+  resolveBgWgsl,
   resolvePostWgsl,
   resolveSdfDrawWgsl,
   sdfFragment,
@@ -61,6 +63,7 @@ describe('TypeGPU live SDF draw path (PLAN §4.11)', () => {
     resolveSdfDrawWgsl();
     resolveGlowWgsl();
     resolvePostWgsl();
+    resolveBgWgsl();
     spy.mockRestore();
     expect(warns.filter((w) => w.includes('implicit-conversion'))).toEqual([]);
   });
@@ -130,6 +133,13 @@ describe('TypeGPU live SDF draw path (PLAN §4.11)', () => {
     expect(wgsl).toMatch(/@fragment/);
     expect(typeof createPostDrawPipeline).toBe('function');
   });
+
+  it('resolves the fullscreen theme gradient DualFns', () => {
+    const wgsl = resolveBgWgsl();
+    expect(wgsl).toMatch(/@vertex/);
+    expect(wgsl).toMatch(/@fragment/);
+    expect(typeof createBgDrawPipeline).toBe('function');
+  });
 });
 
 describe('GPU boot order (PLAN §4.11)', () => {
@@ -150,6 +160,7 @@ describe('GPU boot order (PLAN §4.11)', () => {
     expect(renderer).toContain('replayFrameReadback');
     expect(renderer).toContain('layer0Count');
     expect(renderer).toContain('createPostDrawPipeline');
+    expect(renderer).toContain('createBgDrawPipeline');
   });
 });
 

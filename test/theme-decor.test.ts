@@ -3,15 +3,20 @@ import { woodsClearing } from '../src/levels/handauthored';
 import { createCamera } from '../src/render/camera';
 import { buildFrame } from '../src/render/buildFrame';
 import { groupBounds } from '../src/render/frame';
-import { PRIM_BEZIER, PRIM_PIE, PRIM_ROUNDED_BOX } from '../src/render/sdf/primitives';
+import {
+  PRIM_BEZIER,
+  PRIM_PIE,
+  PRIM_ROUNDED_BOX,
+  PRIM_TRIANGLE,
+} from '../src/render/sdf/primitives';
 import { lerpHex, themePassGroups } from '../src/render/themeDecor';
-import { Combat } from '../src/sim/traits';
+import { Combat, Crown, Transform } from '../src/sim/traits';
 import { spawnWeapon } from '../src/sim/systems/weapons';
 import { themeOf } from '../src/sim/level/themes';
 import { makeSim, playerOf } from './helpers';
 
 describe('PLAN §4.11 theme pass', () => {
-  it('emits gradient bands and parallax decorations including beziers', () => {
+  it('emits parallax decorations including beziers (gradient is a fullscreen pass)', () => {
     const theme = themeOf('woods');
     const cam = createCamera({ x: 0, y: 0, w: 32, h: 18 });
     cam.x = 12;
@@ -19,27 +24,11 @@ describe('PLAN §4.11 theme pass', () => {
     cam.zoom = 32;
     const groups = themePassGroups(theme, { x: 0, y: 0, w: 32, h: 18 }, cam, 1280, 720);
     expect(groups.every((g) => g.layer === 0)).toBe(true);
-    expect(
-      groups.filter((g) => g.primitives.some((p) => p.kind === PRIM_ROUNDED_BOX)).length,
-    ).toBeGreaterThanOrEqual(4);
     expect(groups.some((g) => g.primitives.some((p) => p.kind === PRIM_BEZIER))).toBe(true);
+    expect(groups.some((g) => g.primitives.some((p) => p.kind === PRIM_ROUNDED_BOX))).toBe(true);
     const colors = new Set(groups.map((g) => g.color));
-    expect(colors.size).toBeGreaterThan(2);
+    expect(colors.size).toBeGreaterThan(1);
     expect(lerpHex('#000000', '#ffffff', 0.5)).toBe('#808080');
-    const viewHalfW = 1280 / cam.zoom / 2;
-    const viewHalfH = 720 / cam.zoom / 2;
-    const bands = groups.filter(
-      (g) => g.primitives.length === 1 && g.primitives[0]?.kind === PRIM_ROUNDED_BOX,
-    );
-    expect(bands.length).toBeGreaterThanOrEqual(5);
-    const minX = Math.min(...bands.map((g) => g.minX));
-    const maxX = Math.max(...bands.map((g) => g.maxX));
-    const minY = Math.min(...bands.map((g) => g.minY));
-    const maxY = Math.max(...bands.map((g) => g.maxY));
-    expect(minX).toBeLessThan(cam.x - viewHalfW);
-    expect(maxX).toBeGreaterThan(cam.x + viewHalfW);
-    expect(minY).toBeLessThan(cam.y - viewHalfH);
-    expect(maxY).toBeGreaterThan(cam.y + viewHalfH);
   });
 
   it('rounded-box bounds use half-extents, not bx/by as points', () => {
@@ -78,8 +67,8 @@ describe('PLAN §4.11 theme pass', () => {
 
   it('loose weapons are a group of 2–4 rounded boxes', () => {
     const sim = makeSim({ level: woodsClearing, seed: 2, settings: { playerCount: 1 } });
-    spawnWeapon(sim.ecs, 'ak47', 16, 8);
-    sim.step();
+    const gun = spawnWeapon(sim.ecs, 'ak47', 16, 8);
+    gun.set(Transform, { x: 16, y: 8, angle: 0.6 });
     const frame = buildFrame(sim, createCamera(sim.ctx.level.bounds), 0, 1280, 720, [], {
       freezeCamera: true,
     });
@@ -91,5 +80,21 @@ describe('PLAN §4.11 theme pass', () => {
         g.primitives.every((pr) => pr.kind === PRIM_ROUNDED_BOX),
     );
     expect(guns.length).toBeGreaterThan(0);
+    expect(guns.some((g) => g.primitives.some((pr) => Math.abs(pr.cx ?? 0) > 0.2))).toBe(true);
+  });
+
+  it('crown is a band plus points, not a single disk', () => {
+    const sim = makeSim({ level: woodsClearing, seed: 2, settings: { playerCount: 1 } });
+    playerOf(sim).add(Crown());
+    const frame = buildFrame(sim, createCamera(sim.ctx.level.bounds), 0, 1280, 720, [], {
+      freezeCamera: true,
+    });
+    const crown = frame.groups.find(
+      (g) => g.layer === 7 && g.color === '#f2c14e' && g.primitives.length > 1,
+    );
+    expect(crown).toBeTruthy();
+    expect(crown!.primitives.length).toBeGreaterThanOrEqual(4);
+    expect(crown!.primitives.some((p) => p.kind === PRIM_TRIANGLE)).toBe(true);
+    expect(crown!.primitives.some((p) => p.kind === PRIM_ROUNDED_BOX)).toBe(true);
   });
 });

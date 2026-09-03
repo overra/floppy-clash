@@ -13,6 +13,7 @@ import {
   takeOrReadySeat,
   takeSeat,
 } from './ui/menus';
+import { scoreboardMarkup } from './ui/scoreboard';
 import { loadMaps, saveMap } from './input/remap';
 import { gymLevel } from './levels/catalog';
 import { matchLevelPool } from './levels/catalog';
@@ -795,19 +796,20 @@ export function createGame(root: HTMLElement): Game {
       frame.hud.phase === RoundPhase.Scoreboard ||
       frame.hud.phase === RoundPhase.MatchOver
     ) {
-      const board = document.createElement('div');
-      board.dataset.roundOver = '1';
-      board.style.cssText =
-        'position:absolute;top:20%;left:50%;transform:translateX(-50%);background:rgba(10,12,16,0.75);padding:16px 24px;border-radius:12px;text-align:center';
       const title =
         frame.hud.phase === RoundPhase.MatchOver
           ? 'Match over'
           : frame.hud.phase === RoundPhase.LastKill
             ? 'Last standing'
             : 'Round over';
-      board.innerHTML = `<h2 style="margin:0 0 8px">${title}</h2>
-        <p>${(frame.hud.wins ?? []).map((w, i) => `P${i + 1}: ${w}`).join(' · ')}</p>`;
-      hudEl.append(board);
+      hudEl.insertAdjacentHTML(
+        'beforeend',
+        scoreboardMarkup({
+          title,
+          wins: frame.hud.wins ?? [0, 0, 0, 0],
+          firstTo: frame.hud.firstTo,
+        }),
+      );
     }
     const tip = document.createElement('div');
     tip.className = 'notice';

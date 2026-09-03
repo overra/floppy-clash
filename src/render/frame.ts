@@ -89,7 +89,27 @@ export function primitiveBounds(p: Primitive): {
 } {
   const r = p.r;
   if (p.kind === PRIM_ROUNDED_BOX) {
-    return { minX: p.ax - p.bx, minY: p.ay - p.by, maxX: p.ax + p.bx, maxY: p.ay + p.by };
+    const ang = p.cx ?? 0;
+    if (Math.abs(ang) < 1e-6) {
+      return { minX: p.ax - p.bx, minY: p.ay - p.by, maxX: p.ax + p.bx, maxY: p.ay + p.by };
+    }
+    const c = Math.cos(ang);
+    const s = Math.sin(ang);
+    let minX = Infinity,
+      minY = Infinity,
+      maxX = -Infinity,
+      maxY = -Infinity;
+    for (const ox of [-p.bx, p.bx]) {
+      for (const oy of [-p.by, p.by]) {
+        const x = p.ax + ox * c - oy * s;
+        const y = p.ay + ox * s + oy * c;
+        minX = Math.min(minX, x);
+        minY = Math.min(minY, y);
+        maxX = Math.max(maxX, x);
+        maxY = Math.max(maxY, y);
+      }
+    }
+    return { minX, minY, maxX, maxY };
   }
   if (p.kind === PRIM_DISK || p.kind === PRIM_PIE) {
     return { minX: p.ax - r, minY: p.ay - r, maxX: p.ax + r, maxY: p.ay + r };

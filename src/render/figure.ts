@@ -29,7 +29,10 @@ export type LimbState = {
   shoulderSway: number;
 };
 
-export function poseToPrimitives(pose: FigurePose, secondary: LimbState = { hipSway: 0, shoulderSway: 0 }): Primitive[] {
+export function poseToPrimitives(
+  pose: FigurePose,
+  secondary: LimbState = { hipSway: 0, shoulderSway: 0 },
+): Primitive[] {
   const duck = pose.ducking ? 0.72 : 1;
   const h = 1.8 * duck;
   const headR = 0.18;
@@ -46,20 +49,25 @@ export function poseToPrimitives(pose: FigurePose, secondary: LimbState = { hipS
   const punch = pose.punching ? 0.55 : 0.28;
   const block = pose.blocking ? 0.35 : 0;
 
-  const armL = pose.physicsArmL ?? end(shoulder, { x: -0.35 * pose.facing, y: -0.15 + run * 0.1 }, 0.45);
-  const armR = pose.physicsArmR ?? end(shoulder, { x: aim.x * punch + block * aim.x, y: aim.y * punch + block * 0.2 }, 0.55);
+  const armL =
+    pose.physicsArmL ?? end(shoulder, { x: -0.35 * pose.facing, y: -0.15 + run * 0.1 }, 0.45);
+  const armR =
+    pose.physicsArmR ??
+    end(shoulder, { x: aim.x * punch + block * aim.x, y: aim.y * punch + block * 0.2 }, 0.55);
   const legL = end(hip, { x: -0.15 + run * 0.25, y: -1 + air * 0.08 }, 0.7);
   const legR = end(hip, { x: 0.15 - run * 0.25, y: -1 - air * 0.04 }, 0.7);
 
+  /** PLAN §4.11: one head disk + 9 capsules (neck, torso, arms, legs, aim hand). */
   const prims: Primitive[] = [
     disk(head, headR),
-    cap(head, hip, 0.11),
+    cap(shoulder, hip, 0.11),
     cap(shoulder, armL, 0.07),
     cap(shoulder, armR, 0.07),
     cap(hip, { x: lerp(hip.x, legL.x, 0.5), y: lerp(hip.y, legL.y, 0.5) }, 0.08),
     cap({ x: lerp(hip.x, legL.x, 0.5), y: lerp(hip.y, legL.y, 0.5) }, legL, 0.07),
     cap(hip, { x: lerp(hip.x, legR.x, 0.5), y: lerp(hip.y, legR.y, 0.5) }, 0.08),
     cap({ x: lerp(hip.x, legR.x, 0.5), y: lerp(hip.y, legR.y, 0.5) }, legR, 0.07),
+    cap(head, shoulder, 0.07),
     cap(armR, { x: armR.x + aim.x * 0.15, y: armR.y + aim.y * 0.15 }, 0.05),
   ];
   return prims.slice(0, 16);

@@ -214,9 +214,13 @@ function drawCanvasGroups(
         const s = worldToScreen(cam, p.ax, p.ay, w, h);
         const rw = p.bx * 2 * cam.zoom;
         const rh = p.by * 2 * cam.zoom;
+        ctx.save();
+        ctx.translate(s.x, s.y);
+        ctx.rotate(-(p.cx ?? 0));
         ctx.beginPath();
-        roundRect(ctx, s.x - rw / 2, s.y - rh / 2, rw, rh, p.r * cam.zoom);
+        roundRect(ctx, -rw / 2, -rh / 2, rw, rh, p.r * cam.zoom);
         ctx.fill();
+        ctx.restore();
       }
     });
     ctx.restore();

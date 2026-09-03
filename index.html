@@ -26,7 +26,7 @@
         height: 100%;
         background: var(--bg);
         color: var(--ink);
-        font-family: "Avenir Next", "Segoe UI", sans-serif;
+        font-family: 'Avenir Next', 'Segoe UI', sans-serif;
         overflow: hidden;
       }
       #app {
@@ -60,6 +60,63 @@
       }
       .hidden {
         display: none !important;
+      }
+      .scoreboard {
+        position: absolute;
+        top: 16%;
+        left: 50%;
+        transform: translateX(-50%);
+        min-width: 280px;
+        padding: 22px 28px 20px;
+        background: linear-gradient(180deg, rgba(36, 30, 18, 0.94), rgba(10, 12, 16, 0.9));
+        border: 2px solid var(--accent);
+        border-radius: 16px;
+        box-shadow:
+          0 16px 48px rgba(0, 0, 0, 0.5),
+          inset 0 0 48px rgba(242, 193, 78, 0.08);
+        text-align: center;
+        pointer-events: none;
+      }
+      .score-crest {
+        width: 52px;
+        height: 30px;
+        margin: 0 auto 10px;
+        background: var(--accent);
+        clip-path: polygon(0 100%, 0 42%, 18% 72%, 50% 8%, 82% 72%, 100% 42%, 100% 100%);
+      }
+      .scoreboard h2 {
+        margin: 0 0 6px;
+        letter-spacing: 0.04em;
+      }
+      .score-first {
+        margin: 0 0 10px;
+        color: var(--muted);
+        font-size: 13px;
+      }
+      .score-row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin: 6px 0;
+        padding: 8px 12px;
+        border-radius: 10px;
+        background: rgba(255, 255, 255, 0.05);
+      }
+      .score-row.leader {
+        outline: 1px solid var(--accent);
+        background: rgba(242, 193, 78, 0.12);
+      }
+      .crown-mark {
+        display: inline-block;
+        width: 14px;
+        height: 10px;
+        margin-right: 6px;
+        background: var(--accent);
+        clip-path: polygon(0 100%, 0 40%, 25% 70%, 50% 5%, 75% 70%, 100% 40%, 100% 100%);
+        vertical-align: middle;
+      }
+      .score-wins {
+        font-weight: 800;
       }
     </style>
   </head>

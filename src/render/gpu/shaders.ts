@@ -122,7 +122,12 @@ export const primitiveSdfGpu = tgpu.fn(
   if (prim.kind === d.u32(1))
     return sdLine(p, d.vec2f(prim.ax, prim.ay), d.vec2f(prim.bx, prim.by)) - prim.r;
   if (prim.kind === d.u32(2)) {
-    return sdRoundedBox2d(d.vec2f(p.x - prim.ax, p.y - prim.ay), d.vec2f(prim.bx, prim.by), prim.r);
+    const q0 = d.vec2f(p.x - prim.ax, p.y - prim.ay);
+    const rot = d.f32(0) - prim.cx;
+    const rc = std.cos(rot);
+    const rs = std.sin(rot);
+    const q = d.vec2f(rc * q0.x - rs * q0.y, rs * q0.x + rc * q0.y);
+    return sdRoundedBox2d(q, d.vec2f(prim.bx, prim.by), prim.r);
   }
   if (prim.kind === d.u32(3)) {
     return sdTriangleGpu(
@@ -450,6 +455,65 @@ export function createPostDrawPipeline(root: TgpuRoot, format: GPUTextureFormat)
     .$name('post-draw');
 }
 
+/** PLAN §4.11 pass (1): fullscreen theme gradient (not a solid clear). */
+export const GpuBg = d.struct({
+  top: d.vec4f,
+  bottom: d.vec4f,
+  view: d.vec2f,
+  pad: d.vec2f,
+});
+
+export const bgLayout = tgpu
+  .bindGroupLayout({
+    bg: { uniform: GpuBg },
+  })
+  .$idx(0);
+
+export const bgVertex = tgpu
+  .vertexFn({
+    in: { vertexIndex: d.builtin.vertexIndex },
+    out: { pos: d.builtin.position },
+  })((input) => {
+    'use gpu';
+    let x = d.f32(-1);
+    let y = d.f32(-1);
+    if (input.vertexIndex === d.u32(1)) {
+      x = d.f32(3);
+    } else if (input.vertexIndex === d.u32(2)) {
+      y = d.f32(3);
+    }
+    return { pos: d.vec4f(x, y, d.f32(0), d.f32(1)) };
+  })
+  .$name('bgVertex');
+
+export const bgFragment = tgpu
+  .fragmentFn({
+    in: { pos: d.builtin.position },
+    out: d.vec4f,
+  })((input) => {
+    'use gpu';
+    const bg = bgLayout.$.bg;
+    const t = std.saturate(input.pos.y / std.max(bg.view.y, d.f32(1)));
+    return d.vec4f(
+      bg.top.x + (bg.bottom.x - bg.top.x) * t,
+      bg.top.y + (bg.bottom.y - bg.top.y) * t,
+      bg.top.z + (bg.bottom.z - bg.top.z) * t,
+      d.f32(1),
+    );
+  })
+  .$name('bgFragment');
+
+export function createBgDrawPipeline(root: TgpuRoot, format: GPUTextureFormat) {
+  return root
+    .createRenderPipeline({
+      vertex: bgVertex,
+      fragment: bgFragment,
+      primitive: { topology: 'triangle-list' },
+      targets: { format },
+    })
+    .$name('bg-draw');
+}
+
 /** Resolve the live SDF DualFns to WGSL (no GPU device). Proves the draw shaders are TypeGPU. */
 export function resolveSdfDrawWgsl(): string {
   return tgpu.resolve([
@@ -459,7 +523,13 @@ export function resolveSdfDrawWgsl(): string {
     decalFragment,
     postVertex,
     postFragment,
+    bgVertex,
+    bgFragment,
   ]);
+}
+
+export function resolveBgWgsl(): string {
+  return tgpu.resolve([bgVertex, bgFragment]);
 }
 
 export function resolvePostWgsl(): string {

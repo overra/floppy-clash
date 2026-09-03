@@ -16,12 +16,15 @@ import {
 } from './readback';
 import { replayFrameReadback } from './replayReadback';
 import {
+  bgLayout,
+  createBgDrawPipeline,
   createDecalDrawPipeline,
   createPostDrawPipeline,
   createSdfDrawPipeline,
   decalLayout,
   GPU_DRAW_BACKEND,
   GPU_DRAW_PIPELINE_API,
+  GpuBg,
   GpuBounds,
   GpuCamera,
   GpuGroup,
@@ -120,6 +123,12 @@ async function createGpuRenderer(
   } catch {
     postPipeline = null;
   }
+  let bgPipeline: ReturnType<typeof createBgDrawPipeline> | null = null;
+  try {
+    bgPipeline = createBgDrawPipeline(root, format);
+  } catch {
+    bgPipeline = null;
+  }
   try {
     pipeline.initSync();
     decalPipeline.initSync();
@@ -130,6 +139,11 @@ async function createGpuRenderer(
     postPipeline?.initSync();
   } catch {
     postPipeline = null;
+  }
+  try {
+    bgPipeline?.initSync();
+  } catch {
+    bgPipeline = null;
   }
 
   const cameraBuf = root.createBuffer(GpuCamera).$usage('uniform');
@@ -152,6 +166,8 @@ async function createGpuRenderer(
 
   const postBuf = root.createBuffer(GpuPost).$usage('uniform');
   const postBind = root.createBindGroup(postLayout, { post: postBuf });
+  const bgBuf = root.createBuffer(GpuBg).$usage('uniform');
+  const bgBind = root.createBindGroup(bgLayout, { bg: bgBuf });
 
   const decalBoundsBuf = root.createBuffer(GpuBounds).$usage('uniform');
   const decalSampler = root.createSampler({ magFilter: 'linear', minFilter: 'linear' });
@@ -337,12 +353,23 @@ async function createGpuRenderer(
         colorAttachments: [
           {
             view: current.createView(),
-            clearValue: hexToRgb(frame.theme.top),
+            clearValue: { r: 0, g: 0, b: 0, a: 1 },
             loadOp: 'clear',
             storeOp: 'store',
           },
         ],
       });
+      if (bgPipeline) {
+        const [tr, tg, tb] = parseColor(frame.theme.top);
+        const [br, bgc, bb] = parseColor(frame.theme.bottom);
+        bgBuf.write({
+          top: d.vec4f(tr, tg, tb, 1),
+          bottom: d.vec4f(br, bgc, bb, 1),
+          view: d.vec2f(w, h),
+          pad: d.vec2f(0, 0),
+        });
+        bgPipeline.with(pass).with(bgBind).draw(3);
+      }
       const bgCount = packed.layer0Count;
       const worldCount = packed.groupCount - bgCount;
       if (bgCount > 0) {
@@ -423,9 +450,4 @@ export async function tryCreateGpuRenderer(
 
 function parseColor(hex: string): [number, number, number] {
   return parseHex(hex);
-}
-
-function hexToRgb(hex: string): GPUColorDict {
-  const [r, g, b] = parseColor(hex);
-  return { r, g, b, a: 1 };
 }

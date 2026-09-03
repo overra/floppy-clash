@@ -12,8 +12,11 @@ import {
   type FramebufferReadback,
 } from './readback';
 import {
+  bgLayout,
+  createBgDrawPipeline,
   createPostDrawPipeline,
   createSdfDrawPipeline,
+  GpuBg,
   GpuCamera,
   GpuGroup,
   GpuPost,
@@ -53,6 +56,13 @@ export async function replayFrameReadback(frame: RenderFrame): Promise<Framebuff
     } catch {
       postPipeline = null;
     }
+    let bgPipeline: ReturnType<typeof createBgDrawPipeline> | null = null;
+    try {
+      bgPipeline = createBgDrawPipeline(root, format as GPUTextureFormat);
+      bgPipeline.initSync();
+    } catch {
+      bgPipeline = null;
+    }
     const cameraBuf = root.createBuffer(GpuCamera).$usage('uniform');
     const groupBuf = root.createBuffer(d.arrayOf(GpuGroup, MAX_GROUPS)).$usage('storage');
     const primBuf = root.createBuffer(d.arrayOf(GpuPrimitive, MAX_PRIMS)).$usage('storage');
@@ -63,6 +73,8 @@ export async function replayFrameReadback(frame: RenderFrame): Promise<Framebuff
     });
     const postBuf = root.createBuffer(GpuPost).$usage('uniform');
     const postBind = root.createBindGroup(postLayout, { post: postBuf });
+    const bgBuf = root.createBuffer(GpuBg).$usage('uniform');
+    const bgBind = root.createBindGroup(bgLayout, { bg: bgBuf });
     const w = READBACK_W;
     const h = READBACK_H;
     const bytesPerRow = alignBytesPerRow(w * PIXEL_BYTES);
@@ -86,18 +98,28 @@ export async function replayFrameReadback(frame: RenderFrame): Promise<Framebuff
     const packed = packGroups(frame.groups.slice(0, MAX_GROUPS));
     groupBuf.write(packed.groupBytes);
     primBuf.write(packed.primBytes);
-    const [r, g, b] = parseHex(frame.theme.top);
+    const [tr, tg, tb] = parseHex(frame.theme.top);
+    const [br, bgc, bb] = parseHex(frame.theme.bottom);
     const encoder = device.createCommandEncoder();
     const pass = encoder.beginRenderPass({
       colorAttachments: [
         {
           view: tex.createView(),
-          clearValue: { r, g, b, a: 1 },
+          clearValue: { r: 0, g: 0, b: 0, a: 1 },
           loadOp: 'clear',
           storeOp: 'store',
         },
       ],
     });
+    if (bgPipeline) {
+      bgBuf.write({
+        top: d.vec4f(tr, tg, tb, 1),
+        bottom: d.vec4f(br, bgc, bb, 1),
+        view: d.vec2f(w, h),
+        pad: d.vec2f(0, 0),
+      });
+      bgPipeline.with(pass).with(bgBind).draw(3);
+    }
     const bgCount = packed.layer0Count;
     const worldCount = packed.groupCount - bgCount;
     if (bgCount > 0) {

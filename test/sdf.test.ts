@@ -5,6 +5,7 @@ import {
   opSmoothUnion,
   primitiveSdf,
   PRIM_BEZIER,
+  PRIM_CAPSULE,
   PRIM_DISK,
   PRIM_PIE,
   PRIM_ROUNDED_BOX,
@@ -107,9 +108,9 @@ describe('figure pose', () => {
       dead: false,
       phase: 0.2,
     });
-    expect(prims.length).toBeGreaterThanOrEqual(8);
-    expect(prims.length).toBeLessThanOrEqual(16);
-    expect(prims.some((p) => p.kind === PRIM_DISK)).toBe(true);
+    expect(prims.filter((p) => p.kind === PRIM_DISK)).toHaveLength(1);
+    expect(prims.filter((p) => p.kind === PRIM_CAPSULE)).toHaveLength(9);
+    expect(prims.length).toBe(10);
   });
 
   it('duck pose lowers the head disk', () => {

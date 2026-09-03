@@ -40,8 +40,10 @@ import {
   PRIM_PIE,
   PRIM_ROUNDED_BOX,
   PRIM_TRIANGLE,
+  type Primitive,
 } from './sdf/primitives';
 import { themePassGroups } from './themeDecor';
+import { weaponPrimitives } from './weaponSilhouette';
 
 const COLORS = ['#f2c14e', '#4c8dff', '#e85d4c', '#3dcf7a'];
 const COLORS_CB = ['#f0e442', '#0072b2', '#d55e00', '#009e73'];
@@ -72,40 +74,15 @@ function nextLimb(fx: FxWorld | undefined, simId: number, vx: number, vy: number
   return cur;
 }
 
-/** PLAN §4.11: a weapon is a group of 2–4 rounded boxes. */
-function weaponPrimitives(x: number, y: number, length: number) {
-  const half = Math.max(0.12, length * 0.5);
-  const barrel = {
-    kind: PRIM_ROUNDED_BOX,
-    ax: x,
-    ay: y,
-    bx: half,
-    by: 0.055,
-    r: 0.03,
-  };
-  const handle = {
-    kind: PRIM_ROUNDED_BOX,
-    ax: x - half * 0.35,
-    ay: y - 0.12,
-    bx: 0.045,
-    by: 0.11,
-    r: 0.02,
-  };
-  if (length > 0.7) {
-    return [
-      barrel,
-      handle,
-      {
-        kind: PRIM_ROUNDED_BOX,
-        ax: x - half * 0.78,
-        ay: y - 0.02,
-        bx: 0.14,
-        by: 0.04,
-        r: 0.02,
-      },
-    ];
-  }
-  return [barrel, handle];
+function crownPrimitives(x: number, y: number): Primitive[] {
+  const cy = y + 1.05;
+  return [
+    { kind: PRIM_ROUNDED_BOX, ax: x, ay: cy, bx: 0.22, by: 0.045, r: 0.012 },
+    { kind: PRIM_TRIANGLE, ax: x - 0.2, ay: cy + 0.04, bx: x - 0.08, by: cy + 0.04, r: 0.16 },
+    { kind: PRIM_TRIANGLE, ax: x - 0.06, ay: cy + 0.04, bx: x + 0.06, by: cy + 0.04, r: 0.2 },
+    { kind: PRIM_TRIANGLE, ax: x + 0.08, ay: cy + 0.04, bx: x + 0.2, by: cy + 0.04, r: 0.16 },
+    { kind: PRIM_DISK, ax: x, ay: cy + 0.02, bx: x, by: cy + 0.02, r: 0.04 },
+  ];
 }
 
 function bodyHalfSize(
@@ -243,16 +220,22 @@ export function buildFrame(
     }
   });
 
-  const heldByEntity = new Map<object, { x: number; y: number; length: number }>();
+  const heldByEntity = new Map<
+    object,
+    { x: number; y: number; length: number; kind: string; angle: number }
+  >();
   world.query(Weapon, Held, Transform).updateEach(([w, t], we) => {
     const holder = we.targetFor(HeldBy);
     if (!holder) return;
     const def = weaponByIndex(w.defId);
     const prev = we.get(PrevTransform) ?? t;
+    const aim = holder.get(Aim);
     heldByEntity.set(holder, {
       x: lerp(prev.x, t.x, alpha),
       y: lerp(prev.y, t.y, alpha),
       length: def.shape.length,
+      kind: def.shape.kind,
+      angle: aim ? Math.atan2(aim.y, aim.x) : t.angle,
     });
   });
 
@@ -262,7 +245,7 @@ export function buildFrame(
     const prev = e.get(PrevTransform) ?? t;
     const x = lerp(prev.x, t.x, alpha);
     const y = lerp(prev.y, t.y, alpha);
-    const prims = weaponPrimitives(x, y, def.shape.length);
+    const prims = weaponPrimitives(x, y, def.shape.length, def.shape.kind, t.angle);
     groups.push({
       ...groupBounds(prims),
       color: '#2b2b2b',
@@ -353,7 +336,7 @@ export function buildFrame(
       );
       const held = heldByEntity.get(e);
       if (held) {
-        prims.push(...weaponPrimitives(held.x, held.y, held.length));
+        prims.push(...weaponPrimitives(held.x, held.y, held.length, held.kind, held.angle));
       }
       groups.push({
         ...groupBounds(prims, 0.5),
@@ -364,16 +347,14 @@ export function buildFrame(
         primitives: prims,
       });
       if (e.has(Crown) && !e.has(Dead)) {
+        const jewels = crownPrimitives(x, y);
         groups.push({
-          minX: x - 0.25,
-          minY: y + 0.85,
-          maxX: x + 0.25,
-          maxY: y + 1.2,
+          ...groupBounds(jewels, 0.15),
           color: '#f2c14e',
           blend: 'union',
           smoothK: 0,
           layer: 7,
-          primitives: [{ kind: PRIM_DISK, ax: x, ay: y + 1.02, bx: x, by: y + 1.02, r: 0.14 }],
+          primitives: jewels,
         });
       }
       if (combat.blocking && !e.has(Dead)) {

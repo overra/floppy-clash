@@ -15,7 +15,7 @@ export type Primitive = {
   bx: number;
   by: number;
   r: number;
-  /** Bezier control point; unused by other kinds. */
+  /** Bezier control, or rounded-box rotation (radians). */
   cx?: number;
   cy?: number;
 };
@@ -149,8 +149,21 @@ export function primitiveSdf(prim: Primitive, p: Vec2): number {
   if (prim.kind === PRIM_DISK) return sdDisk(p, { x: prim.ax, y: prim.ay }, prim.r);
   if (prim.kind === PRIM_CAPSULE)
     return sdCapsule(p, { x: prim.ax, y: prim.ay }, { x: prim.bx, y: prim.by }, prim.r);
-  if (prim.kind === PRIM_ROUNDED_BOX)
-    return sdRoundedBox(p, { x: prim.ax, y: prim.ay }, prim.bx, prim.by, prim.r);
+  if (prim.kind === PRIM_ROUNDED_BOX) {
+    const ang = prim.cx ?? 0;
+    if (ang === 0) return sdRoundedBox(p, { x: prim.ax, y: prim.ay }, prim.bx, prim.by, prim.r);
+    const c = Math.cos(-ang);
+    const s = Math.sin(-ang);
+    const dx = p.x - prim.ax;
+    const dy = p.y - prim.ay;
+    return sdRoundedBox(
+      { x: prim.ax + c * dx - s * dy, y: prim.ay + s * dx + c * dy },
+      { x: prim.ax, y: prim.ay },
+      prim.bx,
+      prim.by,
+      prim.r,
+    );
+  }
   if (prim.kind === PRIM_TRIANGLE)
     return sdTriangle(
       p,

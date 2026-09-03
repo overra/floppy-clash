@@ -1,9 +1,19 @@
 import { builtInMatchLevels } from '../levels/catalog';
 import { DEFAULT_MAP, type PadMap } from '../input/remap';
 import { WEAPON_DEFS, weaponDisplayName } from '../sim/weapons/defs';
+import { scoreboardMarkup } from './scoreboard';
 import { DEFAULT_USER_SETTINGS, type UserSettings } from './settingsStore';
 
-export type Screen = 'menu' | 'join' | 'settings' | 'pause' | 'scoreboard' | 'lobby' | 'editor' | 'play' | 'disconnect';
+export type Screen =
+  | 'menu'
+  | 'join'
+  | 'settings'
+  | 'pause'
+  | 'scoreboard'
+  | 'lobby'
+  | 'editor'
+  | 'play'
+  | 'disconnect';
 
 export type Seat = {
   taken: boolean;
@@ -26,6 +36,7 @@ export type MenuState = {
   netRole: '' | 'host' | 'client';
   netState: 'idle' | 'connecting' | 'up' | 'error';
   lastSnapTick: number;
+  wins?: number[];
 };
 
 export type MenuActions = {
@@ -35,7 +46,13 @@ export type MenuActions = {
 export function createMenuState(): MenuState {
   return {
     screen: 'menu',
-    seats: Array.from({ length: 4 }, () => ({ taken: false, ready: false, color: 0, padId: '', name: '' })),
+    seats: Array.from({ length: 4 }, () => ({
+      taken: false,
+      ready: false,
+      color: 0,
+      padId: '',
+      name: '',
+    })),
     notice: '',
     firstTo: 0,
     maxHp: 100,
@@ -92,7 +109,11 @@ export function canStartMatch(seats: Seat[]): boolean {
   return seats.some((s) => s.taken && s.ready);
 }
 
-export function collectSettings(card: HTMLElement, menus: MenuState, settings: UserSettings): UserSettings {
+export function collectSettings(
+  card: HTMLElement,
+  menus: MenuState,
+  settings: UserSettings,
+): UserSettings {
   const num = (id: string, fallback: number) => {
     const el = card.querySelector(`#${id}`) as HTMLInputElement | null;
     return el ? Number(el.value) : fallback;
@@ -156,7 +177,12 @@ export function renderMenus(
   actions: MenuActions,
   settings: UserSettings = DEFAULT_USER_SETTINGS,
   maps: Record<string, PadMap> = {},
-  stats?: { matches: number; wins: number; kos: number; achievements?: { firstBlood?: boolean; firstWin?: boolean; tenKos?: boolean } },
+  stats?: {
+    matches: number;
+    wins: number;
+    kos: number;
+    achievements?: { firstBlood?: boolean; firstWin?: boolean; tenKos?: boolean };
+  },
 ): void {
   root.innerHTML = '';
   if (state.screen === 'play') return;
@@ -184,7 +210,11 @@ export function renderMenus(
     const statEl = card.querySelector('#localstats');
     if (statEl && stats) {
       const a = stats.achievements;
-      const badges = [a?.firstBlood && 'first blood', a?.firstWin && 'first win', a?.tenKos && '10 KOs'].filter(Boolean);
+      const badges = [
+        a?.firstBlood && 'first blood',
+        a?.firstWin && 'first win',
+        a?.tenKos && '10 KOs',
+      ].filter(Boolean);
       statEl.textContent = `Local stats — matches ${stats.matches} · wins ${stats.wins} · KOs ${stats.kos}${badges.length ? ` · ${badges.join(', ')}` : ''}`;
     }
   } else if (state.screen === 'join') {
@@ -208,7 +238,15 @@ export function renderMenus(
     card.append(btn('Resume', () => actions.resume?.()));
     card.append(btn('Quit', () => actions.quit?.()));
   } else if (state.screen === 'scoreboard') {
-    card.innerHTML = `<h2 data-round-over="1">Round over</h2><p>Next level incoming…</p>`;
+    card.innerHTML = scoreboardMarkup({
+      title: 'Round over',
+      wins: state.wins ?? [0, 0, 0, 0],
+      firstTo: state.firstTo || undefined,
+    });
+    const note = document.createElement('p');
+    note.textContent = 'Next level incoming…';
+    card.append(note);
+    card.append(btn('Back', () => actions.back?.()));
   } else if (state.screen === 'lobby') {
     renderLobby(card, state, settings, actions);
   } else if (state.screen === 'disconnect') {
@@ -308,7 +346,12 @@ function syncLobbyFields(card: HTMLElement, state: MenuState, settings: UserSett
   if (ft) state.firstTo = Number(ft.value) || 0;
 }
 
-function renderLobby(card: HTMLElement, state: MenuState, settings: UserSettings, actions: MenuActions): void {
+function renderLobby(
+  card: HTMLElement,
+  state: MenuState,
+  settings: UserSettings,
+  actions: MenuActions,
+): void {
   card.innerHTML = `<h2>Online lobby</h2>
     <p>Host-authoritative WebRTC. Signaling is local (<code>npm run server</code>); live WAN STUN/TURN is a hardware path.</p>
     <label>Room code <input id="room" value="${state.roomCode}" placeholder="ABC123" maxlength="8"></label>

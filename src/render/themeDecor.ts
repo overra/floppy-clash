@@ -11,46 +11,17 @@ import {
 } from './sdf/primitives';
 import type { ThemePalette } from '../sim/level/themes';
 
-/** PLAN §4.11 pass (1): background gradient bands + theme decorations with parallax. */
+/** PLAN §4.11 pass (1): theme decorations (SDF + parallax). Gradient is a fullscreen pass. */
 export function themePassGroups(
   theme: ThemePalette,
   bounds: { x: number; y: number; w: number; h: number },
   cam: CameraState,
-  viewW: number,
-  viewH: number,
+  _viewW: number,
+  _viewH: number,
 ): ShapeGroup[] {
-  const groups: ShapeGroup[] = [];
-  const zoom = Math.max(cam.zoom, 8);
-  const worldW = (viewW || 1280) / zoom;
-  const worldH = (viewH || 720) / zoom;
-  const halfW = worldW * 1.15;
-  const halfH = worldH * 1.15;
-  const bands = 5;
-  for (let i = 0; i < bands; i++) {
-    const t = i / (bands - 1);
-    const bandH = (2 * halfH) / bands;
-    const y = cam.y + halfH - (i + 0.5) * bandH;
-    const prims: Primitive[] = [
-      {
-        kind: PRIM_ROUNDED_BOX,
-        ax: cam.x,
-        ay: y,
-        bx: halfW,
-        by: bandH * 0.62,
-        r: 0.02,
-      },
-    ];
-    groups.push({
-      ...groupBounds(prims, 0.2),
-      color: lerpHex(theme.backgroundTop, theme.backgroundBottom, t),
-      blend: 'union',
-      smoothK: 0,
-      layer: 0,
-      primitives: prims,
-    });
-  }
-  groups.push(...themeDecorations(theme, bounds, cam));
-  return groups;
+  void _viewW;
+  void _viewH;
+  return themeDecorations(theme, bounds, cam);
 }
 
 function themeDecorations(
