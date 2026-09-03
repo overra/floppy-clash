@@ -122,6 +122,7 @@ export async function createWebRtcSession(
   const code = room.toUpperCase();
   const shape = readShape();
   const handlers: ((msg: NetMessage) => void)[] = [];
+  const pending: NetMessage[] = [];
   const peers = new Map<string, PeerLink>();
   let selfId = '';
   let reliable: RTCDataChannel | null = null;
@@ -152,6 +153,13 @@ export async function createWebRtcSession(
     },
     onMessage(fn) {
       handlers.push(fn);
+      if (pending.length) {
+        const queued = pending.splice(0);
+        for (const m of queued) {
+          if (m.t === 'chat' && role === 'host') session.send(m, true);
+          for (const h of handlers) h(m);
+        }
+      }
     },
     close() {
       for (const p of peers.values()) p.pc.close();
@@ -166,6 +174,10 @@ export async function createWebRtcSession(
     try {
       msg = decodeWire(ev.data);
     } catch {
+      return;
+    }
+    if (handlers.length === 0) {
+      pending.push(msg);
       return;
     }
     if (msg.t === 'chat' && role === 'host') session.send(msg, true, peerId);

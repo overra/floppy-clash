@@ -190,6 +190,8 @@ export function createGame(root: HTMLElement): Game {
   let netName = 'guest';
   let netSlot = 0;
   let nextGuestSlot = 0;
+  const slotByName = new Map<string, number>();
+  let helloRetryAt = 0;
   let pendingLevel: LevelDef | undefined;
   const remoteInboxes: RemoteInbox[] = [
     emptyRemoteInbox(),
@@ -420,6 +422,11 @@ export function createGame(root: HTMLElement): Game {
           clientView.push(performance.now(), msg.snap);
           clientView.apply(performance.now());
           syncClientLevelChrome();
+          const nowMs = performance.now();
+          if (netSlot === 0 && netName && nowMs - helloRetryAt > 400) {
+            helloRetryAt = nowMs;
+            session.send({ t: 'hello', name: netName }, true);
+          }
           if (menus.screen !== 'play') {
             menus.screen = 'play';
             show();
@@ -432,17 +439,22 @@ export function createGame(root: HTMLElement): Game {
         if (menus.screen === 'lobby') show();
       }
       if (msg.t === 'hello' && session.role === 'host') {
-        nextGuestSlot = Math.min(3, nextGuestSlot + 1);
-        session.send({ t: 'event', kind: 'slot', payload: `${msg.name}:${nextGuestSlot}` });
+        let slot = slotByName.get(msg.name);
+        if (slot == null) {
+          nextGuestSlot = Math.min(3, nextGuestSlot + 1);
+          slot = nextGuestSlot;
+          slotByName.set(msg.name, slot);
+        }
+        session.send({ t: 'event', kind: 'slot', payload: `${msg.name}:${slot}` }, true);
         for (const m of hostContentMessages(
           JSON.stringify({ maxHp: settings.maxHp, firstTo: settings.firstTo }),
           JSON.stringify(sim?.ctx.level ?? { id: 'host-level' }),
         )) {
-          session.send(m);
+          session.send(m, true);
         }
         if (sim) {
-          sim.ensureSeat(nextGuestSlot);
-          session.send(lateJoinSnapshotMessage(sim.snapshot()));
+          sim.ensureSeat(slot);
+          session.send(lateJoinSnapshotMessage(sim.snapshot()), true);
           drainChangeTrackers(sim.ecs);
         }
       }
@@ -478,6 +490,7 @@ export function createGame(root: HTMLElement): Game {
       }
       if (role === 'host') {
         nextGuestSlot = 0;
+        slotByName.clear();
         for (const msg of hostContentMessages(
           JSON.stringify({ maxHp: settings.maxHp, firstTo: settings.firstTo }),
           JSON.stringify(sim?.ctx.level ?? { id: 'host-level' }),
