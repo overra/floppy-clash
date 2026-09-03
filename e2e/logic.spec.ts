@@ -120,7 +120,7 @@ test('settings persist toggles and editor property panel opens', async ({ page }
   await page.getByRole('button', { name: 'Settings' }).click();
   await expect(page.locator('#lit')).toBeChecked();
   await expect(page.locator('#userlevels')).toBeVisible();
-  await expect(page.locator('text=User levels')).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'User levels' })).toBeVisible();
   await page.getByRole('button', { name: 'Back' }).click();
   await page.getByRole('button', { name: 'Level Editor' }).click();
   await expect(page.locator('text=Level Editor')).toBeVisible();
