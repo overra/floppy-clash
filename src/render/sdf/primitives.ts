@@ -1,0 +1,201 @@
+import type { Vec2 } from '../../core/math';
+import { length, sub } from '../../core/math';
+
+export const PRIM_DISK = 0;
+export const PRIM_CAPSULE = 1;
+export const PRIM_ROUNDED_BOX = 2;
+export const PRIM_TRIANGLE = 3;
+export const PRIM_PIE = 4;
+export const PRIM_BEZIER = 5;
+
+export type Primitive = {
+  kind: number;
+  ax: number;
+  ay: number;
+  bx: number;
+  by: number;
+  r: number;
+  /** Bezier control, or rounded-box rotation (radians). */
+  cx?: number;
+  cy?: number;
+};
+
+export function sdDisk(p: Vec2, center: Vec2, radius: number): number {
+  return length(sub(p, center)) - radius;
+}
+
+export function sdLine(p: Vec2, a: Vec2, b: Vec2): number {
+  const pax = p.x - a.x;
+  const pay = p.y - a.y;
+  const bax = b.x - a.x;
+  const bay = b.y - a.y;
+  const h = Math.max(0, Math.min(1, (pax * bax + pay * bay) / (bax * bax + bay * bay || 1)));
+  return Math.hypot(pax - bax * h, pay - bay * h);
+}
+
+export function sdCapsule(p: Vec2, a: Vec2, b: Vec2, radius: number): number {
+  return sdLine(p, a, b) - radius;
+}
+
+export function sdRoundedBox(
+  p: Vec2,
+  center: Vec2,
+  halfW: number,
+  halfH: number,
+  radius: number,
+): number {
+  const dx = Math.abs(p.x - center.x) - halfW + radius;
+  const dy = Math.abs(p.y - center.y) - halfH + radius;
+  const ax = Math.max(dx, 0);
+  const ay = Math.max(dy, 0);
+  return Math.hypot(ax, ay) + Math.min(Math.max(dx, dy), 0) - radius;
+}
+
+export function sdTriangle(p: Vec2, a: Vec2, b: Vec2, c: Vec2): number {
+  const e0x = b.x - a.x;
+  const e0y = b.y - a.y;
+  const e1x = c.x - b.x;
+  const e1y = c.y - b.y;
+  const e2x = a.x - c.x;
+  const e2y = a.y - c.y;
+  const v0x = p.x - a.x;
+  const v0y = p.y - a.y;
+  const v1x = p.x - b.x;
+  const v1y = p.y - b.y;
+  const v2x = p.x - c.x;
+  const v2y = p.y - c.y;
+  const d0 = Math.hypot(
+    v0x - e0x * clamp01(dot(v0x, v0y, e0x, e0y) / (len2(e0x, e0y) || 1)),
+    v0y - e0y * clamp01(dot(v0x, v0y, e0x, e0y) / (len2(e0x, e0y) || 1)),
+  );
+  const d1 = Math.hypot(
+    v1x - e1x * clamp01(dot(v1x, v1y, e1x, e1y) / (len2(e1x, e1y) || 1)),
+    v1y - e1y * clamp01(dot(v1x, v1y, e1x, e1y) / (len2(e1x, e1y) || 1)),
+  );
+  const d2 = Math.hypot(
+    v2x - e2x * clamp01(dot(v2x, v2y, e2x, e2y) / (len2(e2x, e2y) || 1)),
+    v2y - e2y * clamp01(dot(v2x, v2y, e2x, e2y) / (len2(e2x, e2y) || 1)),
+  );
+  const s = Math.sign(e0x * e0y !== 0 ? e0x * v0y - e0y * v0x : 1);
+  const min = Math.min(d0, d1, d2);
+  const inside =
+    (e0x * v0y - e0y * v0x >= 0 && e1x * v1y - e1y * v1x >= 0 && e2x * v2y - e2y * v2x >= 0) ||
+    (e0x * v0y - e0y * v0x <= 0 && e1x * v1y - e1y * v1x <= 0 && e2x * v2y - e2y * v2x <= 0);
+  void s;
+  return inside ? -min : min;
+}
+
+export function sdPie(
+  p: Vec2,
+  center: Vec2,
+  radius: number,
+  halfAngle: number,
+  rotation = 0,
+): number {
+  let dx = p.x - center.x;
+  let dy = p.y - center.y;
+  if (rotation !== 0) {
+    const c = Math.cos(-rotation);
+    const s = Math.sin(-rotation);
+    const rx = c * dx - s * dy;
+    const ry = s * dx + c * dy;
+    dx = rx;
+    dy = ry;
+  }
+  const q = { x: Math.abs(dx), y: dy };
+  const scx = Math.sin(halfAngle);
+  const scy = Math.cos(halfAngle);
+  const l = length(q) - radius;
+  const m = length({
+    x: q.x - scx * clamp(dot(q.x, q.y, scx, scy), 0, radius),
+    y: q.y - scy * clamp(dot(q.x, q.y, scx, scy), 0, radius),
+  });
+  return Math.max(l, m * Math.sign(scy * q.x - scx * q.y));
+}
+
+/** Quadratic Bézier tube (CPU; GPU uses `@typegpu/sdf` `sdBezier`). */
+export function sdBezier(p: Vec2, a: Vec2, b: Vec2, c: Vec2, radius: number): number {
+  let best = Infinity;
+  let prev = a;
+  for (let i = 1; i <= 8; i++) {
+    const t = i / 8;
+    const omt = 1 - t;
+    const q = {
+      x: omt * omt * a.x + 2 * omt * t * b.x + t * t * c.x,
+      y: omt * omt * a.y + 2 * omt * t * b.y + t * t * c.y,
+    };
+    best = Math.min(best, sdLine(p, prev, q));
+    prev = q;
+  }
+  return best - radius;
+}
+
+export function opSmoothUnion(a: number, b: number, k: number): number {
+  const h = Math.max(k - Math.abs(a - b), 0) / (k || 1);
+  return Math.min(a, b) - h * h * k * 0.25;
+}
+
+export function opUnion(a: number, b: number): number {
+  return Math.min(a, b);
+}
+
+export function coverage(dist: number, pixel = 1): number {
+  const w = Math.max(pixel, 1e-4);
+  return 1 - smoothstep(-0.5, 0.5, dist / w);
+}
+
+export function primitiveSdf(prim: Primitive, p: Vec2): number {
+  if (prim.kind === PRIM_DISK) return sdDisk(p, { x: prim.ax, y: prim.ay }, prim.r);
+  if (prim.kind === PRIM_CAPSULE)
+    return sdCapsule(p, { x: prim.ax, y: prim.ay }, { x: prim.bx, y: prim.by }, prim.r);
+  if (prim.kind === PRIM_ROUNDED_BOX) {
+    const ang = prim.cx ?? 0;
+    if (ang === 0) return sdRoundedBox(p, { x: prim.ax, y: prim.ay }, prim.bx, prim.by, prim.r);
+    const c = Math.cos(-ang);
+    const s = Math.sin(-ang);
+    const dx = p.x - prim.ax;
+    const dy = p.y - prim.ay;
+    return sdRoundedBox(
+      { x: prim.ax + c * dx - s * dy, y: prim.ay + s * dx + c * dy },
+      { x: prim.ax, y: prim.ay },
+      prim.bx,
+      prim.by,
+      prim.r,
+    );
+  }
+  if (prim.kind === PRIM_TRIANGLE)
+    return sdTriangle(
+      p,
+      { x: prim.ax, y: prim.ay },
+      { x: prim.bx, y: prim.by },
+      { x: prim.ax + prim.r, y: prim.ay + prim.r },
+    );
+  if (prim.kind === PRIM_PIE) return sdPie(p, { x: prim.ax, y: prim.ay }, prim.r, prim.bx, prim.by);
+  if (prim.kind === PRIM_BEZIER)
+    return sdBezier(
+      p,
+      { x: prim.ax, y: prim.ay },
+      { x: prim.cx ?? (prim.ax + prim.bx) * 0.5, y: prim.cy ?? (prim.ay + prim.by) * 0.5 },
+      { x: prim.bx, y: prim.by },
+      prim.r,
+    );
+  return 1e9;
+}
+
+function smoothstep(edge0: number, edge1: number, x: number): number {
+  const t = clamp01((x - edge0) / (edge1 - edge0 || 1));
+  return t * t * (3 - 2 * t);
+}
+
+function clamp01(v: number): number {
+  return Math.max(0, Math.min(1, v));
+}
+function clamp(v: number, lo: number, hi: number): number {
+  return Math.max(lo, Math.min(hi, v));
+}
+function dot(ax: number, ay: number, bx: number, by: number): number {
+  return ax * bx + ay * by;
+}
+function len2(x: number, y: number): number {
+  return x * x + y * y;
+}

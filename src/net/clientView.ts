@@ -1,0 +1,172 @@
+import { gymLevel } from '../levels/gym';
+import { findLevel } from '../levels/catalog';
+import type { LevelDef } from '../sim/level/schema';
+import { NetId, Player, PrevTransform, RoundState, Transform } from '../sim/traits';
+import { applyInterpolatedBodyVel, mergeSnapshot, restoreWorld, type WorldSnapshot } from '../sim/snapshot';
+import { createSimWorld, type SimHandle } from '../sim/world';
+import { createInterpBuffer } from './interp';
+import { accumulateScoreboardTicks, type ScoreboardTickCursor } from './scoreboardTicks';
+
+export type ClientView = {
+  sim: SimHandle;
+  appliedTick: number;
+  appliedX: number;
+  restored: boolean;
+  alpha: number;
+  /** Host Scoreboard ticks this view actually applied (not render-frame counts). */
+  scoreboardTicksSeen: number;
+  /** Host custom-level JSON for the next rebuild (rotation / late user maps). */
+  useLevel: (level: LevelDef) => void;
+  push: (at: number, snap: WorldSnapshot) => void;
+  apply: (now: number) => WorldSnapshot | null;
+};
+
+/** Full snap plus a catalog level or host JSON. Deltas must not open a fresh view. */
+export function snapshotCanOpenClientView(snap: WorldSnapshot, pending?: LevelDef): boolean {
+  if (snap.full === false) return false;
+  const id = snap.levelId;
+  if (!id) return true;
+  if (findLevel(id)) return true;
+  return Boolean(pending && pending.id === id);
+}
+
+export function worldFromSnapshot(snap: WorldSnapshot, levelOverride?: LevelDef): SimHandle {
+  let level: LevelDef;
+  if (levelOverride) {
+    level = levelOverride;
+  } else if (!snap.levelId) {
+    level = gymLevel;
+  } else {
+    const found = findLevel(snap.levelId);
+    if (!found) {
+      throw new Error(
+        `worldFromSnapshot: custom level "${snap.levelId}" requires the host JSON override`,
+      );
+    }
+    level = found;
+  }
+  const fromPlayers = snap.entities.filter((e) => e.traits.Player).length;
+  const playerCount = Math.max(1, snap.playerCount ?? fromPlayers);
+  return createSimWorld({
+    level,
+    seed: snap.seed ?? 1,
+    settings: {
+      playerCount,
+      bots: 0,
+      maxHp: snap.maxHp ?? 100,
+      firstTo: snap.firstTo ?? 0,
+    },
+    boxes: 0,
+  });
+}
+
+export function applyPrevFromSnap(world: SimHandle['ecs'], snap: WorldSnapshot): void {
+  const byNet = new Map<number, (typeof snap.entities)[0]>();
+  for (const e of snap.entities) byNet.set(e.netId, e);
+  world.query(NetId).updateEach(([net], entity) => {
+    let rec = byNet.get(net.id);
+    if (!rec) {
+      const slot = entity.get(Player)?.slot;
+      if (slot != null) rec = snap.entities.find((e) => Number(e.traits.Player?.slot) === slot);
+    }
+    const t = rec?.traits.Transform;
+    if (t && entity.has(PrevTransform)) {
+      entity.set(PrevTransform, { x: Number(t.x), y: Number(t.y), angle: Number(t.angle) });
+    }
+  });
+}
+
+/** Late-join / interp: restore host snapshot onto a client sim world. */
+export function applyLateJoinSnapshot(sim: SimHandle, snap: WorldSnapshot, prev?: WorldSnapshot): void {
+  if (prev) applyPrevFromSnap(sim.ecs, prev);
+  restoreWorld(sim.ecs, snap);
+}
+
+export function createClientView(first: WorldSnapshot, delayMs = 120, level?: LevelDef): ClientView {
+  let levelOverride = level;
+  let sim = worldFromSnapshot(first, levelOverride);
+  restoreWorld(sim.ecs, first);
+  const buffer = createInterpBuffer(delayMs);
+  let acc: WorldSnapshot = first.full === false ? { ...first, full: true } : first;
+  let scoreboardCursor: ScoreboardTickCursor | null = null;
+
+  const view: ClientView = {
+    sim,
+    appliedTick: first.tick,
+    appliedX: 0,
+    restored: true,
+    alpha: 1,
+    scoreboardTicksSeen: 0,
+    useLevel(next) {
+      levelOverride = next;
+    },
+    push(at, snap) {
+      if (isForeignLevel(snap)) {
+        if (snap.full === false) return;
+        adoptLevel(snap);
+        buffer.push(at, snap);
+        return;
+      }
+      // Unreliable 20 Hz can deliver an older full/delta after a newer one.
+      // Applying it would rewind the late-join view (PLAN 4.13 host-authoritative).
+      if (snap.tick < acc.tick) return;
+      const merged = snap.full === false ? mergeSnapshot(acc, snap) : snap;
+      acc = merged;
+      buffer.push(at, merged);
+    },
+    apply(now) {
+      const pair = buffer.samplePair(now);
+      const snap = pair?.to ?? buffer.sample(now);
+      if (!snap) return null;
+      if (snap.levelId && snap.levelId !== sim.ctx.level.id && snap.full !== false) {
+        adoptLevel(snap);
+      }
+      const from = pair?.from;
+      const sameLevel =
+        !from || !from.levelId || !snap.levelId || from.levelId === snap.levelId;
+      if (from && from !== snap && sameLevel) applyPrevFromSnap(sim.ecs, from);
+      restoreWorld(sim.ecs, snap);
+      if (from && from !== snap && sameLevel) {
+        applyInterpolatedBodyVel(sim.ecs, from, snap, pair?.alpha ?? 1);
+      }
+      noteScoreboard(snap);
+      view.alpha = pair?.alpha ?? 1;
+      view.appliedTick = snap.tick;
+      view.restored = true;
+      sim.ecs.query(Player, Transform).updateEach(([p, t]) => {
+        if (p.slot === 0) view.appliedX = t.x;
+      });
+      return snap;
+    },
+  };
+
+  function isForeignLevel(snap: WorldSnapshot): boolean {
+    return Boolean(snap.levelId && snap.levelId !== (acc.levelId ?? sim.ctx.level.id));
+  }
+
+  function adoptLevel(snap: WorldSnapshot): void {
+    const override = levelOverride && snap.levelId === levelOverride.id ? levelOverride : undefined;
+    sim = worldFromSnapshot(snap, override);
+    restoreWorld(sim.ecs, snap);
+    buffer.reset();
+    acc = snap.full === false ? { ...snap, full: true } : snap;
+    view.sim = sim;
+    noteScoreboard(snap);
+  }
+
+  function noteScoreboard(snap: WorldSnapshot): void {
+    const phase = sim.ecs.get(RoundState)?.phase ?? snap.phase ?? 0;
+    const next = accumulateScoreboardTicks(view.scoreboardTicksSeen, scoreboardCursor, {
+      tick: snap.tick,
+      phase,
+    });
+    view.scoreboardTicksSeen = next.seen;
+    scoreboardCursor = next.cursor;
+  }
+
+  noteScoreboard(first);
+  sim.ecs.query(Player, Transform).updateEach(([p, t]) => {
+    if (p.slot === 0) view.appliedX = t.x;
+  });
+  return view;
+}
