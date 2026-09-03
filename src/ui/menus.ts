@@ -167,6 +167,7 @@ export function collectSettings(
     reduceShake: chk('rs', settings.reduceShake),
     reduceBlood: chk('rb', settings.reduceBlood),
     lighting: chk('lit', settings.lighting),
+    physicsArms: chk('arms', settings.physicsArms),
     includeUserLevels: chk('usr', settings.includeUserLevels),
     renderer: sel('ren', settings.renderer) as UserSettings['renderer'],
     rotation: sel('rot', settings.rotation) as UserSettings['rotation'],
@@ -219,7 +220,7 @@ export function renderMenus(
   card.style.cssText =
     'width:min(760px,94vw);max-height:92vh;overflow:auto;background:#1b1e27;border-radius:16px;padding:28px;box-shadow:0 20px 60px rgba(0,0,0,0.4);';
   if (state.screen === 'menu') {
-    card.innerHTML = `<h1 style="margin:0 0 8px;font-size:42px">Floppy Clash</h1>
+    card.innerHTML = `${brandMarkup()}
       <p style="color:#9aa3b2">Couch physics brawler. Press a button on a pad — or use the keyboard fallback.</p>
       <p id="localstats" style="color:#9aa3b2;font-size:13px"></p>
       <div style="display:flex;flex-wrap:wrap;gap:10px;margin-top:18px"></div>`;
@@ -323,6 +324,7 @@ function renderSettings(
       <label>Reduce shake <input id="rs" type="checkbox" ${settings.reduceShake ? 'checked' : ''}></label><br/>
       <label>Reduce blood <input id="rb" type="checkbox" ${settings.reduceBlood ? 'checked' : ''}></label><br/>
       <label>2D lighting (radiance cascades) <input id="lit" type="checkbox" ${settings.lighting ? 'checked' : ''}></label><br/>
+      <label>Physics arms (alive) <input id="arms" type="checkbox" ${settings.physicsArms ? 'checked' : ''}></label><br/>
       <label>Include user levels in rotation <input id="usr" type="checkbox" ${settings.includeUserLevels ? 'checked' : ''}></label><br/>
       <label>SFX <input id="sfx" type="range" min="0" max="1" step="0.05" value="${settings.sfx}"></label><br/>
       <label>Music <input id="mus" type="range" min="0" max="1" step="0.05" value="${settings.music}"></label><br/>
@@ -444,6 +446,17 @@ function renderLobby(
     );
   }
   card.append(btn('Back', () => actions.back?.()));
+}
+
+/** PLAN M6 / §9: distinctive title + logo, not text-only. */
+export function brandMarkup(): string {
+  return `<img id="brand-logo" class="brand-logo" src="/favicon.svg" width="72" height="72" alt="Floppy Clash"/>
+      <h1 style="margin:8px 0 8px;font-size:42px">Floppy Clash</h1>`;
+}
+
+/** Rising-edge helper for join D-pad color (PLAN 4.12). */
+export function edgePressed(wasDown: boolean, isDown: boolean): boolean {
+  return isDown && !wasDown;
 }
 
 function btn(label: string, onClick: () => void): HTMLButtonElement {

@@ -1,4 +1,4 @@
-import type { SimEvents } from '../sim/events';
+import type { SimEvent, SimEvents } from '../sim/events';
 import { WEAPON_BY_ID } from '../sim/weapons/defs';
 import { playSfx, playTone, type SfxId } from './synth';
 
@@ -16,6 +16,21 @@ export function musicPattern(): MusicNote[] {
   ];
 }
 
+/** PLAN M5: every combat event maps to a synth id (no silent throw/block/jump). */
+export function sfxForEvent(ev: SimEvent): SfxId | undefined {
+  if (ev.type === 'shot') {
+    return (WEAPON_BY_ID.get(ev.weaponId)?.def.sound as SfxId | undefined) ?? 'shot.small';
+  }
+  if (ev.type === 'hit') return 'hit';
+  if (ev.type === 'explosion') return 'explosion';
+  if (ev.type === 'pickup') return 'pickup';
+  if (ev.type === 'kill') return 'death';
+  if (ev.type === 'throw') return 'shot.heavy';
+  if (ev.type === 'block') return ev.reflected ? 'shot.laser' : 'punch';
+  if (ev.type === 'jump') return 'jump';
+  return undefined;
+}
+
 export type Mixer = {
   sfx: number;
   music: number;
@@ -23,12 +38,15 @@ export type Mixer = {
   resume: () => void;
   handle: (events: SimEvents) => void;
   startMusic: () => void;
+  stopMusic: () => void;
+  applyGains: () => void;
 };
 
 export function createMixer(): Mixer {
   let ctx: AudioContext | null = null;
   let sfxGain: GainNode | null = null;
   let musicGain: GainNode | null = null;
+  let musicTimer: ReturnType<typeof setInterval> | undefined;
   const mixer: Mixer = {
     sfx: 0.8,
     music: 0.25,
@@ -47,18 +65,13 @@ export function createMixer(): Mixer {
     handle(events) {
       if (!ctx || !sfxGain || mixer.muted) return;
       for (const ev of events) {
-        if (ev.type === 'shot') {
-          const sound = WEAPON_BY_ID.get(ev.weaponId)?.def.sound;
-          playSfx(ctx, sfxGain, (sound as SfxId | undefined) ?? 'shot.small');
-        }
-        if (ev.type === 'hit') playSfx(ctx, sfxGain, 'hit');
-        if (ev.type === 'explosion') playSfx(ctx, sfxGain, 'explosion');
-        if (ev.type === 'pickup') playSfx(ctx, sfxGain, 'pickup');
-        if (ev.type === 'kill') playSfx(ctx, sfxGain, 'death');
+        const id = sfxForEvent(ev);
+        if (id) playSfx(ctx, sfxGain, id);
       }
     },
     startMusic() {
       if (!ctx || !musicGain) return;
+      mixer.stopMusic();
       let nextAt = ctx.currentTime;
       const loop = 2;
       const schedule = () => {
@@ -71,8 +84,17 @@ export function createMixer(): Mixer {
         }
       };
       schedule();
-      const id = window.setInterval(schedule, 1500);
-      void id;
+      if (typeof window !== 'undefined') musicTimer = window.setInterval(schedule, 1500);
+    },
+    stopMusic() {
+      if (musicTimer !== undefined) {
+        if (typeof window !== 'undefined') window.clearInterval(musicTimer);
+        else clearInterval(musicTimer);
+        musicTimer = undefined;
+      }
+    },
+    applyGains() {
+      apply();
     },
   };
   function apply() {

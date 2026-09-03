@@ -13,6 +13,10 @@ describe('levels catalog', () => {
     expect(v1.length).toBeGreaterThanOrEqual(30);
     const later = match.filter((l) => ['laser', 'western', 'halloween'].includes(l.theme));
     expect(later.length).toBeGreaterThanOrEqual(15);
+    const fingerprints = match.map(
+      (l) => `${l.theme}|${l.objects.map((o) => `${o.type}:${o.x.toFixed(1)},${o.y.toFixed(1)}`).join(';')}`,
+    );
+    expect(new Set(fingerprints).size).toBe(match.length);
   });
 
   it('filters user levels into the match pool', () => {

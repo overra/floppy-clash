@@ -17,6 +17,7 @@ import {
   collectPadMap,
   createMenuState,
   cycleSeatColor,
+  edgePressed,
   markDisconnectedSeat,
   renderMenus,
   takeOrReadySeat,
@@ -168,6 +169,8 @@ export function createGame(root: HTMLElement): Game {
   ];
   const joinAHeld = [false, false, false, false];
   const joinStartHeld = [false, false, false, false];
+  const joinLeftHeld = [false, false, false, false];
+  const joinRightHeld = [false, false, false, false];
   let renderer: Renderer | null = null;
   let rendererKind: 'gpu' | 'canvas' = 'canvas';
   let sim: SimHandle | null = null;
@@ -263,6 +266,7 @@ export function createGame(root: HTMLElement): Game {
           menus.firstTo = settings.firstTo;
           mixer.sfx = settings.sfx;
           mixer.music = settings.music;
+          mixer.applyGains();
           menus.screen = 'menu';
           show();
         },
@@ -512,6 +516,7 @@ export function createGame(root: HTMLElement): Game {
     level: LevelDef,
     opts: { playerCount: number; bots: number; maxHp?: number; firstTo?: number },
   ) {
+    mixer.stopMusic();
     mixer.resume();
     mixer.startMusic();
     const seed = (Math.random() * 1e9) | 0;
@@ -529,6 +534,7 @@ export function createGame(root: HTMLElement): Game {
         enabledLevels: settings.enabledLevels,
         rotation: settings.rotation,
         showWins: settings.showWins,
+        physicsArms: settings.physicsArms,
       },
       boxes: 8,
     });
@@ -568,6 +574,7 @@ export function createGame(root: HTMLElement): Game {
           enabledLevels: settings.enabledLevels,
           rotation: settings.rotation,
           showWins: settings.showWins,
+          physicsArms: settings.physicsArms,
         },
       });
       for (const tickInputs of replay.inputs) {
@@ -602,20 +609,24 @@ export function createGame(root: HTMLElement): Game {
       const latch = latches[i] ?? emptyLatch();
       const aim = lastAim[i] ?? { x: 1, y: 0 };
       if (menus.screen === 'join') {
-        if (pad.buttons[14]?.pressed) {
+        const leftDown = !!pad.buttons[14]?.pressed;
+        const rightDown = !!pad.buttons[15]?.pressed;
+        if (edgePressed(joinLeftHeld[i] ?? false, leftDown)) {
           const seat = menus.seats.find((s) => s.padId === pad.id);
           if (seat) {
             cycleSeatColor(seat, -1);
             show();
           }
         }
-        if (pad.buttons[15]?.pressed) {
+        if (edgePressed(joinRightHeld[i] ?? false, rightDown)) {
           const seat = menus.seats.find((s) => s.padId === pad.id);
           if (seat) {
             cycleSeatColor(seat, 1);
             show();
           }
         }
+        joinLeftHeld[i] = leftDown;
+        joinRightHeld[i] = rightDown;
         const aDown = !!(pad.buttons[0]?.pressed || pad.buttons[4]?.pressed);
         if (aDown && !joinAHeld[i]) {
           takeOrReadySeat(menus.seats, pad.id);

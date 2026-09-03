@@ -12,7 +12,7 @@ import {
 import { lerpHex, themePassGroups } from '../src/render/themeDecor';
 import { Combat, Crown, Held, HeldBy, Loose, PrevTransform, Transform } from '../src/sim/traits';
 import { spawnWeapon } from '../src/sim/systems/weapons';
-import { themeOf } from '../src/sim/level/themes';
+import { THEMES, themeOf } from '../src/sim/level/themes';
 import { hold, makeSim, playerOf } from './helpers';
 
 describe('PLAN §4.11 theme pass', () => {
@@ -29,6 +29,10 @@ describe('PLAN §4.11 theme pass', () => {
     const colors = new Set(groups.map((g) => g.color));
     expect(colors.size).toBeGreaterThan(1);
     expect(lerpHex('#000000', '#ffffff', 0.5)).toBe('#808080');
+    for (const id of Object.keys(THEMES)) {
+      const groups = themePassGroups(themeOf(id), { x: 0, y: 0, w: 32, h: 18 }, cam, 1280, 720);
+      expect(groups.length, id).toBeGreaterThan(0);
+    }
   });
 
   it('rounded-box bounds use half-extents, not bx/by as points', () => {

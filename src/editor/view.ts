@@ -1,9 +1,11 @@
 import {
   addObject,
+  applyEditorPad,
   deleteLibrary,
   exportLevel,
   EXTRA_TOOLS,
   hitTest,
+  IDLE_EDITOR_PAD,
   importLevel,
   loadLibrary,
   moveSelected,
@@ -15,6 +17,7 @@ import {
   selectSpawnAt,
   shareHash,
   undo,
+  type EditorPadButtons,
   type EditorState,
 } from './editor';
 import { applyField, fieldValue, objectSchemaFields } from './properties';
@@ -337,50 +340,28 @@ export function mountEditor(root: HTMLElement, state: EditorState, fns: EditorVi
   requestAnimationFrame(draw);
   new ResizeObserver(() => draw()).observe(mid);
 
-  const padEdge = { left: false, right: false, up: false, down: false, a: false, lb: false, rb: false, start: false, b: false };
-  const tools = [...PALETTE, ...EXTRA_TOOLS];
+  let padEdge: EditorPadButtons = { ...IDLE_EDITOR_PAD };
   const pollPad = () => {
     if (!wrap.isConnected) return;
     const pad = typeof navigator !== 'undefined' ? navigator.getGamepads?.().find(Boolean) : null;
     if (pad) {
-      const left = !!pad.buttons[14]?.pressed;
-      const right = !!pad.buttons[15]?.pressed;
-      const up = !!pad.buttons[12]?.pressed;
-      const down = !!pad.buttons[13]?.pressed;
-      const a = !!pad.buttons[0]?.pressed;
-      const b = !!pad.buttons[1]?.pressed;
-      const lb = !!pad.buttons[4]?.pressed;
-      const rb = !!pad.buttons[5]?.pressed;
-      const start = !!pad.buttons[9]?.pressed;
-      if (left && !padEdge.left) nudge(-state.grid, 0);
-      if (right && !padEdge.right) nudge(state.grid, 0);
-      if (up && !padEdge.up) nudge(0, state.grid);
-      if (down && !padEdge.down) nudge(0, -state.grid);
-      if (a && !padEdge.a) {
-        addObject(state, 12, 6);
-        draw();
-      }
-      if (lb && !padEdge.lb) {
-        const i = Math.max(0, tools.indexOf(state.tool as (typeof tools)[number]));
-        state.tool = tools[(i - 1 + tools.length) % tools.length]!;
-        paintTools();
-      }
-      if (rb && !padEdge.rb) {
-        const i = Math.max(0, tools.indexOf(state.tool as (typeof tools)[number]));
-        state.tool = tools[(i + 1) % tools.length]!;
-        paintTools();
-      }
-      if (start && !padEdge.start) fns.playtest(state.level);
-      if (b && !padEdge.b) fns.back();
-      padEdge.left = left;
-      padEdge.right = right;
-      padEdge.up = up;
-      padEdge.down = down;
-      padEdge.a = a;
-      padEdge.b = b;
-      padEdge.lb = lb;
-      padEdge.rb = rb;
-      padEdge.start = start;
+      const now: EditorPadButtons = {
+        left: !!pad.buttons[14]?.pressed,
+        right: !!pad.buttons[15]?.pressed,
+        up: !!pad.buttons[12]?.pressed,
+        down: !!pad.buttons[13]?.pressed,
+        a: !!pad.buttons[0]?.pressed,
+        b: !!pad.buttons[1]?.pressed,
+        lb: !!pad.buttons[4]?.pressed,
+        rb: !!pad.buttons[5]?.pressed,
+        start: !!pad.buttons[9]?.pressed,
+      };
+      const result = applyEditorPad(state, padEdge, now);
+      if (result.nudged || result.placed) draw();
+      if (result.toolChanged) paintTools();
+      if (result.playtest) fns.playtest(state.level);
+      if (result.back) fns.back();
+      padEdge = now;
     }
     requestAnimationFrame(pollPad);
   };

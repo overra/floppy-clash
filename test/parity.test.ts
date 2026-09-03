@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import { replication } from '../src/sim/traits';
-import { WEAPON_BY_ID, WEAPON_DEFS, weaponDisplayName } from '../src/sim/weapons/defs';
+import {
+  FORBIDDEN_PUBLIC_NAMES,
+  WEAPON_BY_ID,
+  WEAPON_DEFS,
+  weaponDisplayName,
+} from '../src/sim/weapons/defs';
+import { brandMarkup } from '../src/ui/menus';
 import { holdAmmoFromSeconds } from '../src/sim/weapons/mapping';
 
 type ParityRow = {
@@ -106,6 +112,20 @@ describe('Appendix C parity defaults', () => {
     expect(weaponDisplayName('god-pistol')).toBe('Oracle Pistol');
     expect(weaponDisplayName('black-hole')).toBe('Void Well');
     expect(weaponDisplayName('blink-dagger')).toBe('Blink Knife');
+    for (const def of WEAPON_DEFS) {
+      expect(def.displayName, def.id).toBeTruthy();
+      expect(def.displayName, def.id).toBe(weaponDisplayName(def.id));
+      for (const banned of FORBIDDEN_PUBLIC_NAMES) {
+        expect(def.displayName, `${def.id} vs ${banned}`).not.toBe(banned);
+        expect(def.displayName?.toLowerCase(), `${def.id} vs ${banned}`).not.toBe(banned.toLowerCase());
+      }
+    }
+    const brand = brandMarkup();
+    expect(brand).toContain('id="brand-logo"');
+    expect(brand).toContain('src="/favicon.svg"');
+    expect(brand).toContain('alt="Floppy Clash"');
+    expect(brand).toContain('Floppy Clash');
+    expect(brand).not.toMatch(/Stick Fight/i);
   });
 
   it('declares a replication class for every sim trait', () => {

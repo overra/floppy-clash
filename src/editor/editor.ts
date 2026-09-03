@@ -166,6 +166,82 @@ export function rotateSelected(state: EditorState, delta: number): void {
   obj.angle = (obj.angle ?? 0) + delta;
 }
 
+export type EditorPadButtons = {
+  left: boolean;
+  right: boolean;
+  up: boolean;
+  down: boolean;
+  a: boolean;
+  b: boolean;
+  lb: boolean;
+  rb: boolean;
+  start: boolean;
+};
+
+export const IDLE_EDITOR_PAD: EditorPadButtons = {
+  left: false,
+  right: false,
+  up: false,
+  down: false,
+  a: false,
+  b: false,
+  lb: false,
+  rb: false,
+  start: false,
+};
+
+/** PLAN 4.15: pad-navigable placement (D-pad nudge, A place, LB/RB tool, Start playtest). */
+export function applyEditorPad(
+  state: EditorState,
+  prev: EditorPadButtons,
+  now: EditorPadButtons,
+): { playtest: boolean; back: boolean; nudged: boolean; placed: boolean; toolChanged: boolean } {
+  const tools = [...PALETTE, ...EXTRA_TOOLS];
+  let nudged = false;
+  let placed = false;
+  let toolChanged = false;
+  const nudge = (dx: number, dy: number) => {
+    if (state.tool === 'spawn') {
+      const s = state.level.spawns[state.selectedSpawn];
+      if (s) {
+        moveSpawn(state, state.selectedSpawn, s.x + dx, s.y + dy);
+        nudged = true;
+      }
+    } else {
+      const obj = state.level.objects[state.selected];
+      if (obj) {
+        moveSelected(state, obj.x + dx, obj.y + dy);
+        nudged = true;
+      }
+    }
+  };
+  if (now.left && !prev.left) nudge(-state.grid, 0);
+  if (now.right && !prev.right) nudge(state.grid, 0);
+  if (now.up && !prev.up) nudge(0, state.grid);
+  if (now.down && !prev.down) nudge(0, -state.grid);
+  if (now.a && !prev.a) {
+    addObject(state, 12, 6);
+    placed = true;
+  }
+  if (now.lb && !prev.lb) {
+    const i = Math.max(0, tools.indexOf(state.tool as (typeof tools)[number]));
+    state.tool = tools[(i - 1 + tools.length) % tools.length]!;
+    toolChanged = true;
+  }
+  if (now.rb && !prev.rb) {
+    const i = Math.max(0, tools.indexOf(state.tool as (typeof tools)[number]));
+    state.tool = tools[(i + 1) % tools.length]!;
+    toolChanged = true;
+  }
+  return {
+    playtest: now.start && !prev.start,
+    back: now.b && !prev.b,
+    nudged,
+    placed,
+    toolChanged,
+  };
+}
+
 export function selectAt(state: EditorState, x: number, y: number): number {
   let best = -1;
   let bestD = 1.2;

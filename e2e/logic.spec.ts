@@ -20,6 +20,9 @@ test('boots, joins with keyboard, starts a local match vs bots', async ({ page }
   });
   await page.goto('/');
   await expect(page.locator('text=Floppy Clash')).toBeVisible();
+  await expect(page.locator('#brand-logo')).toBeVisible();
+  await expect(page.locator('#brand-logo')).toHaveAttribute('alt', 'Floppy Clash');
+  await expect(page.locator('#brand-logo')).toHaveAttribute('src', '/favicon.svg');
   await page.getByRole('button', { name: 'Solo vs Bots' }).click();
   await expect(page.getByRole('heading', { name: 'Join' })).toBeVisible();
   await page.keyboard.press('ArrowRight');
@@ -60,6 +63,41 @@ test('local play joins on first Space and readies on the second', async ({ page 
   await page.keyboard.press('Enter');
   await expect(page.locator('canvas#game')).toBeVisible();
   await expect(page.locator('[data-countdown]')).toBeVisible({ timeout: 8_000 });
+});
+
+test('editor pad D-pad nudges the selection', async ({ page }) => {
+  await page.addInitScript(() => {
+    const buttons = Array.from({ length: 17 }, () => ({ pressed: false, touched: false, value: 0 }));
+    const pad = {
+      id: 'Xbox 360 Controller (XInput STANDARD GAMEPAD)',
+      index: 0,
+      connected: true,
+      mapping: 'standard',
+      axes: [0, 0, 0, 0],
+      buttons,
+      timestamp: 1,
+      hapticActuators: [],
+      vibrationActuator: null,
+    };
+    Object.defineProperty(navigator, 'getGamepads', {
+      value: () => [pad],
+    });
+    (window as unknown as { __e2ePad: typeof pad }).__e2ePad = pad;
+  });
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Level Editor' }).click();
+  await expect(page.locator('text=Level Editor')).toBeVisible();
+  const before = await page.locator('#edjson').innerText();
+  await page.evaluate(() => {
+    const pad = (window as unknown as { __e2ePad: { buttons: { pressed: boolean }[] } }).__e2ePad;
+    pad.buttons[15]!.pressed = true;
+  });
+  await page.waitForTimeout(80);
+  await page.evaluate(() => {
+    const pad = (window as unknown as { __e2ePad: { buttons: { pressed: boolean }[] } }).__e2ePad;
+    pad.buttons[15]!.pressed = false;
+  });
+  await expect.poll(async () => page.locator('#edjson').innerText()).not.toBe(before);
 });
 
 test('editor can place every hazard type then playtest the draft', async ({ page }) => {
@@ -114,6 +152,12 @@ test('settings persist toggles and editor property panel opens', async ({ page }
   await page.getByRole('button', { name: 'Settings' }).click();
   await expect(page.locator('text=Settings')).toBeVisible();
   await expect(page.locator('text=Weapon toggles')).toBeVisible();
+  await expect(page.locator('text=Oracle Pistol')).toBeVisible();
+  await expect(page.locator('text=Void Well')).toBeVisible();
+  await expect(page.locator('text=Hand Cannon')).toBeVisible();
+  await expect(page.locator('body')).not.toContainText('God Pistol');
+  await expect(page.locator('body')).not.toContainText('Black Hole');
+  await expect(page.locator('#arms')).toBeVisible();
   await expect(page.locator('text=Per-pad remap')).toBeVisible();
   await page.locator('#lit').check();
   await page.getByRole('button', { name: 'Save', exact: true }).click();

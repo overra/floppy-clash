@@ -1,6 +1,6 @@
 import { createQuery, type World } from 'koota';
 import { Vec2 } from 'planck';
-import { getContext } from '../context';
+import { emit, getContext } from '../context';
 import { rising } from '../input';
 import { raycastClosest, type RayHit } from '../physics/queries';
 import { Aim, Controller, Dead, Hazard, HazardKind, Player, Status, Transform } from '../traits';
@@ -109,12 +109,14 @@ export function controller(world: World): void {
       ctrl.jumpBuffer = 0;
       ctrl.coyote = 0;
       ctrl.grounded = false;
+      emit(world, { type: 'jump', player: player.slot });
     } else if (ctrl.jumpBuffer > 0 && ctrl.wallSliding) {
       vx = -ctrl.wallDir * t.wallJumpX;
       vy = t.wallJumpY;
       ctrl.lockTicks = t.wallJumpLockTicks;
       ctrl.jumpBuffer = 0;
       ctrl.wallSliding = false;
+      emit(world, { type: 'jump', player: player.slot });
     }
 
     vy = Math.max(-t.maxFallSpeed, vy);

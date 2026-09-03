@@ -8,6 +8,7 @@ export type SimEvent =
   | { type: 'pickup'; player: number; weaponId: string }
   | { type: 'throw'; player: number; weaponId: string }
   | { type: 'block'; player: number; reflected: boolean }
+  | { type: 'jump'; player: number }
   | { type: 'blood'; x: number; y: number; amount: number }
   | { type: 'round-phase'; phase: string }
   | { type: 'spawn'; kind: string; netId: number }

@@ -676,6 +676,16 @@ const raw = [
   },
 ];
 
+/** Original distinctive names that must never appear in UI copy (PLAN §9). */
+export const FORBIDDEN_PUBLIC_NAMES = [
+  'God Pistol',
+  'Black Hole',
+  'Stick Fight',
+  'Deagle',
+  'Uzi',
+  'AK-47',
+];
+
 /** Distinctive public names (PLAN §9). Ids stay stable for data/toggles. */
 const DISPLAY_NAMES: Record<string, string> = {
   fists: 'Fists',

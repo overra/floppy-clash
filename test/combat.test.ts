@@ -41,6 +41,15 @@ describe('M2 combat and rounds', () => {
     expect(b.get(Health)?.hp ?? 100).toBe(before);
   });
 
+  it('unarmed punch emits a fists shot for SFX (PLAN M5)', () => {
+    const sim = makeSim({ level: woodsClearing, seed: 32, settings: { playerCount: 1 } });
+    const p = playerOf(sim);
+    sim.ctx.bodies.get(p)?.setPosition({ x: 10, y: 4 });
+    p.set(Transform, { x: 10, y: 4, angle: 0 });
+    const ev = sim.step([hold({ attack: true, aimX: 1, aimY: 0 }), hold({}), hold({}), hold({})]);
+    expect(ev.some((e) => e.type === 'shot' && e.weaponId === 'fists')).toBe(true);
+  });
+
   it('punch deals about 22 damage', () => {
     const sim = makeSim({ level: woodsClearing, seed: 5, settings: { playerCount: 2, bots: 0 } });
     const a = playerOf(sim, 0);

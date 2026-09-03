@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import {
   addObject,
+  applyEditorPad,
   createEditorState,
+  IDLE_EDITOR_PAD,
   exportLevel,
   fromHash,
   importLevel,
@@ -91,6 +93,26 @@ describe('M7 editor', () => {
     await saveLibrary(state.level);
     const lib = await loadLibrary();
     expect(lib.some((l) => l.id === state.level.id && l.name === 'Plus Pit')).toBe(true);
+  });
+
+  it('pad D-pad nudges and A places (PLAN 4.15)', () => {
+    const state = createEditorState();
+    const x0 = state.level.objects[state.selected]!.x;
+    const held = { ...IDLE_EDITOR_PAD };
+    const right = applyEditorPad(state, held, { ...IDLE_EDITOR_PAD, right: true });
+    expect(right.nudged).toBe(true);
+    expect(state.level.objects[state.selected]!.x).toBe(x0 + state.grid);
+    const still = applyEditorPad(state, { ...IDLE_EDITOR_PAD, right: true }, { ...IDLE_EDITOR_PAD, right: true });
+    expect(still.nudged).toBe(false);
+    const n = state.level.objects.length;
+    const place = applyEditorPad(state, held, { ...IDLE_EDITOR_PAD, a: true });
+    expect(place.placed).toBe(true);
+    expect(state.level.objects.length).toBe(n + 1);
+    const cycle = applyEditorPad(state, held, { ...IDLE_EDITOR_PAD, rb: true });
+    expect(cycle.toolChanged).toBe(true);
+    expect(state.tool).not.toBe('solid');
+    expect(applyEditorPad(state, held, { ...IDLE_EDITOR_PAD, start: true }).playtest).toBe(true);
+    expect(applyEditorPad(state, held, { ...IDLE_EDITOR_PAD, b: true }).back).toBe(true);
   });
 
   it('saveLibrary / loadLibrary persist through the IndexedDB object store', async () => {

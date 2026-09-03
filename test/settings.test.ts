@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { DEFAULT_USER_SETTINGS, loadSettings, saveSettings } from '../src/ui/settingsStore';
+import { brandMarkup, edgePressed } from '../src/ui/menus';
 import { loadStats, recordKos, recordMatch } from '../src/ui/statsStore';
 import { objectSchemaFields, applyField } from '../src/editor/properties';
 import { createEditorState, addObject, addSpawn, setDropEdge } from '../src/editor/editor';
@@ -20,6 +21,14 @@ function memoryStorage() {
 }
 
 describe('settings persistence', () => {
+  it('brand markup ships the distinctive logo and title', () => {
+    expect(brandMarkup()).toContain('id="brand-logo"');
+    expect(brandMarkup()).toContain('/favicon.svg');
+    expect(edgePressed(false, true)).toBe(true);
+    expect(edgePressed(true, true)).toBe(false);
+    expect(edgePressed(false, false)).toBe(false);
+  });
+
   it('round-trips weapon/level toggles and lighting', () => {
     memoryStorage();
     saveSettings({
@@ -30,6 +39,7 @@ describe('settings persistence', () => {
       enabledLevels: ['woods-clearing'],
       sfx: 0.2,
       renderer: 'canvas',
+      physicsArms: true,
     });
     const loaded = loadSettings();
     expect(loaded.lighting).toBe(true);
@@ -37,6 +47,7 @@ describe('settings persistence', () => {
     expect(loaded.enabledWeapons).toEqual(['pistol', 'rpg']);
     expect(loaded.sfx).toBe(0.2);
     expect(loaded.renderer).toBe('canvas');
+    expect(loaded.physicsArms).toBe(true);
   });
 
   it('records local match stats', () => {

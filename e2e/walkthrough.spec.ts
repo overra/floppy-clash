@@ -5,6 +5,7 @@ test.use({ video: 'on', screenshot: { mode: 'on' } });
 test('records a headed couch-play walkthrough', async ({ page }) => {
   await page.goto('/');
   await expect(page.getByRole('heading', { name: 'Floppy Clash' })).toBeVisible();
+  await expect(page.locator('#brand-logo')).toBeVisible();
   await page.getByRole('button', { name: 'Settings' }).click();
   await expect(page.locator('text=Weapon toggles')).toBeVisible();
   await page.getByRole('button', { name: 'Back' }).click();

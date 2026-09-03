@@ -78,6 +78,15 @@ export function combat(world: World): void {
       const slam = input.down && !_ctrl.grounded ? t.punchSlamImpulse : 0;
       body.setLinearVelocity(new Vec2(vel.x + aim.x * impulse, vel.y + aim.y * impulse - slam));
       const hx = transform.x + aim.x * t.punchRange;
+      emit(world, {
+        type: 'shot',
+        source: entity,
+        weaponId: 'fists',
+        x: hx,
+        y: transform.y + aim.y * t.punchRange,
+        aimX: aim.x,
+        aimY: aim.y,
+      });
       const hy = transform.y + aim.y * t.punchRange;
       const airborne = !_ctrl.grounded;
       const kb = t.punchKnockback * (airborne ? t.dropkickKnockbackScale : 1);

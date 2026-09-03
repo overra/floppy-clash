@@ -22,6 +22,7 @@ test('SwiftShader can map a raw WebGPU buffer and offscreen texture', async ({ p
 test('GPU renderer initialises and PLAN §6 reads framebuffer pixels', async ({ page }) => {
   await page.goto('/');
   await expect(page.getByRole('heading', { name: 'Floppy Clash' })).toBeVisible();
+  await expect(page.locator('#brand-logo')).toBeVisible();
   await expect(page.locator('.notice').first()).toHaveText(/SDF renderer|Canvas fallback/, {
     timeout: 15_000,
   });

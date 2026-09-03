@@ -86,6 +86,22 @@ describe('M1 movement', () => {
     expect(dist).toBeGreaterThan(26);
     expect(dist).toBeLessThan(36);
   });
+
+  it('a grounded jump emits a jump event for SFX (PLAN M5)', () => {
+    const sim = makeSim({ level: gymLevel, seed: 6, settings: { playerCount: 1 } });
+    stepMany(sim, 40);
+    const e = playerOf(sim);
+    let jumped = false;
+    for (let i = 0; i < 20; i++) {
+      const jump = !jumped && !!e.get(Controller)?.grounded;
+      const ev = sim.step([hold({ jump }), hold({}), hold({}), hold({})]);
+      if (ev.some((e) => e.type === 'jump')) {
+        jumped = true;
+        break;
+      }
+    }
+    expect(jumped).toBe(true);
+  });
 });
 
 function punchAirVy(down: boolean): number {
