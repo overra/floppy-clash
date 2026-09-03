@@ -23,13 +23,23 @@ import {
 import { createLocalLoopback, PUBLIC_ICE_SERVERS } from '../src/net/transport';
 import { drainChangeTrackers } from '../src/sim/snapshot';
 import { spawnWeapon } from '../src/sim/systems/weapons';
-import { Held, HeldBy, Loose, NetId, Weapon } from '../src/sim/traits';
+import {
+  Dead,
+  Health,
+  Held,
+  HeldBy,
+  Loose,
+  MatchState,
+  NetId,
+  RoundPhase,
+  RoundState,
+  Weapon,
+} from '../src/sim/traits';
 import { createClientView } from '../src/net/clientView';
 import { parseLevel } from '../src/sim/level/schema';
 import { SeededRng } from '../src/core/rng';
 import { blankInputs } from '../src/sim/input';
-import { Health, MatchState, RoundPhase, RoundState } from '../src/sim/traits';
-import { hold, makeSim, playerOf, pos } from './helpers';
+import { hold, makeSim, pin, playerOf, pos, woodsClearing } from './helpers';
 
 describe('M8 netcode', () => {
   it('configures public STUN (PLAN 4.13)', () => {
@@ -135,22 +145,44 @@ describe('M8 netcode', () => {
   it('finishes a 10-round match at 100 ms / 2% loss under the 30 KB/s budget', () => {
     const rng = new SeededRng(99);
     const link = createSimulatedLink({ latencyMs: 100, loss: 0.02, rng: () => rng.next() });
-    const host = makeSim({ settings: { playerCount: 4, firstTo: 0 } });
+    const host = makeSim({
+      level: woodsClearing,
+      seed: 99,
+      settings: { playerCount: 4, firstTo: 0, maxHp: 1 },
+    });
     host.ctx.tuning.countdownTicks = 3;
     host.ctx.tuning.slowmoTicks = 2;
     host.ctx.tuning.scoreboardTicks = 2;
     const delay = 6;
     const q: ReturnType<typeof blankInputs>[] = [];
     let bytes = 0;
+    let kills = 0;
     let view: ReturnType<typeof createClientView> | null = null;
     let lastLevelId = host.ctx.level.id;
     for (let i = 0; i < 6000; i++) {
-      const raw = [hold({ moveX: 0.2 }), hold({}), hold({}), hold({})];
+      const phase = host.ecs.get(RoundState)?.phase;
+      const fighting = phase === RoundPhase.Fighting;
+      if (fighting) {
+        const a = playerOf(host, 0);
+        pin(host, a, 10, 4);
+        for (let s = 1; s < 4; s++) {
+          const p = playerOf(host, s);
+          if (p.has(Dead) || (p.get(Health)?.hp ?? 0) <= 0) continue;
+          pin(host, p, 10.55, 4);
+        }
+      }
+      const raw = [
+        hold({ moveX: 0.2, attack: fighting && i % 8 === 0, aimX: 1, aimY: 0 }),
+        hold({}),
+        hold({}),
+        hold({}),
+      ];
       q.push(raw);
       link.advance(1000 / 60);
       const dropped = rng.next() < 0.02;
       const delayed = q[Math.max(0, q.length - 1 - delay)] ?? raw;
-      host.step(dropped ? (q[Math.max(0, q.length - 2 - delay)] ?? raw) : delayed);
+      const ev = host.step(dropped ? (q[Math.max(0, q.length - 2 - delay)] ?? raw) : delayed);
+      kills += ev.filter((e) => e.type === 'kill').length;
       const levelChanged = host.ctx.level.id !== lastLevelId;
       if (levelChanged) lastLevelId = host.ctx.level.id;
       if (i % 3 === 0 || levelChanged) {
@@ -168,17 +200,11 @@ describe('M8 netcode', () => {
           view.apply(i * (1000 / 60) + 120);
         }
       }
-      const phase = host.ecs.get(RoundState)?.phase;
-      if (phase === RoundPhase.Fighting) {
-        for (let s = 1; s < 4; s++) {
-          const p = playerOf(host, s);
-          if ((p.get(Health)?.hp ?? 0) > 0) p.set(Health, { hp: 0, maxHp: 100 });
-        }
-      }
       if ((host.ecs.get(MatchState)?.round ?? 0) >= 10) break;
     }
     const seconds = Math.max(1, host.ctx.tick / 60);
     const kBps = bytes / seconds / 1024;
+    expect(kills).toBeGreaterThanOrEqual(10);
     expect(host.ecs.get(MatchState)?.round ?? 0).toBeGreaterThanOrEqual(10);
     expect(kBps).toBeLessThan(30);
     expect(link.sent()).toBeGreaterThan(0);
@@ -201,21 +227,31 @@ describe('M8 netcode', () => {
 
   it('drops a stale unordered bundle and keeps the newer tick', () => {
     let inbox = emptyRemoteInbox();
-    inbox = acceptInputBundle(inbox, 10, [hold({ moveX: 1 }), hold({ moveX: 1 }), hold({ moveX: 1 })]);
+    inbox = acceptInputBundle(inbox, 10, [
+      hold({ moveX: 1 }),
+      hold({ moveX: 1 }),
+      hold({ moveX: 1 }),
+    ]);
     expect(inbox.tick).toBe(10);
     expect(inbox.bundleLen).toBe(3);
-    inbox = acceptInputBundle(inbox, 8, [hold({ moveX: -1 }), hold({ moveX: -1 }), hold({ moveX: -1 })]);
+    inbox = acceptInputBundle(inbox, 8, [
+      hold({ moveX: -1 }),
+      hold({ moveX: -1 }),
+      hold({ moveX: -1 }),
+    ]);
     expect(inbox.tick).toBe(10);
     expect(inbox.input?.moveX).toBe(1);
-    inbox = acceptInputBundle(inbox, 11, [hold({ moveX: 0.5 }), hold({ moveX: 0.5 }), hold({ moveX: 0.25 })]);
+    inbox = acceptInputBundle(inbox, 11, [
+      hold({ moveX: 0.5 }),
+      hold({ moveX: 0.5 }),
+      hold({ moveX: 0.25 }),
+    ]);
     expect(inbox.tick).toBe(11);
     expect(inbox.input?.moveX).toBe(0.25);
-    const sampled = applyRemoteInboxes([hold({}), hold({}), hold({}), hold({})], [
-      emptyRemoteInbox(),
-      inbox,
-      emptyRemoteInbox(),
-      emptyRemoteInbox(),
-    ]);
+    const sampled = applyRemoteInboxes(
+      [hold({}), hold({}), hold({}), hold({})],
+      [emptyRemoteInbox(), inbox, emptyRemoteInbox(), emptyRemoteInbox()],
+    );
     expect(sampled[1]?.moveX).toBe(0.25);
     expect(sampled[0]?.moveX).toBe(0);
   });
@@ -239,19 +275,22 @@ describe('M8 netcode', () => {
     inbox = acceptInputBundle(inbox, 2, [a, b]);
     expect(inbox.tick).toBe(3);
     for (let i = 0; i < 36; i++) {
-      host.step(applyRemoteInboxes([hold({}), hold({}), hold({}), hold({})], [
-        emptyRemoteInbox(),
-        inbox,
-        emptyRemoteInbox(),
-        emptyRemoteInbox(),
-      ]));
+      host.step(
+        applyRemoteInboxes(
+          [hold({}), hold({}), hold({}), hold({})],
+          [emptyRemoteInbox(), inbox, emptyRemoteInbox(), emptyRemoteInbox()],
+        ),
+      );
     }
     expect(pos(host, 1).x).toBeGreaterThan(x0 + 0.4);
   });
 
   it('host sends settings/level JSON and a late-join snapshot', () => {
     const host = makeSim({ settings: { playerCount: 2 } });
-    const msgs = hostContentMessages(JSON.stringify({ maxHp: 50 }), JSON.stringify({ id: 'woods-01' }));
+    const msgs = hostContentMessages(
+      JSON.stringify({ maxHp: 50 }),
+      JSON.stringify({ id: 'woods-01' }),
+    );
     expect(msgs[0]).toMatchObject({ t: 'settings' });
     expect(msgs[1]).toMatchObject({ t: 'level' });
     const late = lateJoinSnapshotMessage(host.snapshot());
@@ -274,7 +313,10 @@ describe('M8 netcode', () => {
       ],
       objects: [{ type: 'solid', x: 20, y: 1, w: 40, h: 2 }],
     });
-    const msgs = hostContentMessages(JSON.stringify({ maxHp: 80, firstTo: 5 }), JSON.stringify(custom));
+    const msgs = hostContentMessages(
+      JSON.stringify({ maxHp: 80, firstTo: 5 }),
+      JSON.stringify(custom),
+    );
     const levelMsg = msgs[1]!;
     expect(levelMsg.t).toBe('level');
     const roundTrip = decode(encode(levelMsg));

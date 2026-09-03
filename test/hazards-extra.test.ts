@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { getLevel } from '../src/levels/catalog';
 import { spawnWeapon } from '../src/sim/systems/weapons';
 import {
+  Controller,
   Dead,
   Destructible,
   Hazard,
@@ -233,6 +234,35 @@ describe('M4 hazard details', () => {
     }
     expect(armed.some((a) => a === 0) && armed.some((a) => a === 1)).toBe(true);
     expect(armed.some((a) => a === 2)).toBe(true);
+
+    const fallThru = makeSim({
+      level: getLevel('test-platform.disappearing'),
+      seed: 62,
+      settings: { playerCount: 1 },
+    });
+    const rider = playerOf(fallThru);
+    const deck = { x: 13, y: 6 };
+    fallThru.ecs.query(Hazard, Transform).updateEach(([hz, t]) => {
+      if (hz.kind === HazardKind.Disappearing) {
+        deck.x = t.x;
+        deck.y = t.y;
+      }
+    });
+    fallThru.ctx.bodies.get(rider)?.setPosition({ x: deck.x, y: deck.y + 1.1 });
+    let stood = false;
+    let vanished = false;
+    const ys: number[] = [];
+    for (let i = 0; i < 160; i++) {
+      fallThru.step([hold({}), hold({}), hold({}), hold({})]);
+      if (rider.get(Controller)?.grounded) stood = true;
+      fallThru.ecs.query(Hazard).updateEach(([hz]) => {
+        if (hz.kind === HazardKind.Disappearing && hz.armed === 0) vanished = true;
+      });
+      if (vanished) ys.push(rider.get(Transform)?.y ?? 0);
+    }
+    expect(stood).toBe(true);
+    expect(vanished).toBe(true);
+    expect(Math.min(...ys)).toBeLessThan(deck.y);
 
     const fall = makeSim({
       level: getLevel('test-platform.collapsing'),

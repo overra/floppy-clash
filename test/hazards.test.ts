@@ -17,6 +17,7 @@ import {
 } from '../src/sim/traits';
 import { crusherOverlaps } from '../src/sim/hazards/crusher';
 import { diskSweepsPlayer } from '../src/sim/hazards/common';
+import { playerCrossesBeam } from '../src/sim/hazards/laser';
 import { sawOverlaps } from '../src/sim/hazards/saw';
 import { hold, makeSim, pin, playerOf } from './helpers';
 
@@ -134,6 +135,32 @@ describe('M4 hazards', () => {
       t.y = 5;
     });
     pin(sim, p, 14, 5);
+    sim.step([hold({}), hold({}), hold({}), hold({})]);
+    expect(p.has(Dead) || (p.get(Health)?.hp ?? 1) <= 0).toBe(true);
+  });
+
+  it('does not tunnel a player through an on laser in one tick (PLAN M4 sweep)', () => {
+    expect(playerCrossesBeam(8, 3, 8, 11, 2, 7, 16, 7)).toBeTruthy();
+    expect(playerCrossesBeam(8, 3, 8, 4, 2, 7, 16, 7)).toBeNull();
+
+    const level = {
+      ...getLevel('test-laser'),
+      id: 'sweep-laser-live',
+      objects: [
+        { type: 'solid' as const, x: 12, y: 1, w: 24, h: 2 },
+        { type: 'laser' as const, x: 2, y: 7, onTicks: 80, offTicks: 1, warningTicks: 0 },
+      ],
+    };
+    const sim = makeSim({ level, seed: 27, settings: { playerCount: 1 } });
+    const p = playerOf(sim);
+    pin(sim, p, 8, 3);
+    p.set(PrevTransform, { x: 8, y: 3, angle: 0 });
+    sim.step([hold({}), hold({}), hold({}), hold({})]);
+    expect(p.has(Dead) || (p.get(Health)?.hp ?? 1) <= 0).toBe(false);
+    p.set(PrevTransform, { x: 8, y: 3, angle: 0 });
+    sim.ctx.bodies.get(p)?.setPosition({ x: 8, y: 11 });
+    sim.ctx.bodies.get(p)?.setLinearVelocity({ x: 0, y: 0 });
+    p.set(Transform, { x: 8, y: 11, angle: 0 });
     sim.step([hold({}), hold({}), hold({}), hold({})]);
     expect(p.has(Dead) || (p.get(Health)?.hp ?? 1) <= 0).toBe(true);
   });
