@@ -835,6 +835,30 @@ describe('honest PLAN stand-ins (no pin/pred OR, no scoreboard shrink)', () => {
     expect(p.get(Health)?.hp ?? 1).toBeLessThanOrEqual(0);
   });
 
+  it('spikes do not kill after the last-tick skip is collapsed onto the far pose', () => {
+    const level = {
+      ...getLevel('test-spikes'),
+      id: 'sweep-spikes-collapsed',
+      objects: [
+        { type: 'solid' as const, x: 12, y: 1, w: 24, h: 2 },
+        { type: 'spikes' as const, x: 12, y: 6, w: 4, dir: 'up' as const },
+      ],
+    };
+    const sim = makeSim({ level, seed: 165, settings: { playerCount: 1 } });
+    const p = playerOf(sim);
+    place(sim, p, 12, 4.8);
+    sim.ctx.bodies.get(p)?.setLinearVelocity({ x: 0, y: 200 });
+    sim.ctx.holdHazards = true;
+    sim.step([hold({}), hold({}), hold({}), hold({})]);
+    sim.ctx.holdHazards = false;
+    place(sim, p, 12, 10);
+    p.set(PrevTransform, { x: 12, y: 10, angle: 0 });
+    sim.ctx.bodies.get(p)?.setLinearVelocity({ x: 0, y: 0 });
+    sim.step([hold({}), hold({}), hold({}), hold({})]);
+    expect(p.has(Dead)).toBe(false);
+    expect(p.get(Health)?.hp ?? 1).toBeGreaterThan(0);
+  });
+
   it('createSimWorld without boxes does not dump M0 crates onto a match arena', () => {
     const sim = makeSim({
       level: woodsClearing,

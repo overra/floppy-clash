@@ -37,6 +37,7 @@ export function hazardsStep(world: World): void {
       const hung = hz.kind === HazardKind.Chain && hz.param3 === 1;
       const reach = hung ? Math.max(2.2, (hz.param0 || 2.8) / 2 + 0.5) : 1.6;
       const prev = hazard.get(PrevTransform);
+      const pprev = player.get(PrevTransform);
       const body = ctx.bodies.get(hazard);
       const pos = body?.getPosition();
       // Last-tick pose + this-tick commanded body (path teleport). Never vel*dt.
@@ -49,7 +50,15 @@ export function hazardsStep(world: World): void {
             pt.y >= Math.min(prev?.y ?? ht.y, ht.y, pos?.y ?? ht.y) - 1.6 &&
             pt.y <= Math.max(prev?.y ?? ht.y, ht.y, pos?.y ?? ht.y) + 1.6
           : false;
-      const near = sweep || (dx < reach && dy < 1.6);
+      // Static kill beds: last-tick player skip must still invoke contact.
+      const playerSweep =
+        hz.kind === HazardKind.Spikes
+          ? ht.x >= Math.min(pprev?.x ?? pt.x, pt.x) - reach &&
+            ht.x <= Math.max(pprev?.x ?? pt.x, pt.x) + reach &&
+            ht.y >= Math.min(pprev?.y ?? pt.y, pt.y) - 1.6 &&
+            ht.y <= Math.max(pprev?.y ?? pt.y, pt.y) + 1.6
+          : false;
+      const near = sweep || playerSweep || (dx < reach && dy < 1.6);
       const mod = moduleForKind(hz.kind);
       if (!mod?.contact) return;
       if (!near && hz.kind !== HazardKind.Laser && hz.kind !== HazardKind.Conveyor) return;
