@@ -1359,7 +1359,7 @@ describe('honest PLAN stand-ins (no pin/pred OR, no scoreboard shrink)', () => {
     expect(p.has(Dead)).toBe(false);
   });
 
-  it('lava still damages inside authored half-width', () => {
+  it('lava still damages inside authored half-width after a fresh world', () => {
     const sim = makeSim({
       level: {
         ...getLevel('test-lava'),

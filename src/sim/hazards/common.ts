@@ -21,6 +21,11 @@ import type { ControllerView, TransformView } from './types';
 
 export const lavaTouch = new Map<number, number>();
 
+/** Entity ids recycle across worlds; leftover cooldown is a false-green / missed tick. */
+export function clearLavaTouch(): void {
+  lavaTouch.clear();
+}
+
 export function paramsFromObject(obj: LevelObject): {
   param0: number;
   param1: number;

@@ -1,6 +1,7 @@
 import type { Entity, World } from 'koota';
 import { matchLevelPool } from '../../levels/catalog';
 import { getContext } from '../context';
+import { clearLavaTouch } from '../hazards/common';
 import { loadLevel } from '../level/loader';
 import type { LevelDef } from '../level/schema';
 import { createPlayerCapsule } from '../physics/bodies';
@@ -72,6 +73,7 @@ export function reloadLevel(world: World, level: LevelDef): void {
     entity.destroy();
   }
   ctx.level = level;
+  clearLavaTouch();
   loadLevel(world, level);
 }
 

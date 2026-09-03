@@ -6,6 +6,7 @@ import { stepArms } from './player/arms';
 import { bindContext, getContext, makeContext, type SimContext } from './context';
 import type { SimEvents } from './events';
 import { blankInputs, normalizeInput, type PlayerInput } from './input';
+import { clearLavaTouch } from './hazards/common';
 import { loadLevel, spawnPlayer } from './level/loader';
 import type { LevelDef } from './level/schema';
 import { assignNetId, createBoxBody, registerBody } from './physics/bodies';
@@ -68,6 +69,7 @@ export type SimHandle = {
 };
 
 export function createSimWorld(opts: CreateSimOptions): SimHandle {
+  clearLavaTouch();
   const settings = mergeSettings(opts.settings);
   const ecs = createWorld();
   const g = cloneTuning().gravity;
