@@ -72,12 +72,22 @@ export async function replayFrameReadback(frame: RenderFrame): Promise<Framebuff
       prims: primBuf,
     });
     const postBuf = root.createBuffer(GpuPost).$usage('uniform');
-    const postBind = root.createBindGroup(postLayout, { post: postBuf });
+    const postSampler = root.createSampler({ magFilter: 'linear', minFilter: 'linear' });
     const bgBuf = root.createBuffer(GpuBg).$usage('uniform');
     const bgBind = root.createBindGroup(bgLayout, { bg: bgBuf });
     const w = READBACK_W;
     const h = READBACK_H;
     const bytesPerRow = alignBytesPerRow(w * PIXEL_BYTES);
+    const scene = device.createTexture({
+      size: { width: w, height: h },
+      format,
+      usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
+    });
+    const postBind = root.createBindGroup(postLayout, {
+      post: postBuf,
+      sceneTex: scene.createView(),
+      sceneSamp: postSampler,
+    });
     const tex = device.createTexture({
       size: { width: w, height: h },
       format,
@@ -94,47 +104,83 @@ export async function replayFrameReadback(frame: RenderFrame): Promise<Framebuff
       pad: 0,
       view: d.vec2f(w, h),
       shake: d.vec2f(frame.camera.shakeX, frame.camera.shakeY),
-    });
-    const packed = packGroups(frame.groups.slice(0, MAX_GROUPS));
-    groupBuf.write(packed.groupBytes);
-    primBuf.write(packed.primBytes);
-    const [tr, tg, tb] = parseHex(frame.theme.top);
-    const [br, bgc, bb] = parseHex(frame.theme.bottom);
-    const encoder = device.createCommandEncoder();
-    const pass = encoder.beginRenderPass({
-      colorAttachments: [
-        {
-          view: tex.createView(),
-          clearValue: { r: 0, g: 0, b: 0, a: 1 },
-          loadOp: 'clear',
-          storeOp: 'store',
-        },
-      ],
-    });
-    if (bgPipeline) {
-      bgBuf.write({
-        top: d.vec4f(tr, tg, tb, 1),
-        bottom: d.vec4f(br, bgc, bb, 1),
-        view: d.vec2f(w, h),
-        pad: d.vec2f(0, 0),
+        hole: d.vec4f(0, 0, 0, 0),
       });
-      bgPipeline.with(pass).with(bgBind).draw(3);
-    }
-    const bgCount = packed.layer0Count;
-    const worldCount = packed.groupCount - bgCount;
-    if (bgCount > 0) {
-      pipeline.with(pass).with(bind).draw(6, bgCount);
-    }
-    if (worldCount > 0) {
-      pipeline.with(pass).with(bind).draw(6, worldCount, 0, bgCount);
-    }
-    const flashA = Math.min(0.35, (frame.hud.flash ?? 0) * 0.12);
-    const vigA = frame.hud.slowmo ? 0.36 : 0;
-    if (postPipeline && (flashA > 0.001 || vigA > 0.001)) {
-      postBuf.write({ flash: flashA, vignette: vigA, view: d.vec2f(w, h) });
-      postPipeline.with(pass).with(postBind).draw(3);
-    }
-    pass.end();
+      const packed = packGroups(frame.groups.slice(0, MAX_GROUPS));
+      groupBuf.write(packed.groupBytes);
+      primBuf.write(packed.primBytes);
+      const [tr, tg, tb] = parseHex(frame.theme.top);
+      const [br, bgc, bb] = parseHex(frame.theme.bottom);
+      const encoder = device.createCommandEncoder();
+      const pass = encoder.beginRenderPass({
+        colorAttachments: [
+          {
+            view: scene.createView(),
+            clearValue: { r: 0, g: 0, b: 0, a: 1 },
+            loadOp: 'clear',
+            storeOp: 'store',
+          },
+        ],
+      });
+      if (bgPipeline) {
+        bgBuf.write({
+          top: d.vec4f(tr, tg, tb, 1),
+          bottom: d.vec4f(br, bgc, bb, 1),
+          view: d.vec2f(w, h),
+          pad: d.vec2f(0, 0),
+        });
+        bgPipeline.with(pass).with(bgBind).draw(3);
+      }
+      const bgCount = packed.layer0Count;
+      const worldCount = packed.groupCount - bgCount;
+      if (bgCount > 0) {
+        pipeline.with(pass).with(bind).draw(6, bgCount);
+      }
+      if (worldCount > 0) {
+        pipeline.with(pass).with(bind).draw(6, worldCount, 0, bgCount);
+      }
+      pass.end();
+      const flashA = Math.min(0.35, (frame.hud.flash ?? 0) * 0.12);
+      const vigA = frame.hud.slowmo ? 0.36 : 0;
+      const hx = frame.hole ? (frame.hole.x - frame.camera.x) * frame.camera.zoom + w / 2 : 0;
+      const hy = frame.hole ? h / 2 - (frame.hole.y - frame.camera.y) * frame.camera.zoom : 0;
+      const hr = frame.hole ? frame.hole.r * frame.camera.zoom : 0;
+      if (postPipeline) {
+        postBuf.write({
+          flash: flashA,
+          vignette: vigA,
+          view: d.vec2f(w, h),
+          hole: d.vec4f(hx, hy, hr, hr > 0.05 ? 0.35 : 0),
+        });
+        const blit = encoder.beginRenderPass({
+          colorAttachments: [
+            {
+              view: tex.createView(),
+              clearValue: { r: 0, g: 0, b: 0, a: 1 },
+              loadOp: 'clear',
+              storeOp: 'store',
+            },
+          ],
+        });
+        postPipeline.with(blit).with(postBind).draw(3);
+        blit.end();
+      } else {
+        // No post pipeline: copy the scene by drawing it again onto the readback target.
+        const fallback = encoder.beginRenderPass({
+          colorAttachments: [
+            {
+              view: tex.createView(),
+              clearValue: { r: 0, g: 0, b: 0, a: 1 },
+              loadOp: 'clear',
+              storeOp: 'store',
+            },
+          ],
+        });
+        if (bgPipeline) bgPipeline.with(fallback).with(bgBind).draw(3);
+        if (bgCount > 0) pipeline.with(fallback).with(bind).draw(6, bgCount);
+        if (worldCount > 0) pipeline.with(fallback).with(bind).draw(6, worldCount, 0, bgCount);
+        fallback.end();
+      }
     encoder.copyTextureToBuffer(
       { texture: tex },
       { buffer: staging, bytesPerRow },

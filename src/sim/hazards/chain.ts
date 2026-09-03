@@ -75,40 +75,32 @@ export const chain: HazardModule = {
       platW / 2,
       platH / 2,
       'dynamic',
-      { density: 1.6, friction: 1.15, restitution: 0, fixedRotation: true },
+      { density: 0.45, friction: 1.15, restitution: 0, fixedRotation: true },
     );
     isolateChainBody(deck);
-    deck.setKinematic();
     registerBody(world, platform, deck);
+    // PLAN Appendix D: hung deck is a dynamic body on a revolute, not a kinematic follow.
+    ctx.physics.createJoint(
+      new RevoluteJoint(
+        { collideConnected: false, enableLimit: true, lowerAngle: -0.35, upperAngle: 0.35 },
+        prevBody,
+        deck,
+        { x: obj.x, y: platY + platH / 2 + 0.06 },
+      ),
+    );
     return entity;
   },
-  step(world, entity, hz, _tr, dt) {
+  step(world, entity, hz, _tr, _dt) {
     if (hz.param3 !== 1 || hz.param2 <= 0) return;
     const ctx = getContext(world);
     const deck = ctx.bodies.get(entity);
     if (!deck) return;
-    const hang = { x: 0, y: 0, ok: false };
-    world.query(Hazard, Transform, NetId).updateEach(([h, t, n], link) => {
+    let hangLive = false;
+    world.query(Hazard, Transform, NetId).updateEach(([h, _t, n]) => {
       if (h.kind !== HazardKind.Chain || h.param3 === 1 || n.id !== hz.param2) return;
-      const body = ctx.bodies.get(link);
-      const p = body?.getPosition();
-      hang.x = p?.x ?? t.x;
-      hang.y = p?.y ?? t.y;
-      hang.ok = true;
+      hangLive = true;
     });
-    if (!hang.ok) {
-      if (deck.getType() !== 'dynamic') deck.setDynamic();
-      return;
-    }
-    const platH = hz.param1 || 0.4;
-    const tx = hang.x;
-    const ty = hang.y - platH * 0.5 - 0.12;
-    const p = deck.getPosition();
-    if (deck.getType() !== 'kinematic') deck.setKinematic();
-    const inv = 1 / Math.max(dt, 1 / 120);
-    deck.setLinearVelocity({ x: (tx - p.x) * inv, y: (ty - p.y) * inv });
-    deck.setAngle(0);
-    deck.setAngularVelocity(0);
+    if (!hangLive && deck.getType() !== 'dynamic') deck.setDynamic();
   },
   contact(world, player, hz, ht, ctrl, _dt, hazard) {
     if (hz.param3 !== 1) return;

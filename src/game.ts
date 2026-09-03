@@ -158,6 +158,7 @@ export function createGame(root: HTMLElement): Game {
   let last = performance.now();
   let paused = false;
   let editor: EditorState | null = null;
+  let playtestingEditor = false;
   let pane: Pane | null = null;
   let net: NetSession = createLocalLoopback();
   let extraLevels: LevelDef[] = [];
@@ -193,8 +194,16 @@ export function createGame(root: HTMLElement): Game {
         },
         editor: () => openEditor(),
         settings: () => {
-          menus.screen = 'settings';
-          show();
+          void loadLibrary()
+            .then((levels) => {
+              extraLevels = levels;
+              menus.screen = 'settings';
+              show();
+            })
+            .catch(() => {
+              menus.screen = 'settings';
+              show();
+            });
         },
         start: () => startIfReady(),
         startOnline: () => {
@@ -227,6 +236,14 @@ export function createGame(root: HTMLElement): Game {
         },
         quit: () => {
           sim = null;
+          paused = false;
+          if (playtestingEditor && editor) {
+            playtestingEditor = false;
+            menus.screen = 'editor';
+            mountEditor(menusEl, editor, editorFns());
+            return;
+          }
+          playtestingEditor = false;
           menus.screen = 'menu';
           show();
         },
@@ -246,25 +263,31 @@ export function createGame(root: HTMLElement): Game {
       settings,
       maps,
       stats,
+      extraLevels,
     );
   }
 
-  function openEditor() {
-    editor = createEditorState();
-    const hash = location.hash.startsWith('#l=') ? location.hash.slice(3) : '';
-    if (hash) {
-      const loaded = fromHash(hash);
-      if (loaded) editor.level = loaded;
-    }
-    menus.screen = 'editor';
-    mountEditor(menusEl, editor, {
-      playtest: (level) => startSim(level, { playerCount: 1, bots: 1 }),
+  function editorFns() {
+    return {
+      playtest: (level: LevelDef) => {
+        playtestingEditor = true;
+        startSim(level, { playerCount: 1, bots: 1 });
+      },
       back: () => {
+        playtestingEditor = false;
         menus.screen = 'menu';
         editor = null;
         show();
       },
-    });
+    };
+  }
+
+  function openEditor() {
+    if (!editor) editor = createEditorState();
+    const loaded = fromHash(location.hash);
+    if (loaded) editor.level = loaded;
+    menus.screen = 'editor';
+    mountEditor(menusEl, editor, editorFns());
   }
 
   async function beginMatch() {

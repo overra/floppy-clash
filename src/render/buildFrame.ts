@@ -452,19 +452,28 @@ export function buildFrame(
     });
   });
 
+  const hole = { x: 0, y: 0, r: 0 };
   world.query(Projectile).updateEach(([p]) => {
     if (p.kind !== 6) return;
+    const def = weaponByIndex(p.defId);
+    if (def.id !== 'black-hole') return;
+    const life = 180;
+    const age = Math.max(0, life - Math.max(p.fuse, 0));
+    const radius = Math.max(0.8, (def.projectile.radius || 4.5) * (0.2 + 0.8 * Math.min(1, age / life)));
+    hole.x = p.x;
+    hole.y = p.y;
+    hole.r = radius;
     groups.push({
-      minX: p.x - (p.speed || 2),
-      minY: p.y - (p.speed || 2),
-      maxX: p.x + (p.speed || 2),
-      maxY: p.y + (p.speed || 2),
+      minX: p.x - radius,
+      minY: p.y - radius,
+      maxX: p.x + radius,
+      maxY: p.y + radius,
       color: '#1a0a22',
       blend: 'union',
       smoothK: 0,
       layer: 6,
       fx: 'hole',
-      primitives: [{ kind: PRIM_DISK, ax: p.x, ay: p.y, bx: p.x, by: p.y, r: 0.8 }],
+      primitives: [{ kind: PRIM_DISK, ax: p.x, ay: p.y, bx: p.x, by: p.y, r: radius * 0.35 }],
     });
   });
 
@@ -534,6 +543,7 @@ export function buildFrame(
       shakeX: cam.shakeX,
       shakeY: cam.shakeY,
     },
+    hole: hole.r > 0 ? { x: hole.x, y: hole.y, r: hole.r } : undefined,
     theme: { top: theme.backgroundTop, bottom: theme.backgroundBottom, solid: theme.solid },
     lights,
     debug,

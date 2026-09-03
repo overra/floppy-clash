@@ -1,4 +1,5 @@
 import { builtInMatchLevels } from '../levels/catalog';
+import type { LevelDef } from '../sim/level/schema';
 import { DEFAULT_MAP, type PadMap } from '../input/remap';
 import { WEAPON_DEFS, weaponDisplayName } from '../sim/weapons/defs';
 import { scoreboardMarkup } from './scoreboard';
@@ -135,6 +136,7 @@ export function collectSettings(
   card: HTMLElement,
   menus: MenuState,
   settings: UserSettings,
+  userLevels: LevelDef[] = [],
 ): UserSettings {
   const num = (id: string, fallback: number) => {
     const el = card.querySelector(`#${id}`) as HTMLInputElement | null;
@@ -153,7 +155,7 @@ export function collectSettings(
   menus.bots = num('bots', menus.bots);
   const weapons = WEAPON_DEFS.filter((d) => d.dropWeight > 0);
   const enabledW = weapons.filter((d) => chk(`w-${d.id}`, true)).map((d) => d.id);
-  const levels = builtInMatchLevels();
+  const levels = [...builtInMatchLevels(), ...userLevels];
   const enabledL = levels.filter((l) => chk(`l-${l.id}`, true)).map((l) => l.id);
   return {
     ...settings,
@@ -205,6 +207,7 @@ export function renderMenus(
     kos: number;
     achievements?: { firstBlood?: boolean; firstWin?: boolean; tenKos?: boolean };
   },
+  userLevels: LevelDef[] = [],
 ): void {
   if (state.screen === 'editor') return;
   root.innerHTML = '';
@@ -255,7 +258,7 @@ export function renderMenus(
     card.append(btn('Start', () => actions.start?.()));
     card.append(btn('Back', () => actions.back?.()));
   } else if (state.screen === 'settings') {
-    renderSettings(card, state, settings, maps, actions);
+    renderSettings(card, state, settings, maps, actions, userLevels);
   } else if (state.screen === 'pause') {
     card.innerHTML = `<h2>Paused</h2>`;
     card.append(btn('Resume', () => actions.resume?.()));
@@ -291,6 +294,7 @@ function renderSettings(
   settings: UserSettings,
   maps: Record<string, PadMap>,
   actions: MenuActions,
+  userLevels: LevelDef[] = [],
 ): void {
   const weaponBoxes = WEAPON_DEFS.filter((d) => d.dropWeight > 0)
     .map((d) => {
@@ -298,13 +302,15 @@ function renderSettings(
       return `<label style="display:inline-block;margin:2px 8px 2px 0"><input id="w-${d.id}" type="checkbox" ${on ? 'checked' : ''}/> ${weaponDisplayName(d)}</label>`;
     })
     .join('');
-  const levelBoxes = builtInMatchLevels()
-    .slice(0, 80)
-    .map((l) => {
-      const on = settings.enabledLevels === 'all' || settings.enabledLevels.includes(l.id);
-      return `<label style="display:block;font-size:12px"><input id="l-${l.id}" type="checkbox" ${on ? 'checked' : ''}/> ${l.name} <span style="color:#9aa3b2">(${l.theme})</span></label>`;
-    })
-    .join('');
+  const boxFor = (l: LevelDef, tag = '') => {
+    const on = settings.enabledLevels === 'all' || settings.enabledLevels.includes(l.id);
+    return `<label style="display:block;font-size:12px"><input id="l-${l.id}" type="checkbox" ${on ? 'checked' : ''}/> ${l.name} <span style="color:#9aa3b2">(${l.theme}${tag})</span></label>`;
+  };
+  const levelBoxes = builtInMatchLevels().slice(0, 80).map((l) => boxFor(l)).join('');
+  const userBoxes =
+    userLevels.length === 0
+      ? '<p style="color:#9aa3b2;font-size:12px">No saved editor levels yet.</p>'
+      : userLevels.map((l) => boxFor(l, ' · user')).join('');
   const lastMap = Object.entries(maps)[0]?.[1] ?? DEFAULT_MAP;
   const lastId = Object.keys(maps)[0] ?? '';
   card.innerHTML = `<h2>Settings</h2>
@@ -337,6 +343,8 @@ function renderSettings(
       <div style="max-height:140px;overflow:auto;background:#151820;padding:8px;border-radius:8px">${weaponBoxes}</div>
       <h3>Level toggles</h3>
       <div style="max-height:140px;overflow:auto;background:#151820;padding:8px;border-radius:8px">${levelBoxes}</div>
+      <h3>User levels</h3>
+      <div id="userlevels" style="max-height:100px;overflow:auto;background:#151820;padding:8px;border-radius:8px">${userBoxes}</div>
       <h3>Per-pad remap</h3>
       <p style="color:#9aa3b2;font-size:13px">Offered automatically for non-<code>standard</code> mappings. Button indices follow the W3C Gamepad API.</p>
       <label>Pad id <input id="padid" value="${lastId}" placeholder="Xbox / DualSense id string"></label><br/>
@@ -347,7 +355,7 @@ function renderSettings(
       <label>Pause <input id="map-pause" type="number" value="${lastMap.pause}"></label>`;
   card.append(
     btn('Save', () => {
-      const next = collectSettings(card, state, settings);
+      const next = collectSettings(card, state, settings, userLevels);
       Object.assign(settings, next);
       actions.save?.();
     }),

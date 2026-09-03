@@ -53,13 +53,27 @@ export function builtInMatchLevels(): LevelDef[] {
   return ALL_LEVELS.filter(isMatchLevel);
 }
 
-/** Built-in match arenas plus optional user-library levels, filtered by host toggles. */
+/**
+ * Built-in match arenas plus optional user-library levels.
+ * User extras stay in the pool when the host only toggled built-ins
+ * (PLAN 4.15 — include-user-levels is not wiped by a partial built-in list).
+ * Once any extra id is listed in `enabled`, extras are filtered like built-ins.
+ */
 export function matchLevelPool(enabled: string[] | 'all', extra: LevelDef[] = []): LevelDef[] {
   const seen = new Set<string>();
   const out: LevelDef[] = [];
+  const extraIds = new Set(extra.map((l) => l.id));
+  const extrasToggled = enabled !== 'all' && extra.some((e) => enabled.includes(e.id));
   for (const level of [...builtInMatchLevels(), ...extra]) {
     if (seen.has(level.id)) continue;
-    if (enabled !== 'all' && !enabled.includes(level.id)) continue;
+    if (enabled !== 'all') {
+      const isExtra = extraIds.has(level.id);
+      if (isExtra) {
+        if (extrasToggled && !enabled.includes(level.id)) continue;
+      } else if (!enabled.includes(level.id)) {
+        continue;
+      }
+    }
     seen.add(level.id);
     out.push(level);
   }

@@ -165,7 +165,32 @@ async function createGpuRenderer(
   }
 
   const postBuf = root.createBuffer(GpuPost).$usage('uniform');
-  const postBind = root.createBindGroup(postLayout, { post: postBuf });
+  const postSampler = root.createSampler({ magFilter: 'linear', minFilter: 'linear' });
+  let sceneTex: GPUTexture | null = null;
+  let sceneW = 0;
+  let sceneH = 0;
+  let postBind: ReturnType<typeof root.createBindGroup> | null = null;
+
+  function ensureScene(w: number, h: number): GPUTexture | null {
+    if (w < 1 || h < 1) return null;
+    if (sceneTex && sceneW === w && sceneH === h) return sceneTex;
+    sceneTex?.destroy();
+    sceneTex = device.createTexture({
+      size: { width: w, height: h },
+      format,
+      usage:
+        GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_SRC,
+    });
+    sceneW = w;
+    sceneH = h;
+    postBind = root.createBindGroup(postLayout, {
+      post: postBuf,
+      sceneTex: sceneTex.createView(),
+      sceneSamp: postSampler,
+    });
+    return sceneTex;
+  }
+
   const bgBuf = root.createBuffer(GpuBg).$usage('uniform');
   const bgBind = root.createBindGroup(bgLayout, { bg: bgBuf });
 
@@ -336,6 +361,8 @@ async function createGpuRenderer(
         renderer.lastGpuMs = performance.now() - t0;
         return;
       }
+      const scene = ensureScene(w, h);
+      const useBlit = !!(postPipeline && postBind && scene);
       cameraBuf.write({
         x: frame.camera.x,
         y: frame.camera.y,
@@ -343,6 +370,13 @@ async function createGpuRenderer(
         pad: 0,
         view: d.vec2f(w, h),
         shake: d.vec2f(frame.camera.shakeX, frame.camera.shakeY),
+        // Fragment warp is the fallback when the post blit is unavailable.
+        hole: d.vec4f(
+          frame.hole?.x ?? 0,
+          frame.hole?.y ?? 0,
+          useBlit ? 0 : (frame.hole?.r ?? 0),
+          useBlit || !frame.hole?.r ? 0 : 0.35,
+        ),
       });
       const packed = packGroups(frame.groups.slice(0, MAX_GROUPS));
       groupBuf.write(packed.groupBytes);
@@ -352,7 +386,7 @@ async function createGpuRenderer(
       const pass = encoder.beginRenderPass({
         colorAttachments: [
           {
-            view: current.createView(),
+            view: useBlit && scene ? scene.createView() : current.createView(),
             clearValue: { r: 0, g: 0, b: 0, a: 1 },
             loadOp: 'clear',
             storeOp: 'store',
@@ -386,13 +420,32 @@ async function createGpuRenderer(
       if (worldCount > 0) {
         pipeline.with(pass).with(bind).draw(6, worldCount, 0, bgCount);
       }
+      pass.end();
       const flashA = Math.min(0.35, (frame.hud.flash ?? 0) * 0.12);
       const vigA = frame.hud.slowmo ? 0.36 : 0;
-      if (postPipeline && (flashA > 0.001 || vigA > 0.001)) {
-        postBuf.write({ flash: flashA, vignette: vigA, view: d.vec2f(w, h) });
-        postPipeline.with(pass).with(postBind).draw(3);
+      if (useBlit && postPipeline && postBind) {
+        const hx = frame.hole ? (frame.hole.x - frame.camera.x) * frame.camera.zoom + w / 2 : 0;
+        const hy = frame.hole ? h / 2 - (frame.hole.y - frame.camera.y) * frame.camera.zoom : 0;
+        const hr = frame.hole ? frame.hole.r * frame.camera.zoom : 0;
+        postBuf.write({
+          flash: flashA,
+          vignette: vigA,
+          view: d.vec2f(w, h),
+          hole: d.vec4f(hx, hy, hr, hr > 0.05 ? 0.35 : 0),
+        });
+        const blit = encoder.beginRenderPass({
+          colorAttachments: [
+            {
+              view: current.createView(),
+              clearValue: { r: 0, g: 0, b: 0, a: 1 },
+              loadOp: 'clear',
+              storeOp: 'store',
+            },
+          ],
+        });
+        postPipeline.with(blit).with(postBind).draw(3);
+        blit.end();
       }
-      pass.end();
       if (copyThisFrame && staging && readbackEnabled) {
         if (w < 1 || h < 1) {
           copyThisFrame = false;

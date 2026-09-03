@@ -10,10 +10,10 @@ import {
   PRIM_TRIANGLE,
 } from '../src/render/sdf/primitives';
 import { lerpHex, themePassGroups } from '../src/render/themeDecor';
-import { Combat, Crown, Transform } from '../src/sim/traits';
+import { Combat, Crown, Held, HeldBy, Loose, Transform } from '../src/sim/traits';
 import { spawnWeapon } from '../src/sim/systems/weapons';
 import { themeOf } from '../src/sim/level/themes';
-import { makeSim, playerOf } from './helpers';
+import { hold, makeSim, playerOf } from './helpers';
 
 describe('PLAN §4.11 theme pass', () => {
   it('emits parallax decorations including beziers (gradient is a fullscreen pass)', () => {
@@ -96,5 +96,21 @@ describe('PLAN §4.11 theme pass', () => {
     expect(crown!.primitives.length).toBeGreaterThanOrEqual(4);
     expect(crown!.primitives.some((p) => p.kind === PRIM_TRIANGLE)).toBe(true);
     expect(crown!.primitives.some((p) => p.kind === PRIM_ROUNDED_BOX)).toBe(true);
+  });
+
+  it('live Void Well publishes frame.hole for world UV warp', () => {
+    const sim = makeSim({ level: woodsClearing, seed: 9, settings: { playerCount: 1 } });
+    const p = playerOf(sim);
+    sim.ctx.bodies.get(p)?.setPosition({ x: 10, y: 4 });
+    p.set(Transform, { x: 10, y: 4, angle: 0 });
+    const gun = spawnWeapon(sim.ecs, 'black-hole', 10, 5);
+    gun.add(Held(), HeldBy(p));
+    gun.remove(Loose);
+    sim.step([hold({ attack: true, aimX: 1, aimY: 0 }), hold({}), hold({}), hold({})]);
+    const frame = buildFrame(sim, createCamera(sim.ctx.level.bounds), 0, 1280, 720, [], {
+      freezeCamera: true,
+    });
+    expect(frame.hole?.r ?? 0).toBeGreaterThan(0.2);
+    expect(frame.groups.some((g) => g.fx === 'hole')).toBe(true);
   });
 });

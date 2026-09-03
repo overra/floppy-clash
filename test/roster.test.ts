@@ -111,7 +111,7 @@ describe('M6 roster', () => {
     for (let i = 0; i < 30; i++) {
       beam.step([hold({ aimX: 1, aimY: 0 }), hold({}), hold({}), hold({})]);
     }
-    expect((bb.get(Health)?.hp ?? 100) < hp0 || (bb.get(Health)?.hp ?? 100) <= 0).toBe(true);
+    expect(bb.get(Health)?.hp ?? 100).toBeLessThan(hp0);
   });
 
   it('perfect block is offered while armed (cannot fire, can punch)', () => {

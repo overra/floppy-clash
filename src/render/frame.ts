@@ -28,6 +28,8 @@ export type ShapeGroup = {
 export type RenderFrame = {
   groups: ShapeGroup[];
   camera: { x: number; y: number; zoom: number; ppm: number; shakeX: number; shakeY: number };
+  /** PLAN 4.11: live Void Well attractor for world-space UV warp. */
+  hole?: { x: number; y: number; r: number };
   theme: { top: string; bottom: string; solid: string };
   debug?: {
     bodies: { x: number; y: number; angle: number; hx: number; hy: number }[];

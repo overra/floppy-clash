@@ -66,16 +66,33 @@ export function addShake(cam: CameraState, amount: number): void {
   cam.shake = Math.min(24, cam.shake + amount);
 }
 
+/** PLAN 4.11 black-hole UV: pull sample points toward the attractor. */
+export function warpWorld(
+  x: number,
+  y: number,
+  hole?: { x: number; y: number; r: number },
+): { x: number; y: number } {
+  if (!hole || hole.r <= 0.05) return { x, y };
+  const dx = x - hole.x;
+  const dy = y - hole.y;
+  const dist = Math.hypot(dx, dy);
+  const fall = Math.max(0, 1 - dist / hole.r);
+  const k = 0.35 * fall * fall;
+  return { x: x - dx * k, y: y - dy * k };
+}
+
 export function worldToScreen(
   cam: CameraState,
   x: number,
   y: number,
   viewW: number,
   viewH: number,
+  hole?: { x: number; y: number; r: number },
 ): { x: number; y: number } {
+  const w = warpWorld(x, y, hole);
   const ppm = cam.zoom;
   return {
-    x: (x - cam.x) * ppm + viewW / 2 + cam.shakeX,
-    y: viewH / 2 - (y - cam.y) * ppm + cam.shakeY,
+    x: (w.x - cam.x) * ppm + viewW / 2 + cam.shakeX,
+    y: viewH / 2 - (w.y - cam.y) * ppm + cam.shakeY,
   };
 }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createCamera, updateCamera } from '../src/render/camera';
+import { createCamera, updateCamera, warpWorld } from '../src/render/camera';
 
 const bounds = { x: 0, y: 0, w: 32, h: 18 };
 
@@ -38,5 +38,14 @@ describe('PLAN 4.11 camera', () => {
     expect(cam.x).toBeLessThanOrEqual(bounds.x + bounds.w);
     expect(cam.y).toBeGreaterThanOrEqual(bounds.y);
     expect(cam.y).toBeLessThanOrEqual(bounds.y + bounds.h);
+  });
+
+  it('warps world samples toward a black-hole attractor', () => {
+    const hole = { x: 10, y: 4, r: 4 };
+    const near = warpWorld(11, 4, hole);
+    expect(near.x).toBeLessThan(11);
+    const far = warpWorld(20, 4, hole);
+    expect(Math.abs(far.x - 20)).toBeLessThan(0.05);
+    expect(warpWorld(11, 4).x).toBe(11);
   });
 });

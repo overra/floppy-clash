@@ -52,6 +52,8 @@ export const GpuCamera = d.struct({
   pad: d.f32,
   view: d.vec2f,
   shake: d.vec2f,
+  /** world x, y, radius, warp strength */
+  hole: d.vec4f,
 });
 
 export const GpuBounds = d.struct({
@@ -208,6 +210,40 @@ export const applyGroupFxGpu = tgpu.fn(
   return d.vec2f(px, py);
 });
 
+/** PLAN 4.11: world-space UV pull toward the live Void Well. */
+export const warpWorldGpu = tgpu.fn(
+  [d.vec2f, d.vec4f],
+  d.vec2f,
+)((p, hole) => {
+  'use gpu';
+  const src = d.vec2f(p.x, p.y);
+  if (hole.z <= d.f32(0.05)) return src;
+  const dx = src.x - hole.x;
+  const dy = src.y - hole.y;
+  const dist = std.sqrt(std.max(dx * dx + dy * dy, d.f32(1e-4)));
+  const fall = std.saturate(d.f32(1) - dist / hole.z);
+  const k = hole.w * fall * fall;
+  return d.vec2f(src.x - dx * k, src.y - dy * k);
+});
+
+/** PLAN 4.11 post: screen-UV pull. Copies the UV argument (TypeGPU forbids returning it). */
+export const warpPostUvGpu = tgpu.fn(
+  [d.vec2f, d.vec4f, d.vec2f],
+  d.vec2f,
+)((uv, hole, view) => {
+  'use gpu';
+  const src = d.vec2f(uv.x, uv.y);
+  if (hole.z <= d.f32(0.05)) return src;
+  const px = src.x * view.x;
+  const py = src.y * view.y;
+  const dx = px - hole.x;
+  const dy = py - hole.y;
+  const dist = std.sqrt(std.max(dx * dx + dy * dy, d.f32(1e-4)));
+  const fall = std.saturate(d.f32(1) - dist / hole.z);
+  const k = hole.w * fall * fall;
+  return d.vec2f((px - dx * k) / view.x, (py - dy * k) / view.y);
+});
+
 export const groupSdfGpu = tgpu.fn(
   [d.u32, d.vec2f],
   d.f32,
@@ -250,21 +286,22 @@ export const sdfVertex = tgpu
     'use gpu';
     const g = sdfLayout.$.groups[input.instanceIndex]!;
     const cam = sdfLayout.$.camera;
-    let wx = g.minx;
-    let wy = g.miny;
+    const pad = cam.hole.z * d.f32(0.3);
+    let wx = g.minx - pad;
+    let wy = g.miny - pad;
     if (
       input.vertexIndex === d.u32(1) ||
       input.vertexIndex === d.u32(2) ||
       input.vertexIndex === d.u32(4)
     ) {
-      wx = g.maxx;
+      wx = g.maxx + pad;
     }
     if (
       input.vertexIndex === d.u32(2) ||
       input.vertexIndex === d.u32(4) ||
       input.vertexIndex === d.u32(5)
     ) {
-      wy = g.maxy;
+      wy = g.maxy + pad;
     }
     return { pos: worldToNdcGpu(cam, d.vec2f(wx, wy)), gid: input.instanceIndex };
   })
@@ -285,8 +322,11 @@ export const sdfFragment = tgpu
     const ppm = cam.zoom;
     const sx = input.pos.x;
     const sy = input.pos.y;
-    const wx = ((sx / cam.view.x - d.f32(0.5)) * cam.view.x) / ppm + cam.x;
-    const wy = ((d.f32(0.5) - sy / cam.view.y) * cam.view.y) / ppm + cam.y;
+    const rawx = ((sx / cam.view.x - d.f32(0.5)) * cam.view.x) / ppm + cam.x;
+    const rawy = ((d.f32(0.5) - sy / cam.view.y) * cam.view.y) / ppm + cam.y;
+    const warped = warpWorldGpu(d.vec2f(rawx, rawy), cam.hole);
+    const wx = warped.x;
+    const wy = warped.y;
     const p = applyGroupFxGpu(g, d.vec2f(wx, wy));
     const dist = groupSdfGpu(input.gid, p);
     const aa = std.max(std.fwidth(dist), d.f32(0.002));
@@ -385,11 +425,13 @@ export function createDecalDrawPipeline(root: TgpuRoot, format: GPUTextureFormat
     .$name('decal-draw');
 }
 
-/** PLAN §4.11 pass (4): slow-mo grade/vignette + hit-stop flash (fullscreen overlay). */
+/** PLAN §4.11 pass (4): scene blit + slow-mo grade/vignette + hit-stop + hole UV. */
 export const GpuPost = d.struct({
   flash: d.f32,
   vignette: d.f32,
   view: d.vec2f,
+  /** screen x, y, radius px, warp strength */
+  hole: d.vec4f,
 });
 
 export const POST_STRIDE = d.sizeOf(GpuPost);
@@ -397,6 +439,8 @@ export const POST_STRIDE = d.sizeOf(GpuPost);
 export const postLayout = tgpu
   .bindGroupLayout({
     post: { uniform: GpuPost },
+    sceneTex: { texture: d.texture2d(d.f32) },
+    sceneSamp: { sampler: 'filtering' },
   })
   .$idx(0);
 
@@ -424,22 +468,20 @@ export const postFragment = tgpu
   })((input) => {
     'use gpu';
     const post = postLayout.$.post;
-    const uvx = input.pos.x / post.view.x - d.f32(0.5);
-    const uvy = input.pos.y / post.view.y - d.f32(0.5);
-    const r2 = uvx * uvx + uvy * uvy;
+    const rawUv = d.vec2f(input.pos.x / post.view.x, input.pos.y / post.view.y);
+    const uv = warpPostUvGpu(rawUv, post.hole, post.view);
+    const color = std.textureSample(postLayout.$.sceneTex, postLayout.$.sceneSamp, uv);
+    const cx = uv.x - d.f32(0.5);
+    const cy = uv.y - d.f32(0.5);
+    const r2 = cx * cx + cy * cy;
     const vig = std.smoothstep(d.f32(0.12), d.f32(0.68), r2) * post.vignette;
     const flashA = std.saturate(post.flash);
     const vigA = std.saturate(vig) * (d.f32(1) - flashA);
-    const a = flashA + vigA;
-    if (a < d.f32(0.001)) {
-      std.discard();
-    }
-    const inv = std.max(a, d.f32(1e-4));
     return d.vec4f(
-      (flashA + vigA * d.f32(0.14)) / inv,
-      (flashA + vigA * d.f32(0.05)) / inv,
-      (flashA + vigA * d.f32(0.02)) / inv,
-      a,
+      color.x * (d.f32(1) - vigA) + flashA + vigA * d.f32(0.14),
+      color.y * (d.f32(1) - vigA) + flashA + vigA * d.f32(0.05),
+      color.z * (d.f32(1) - vigA) + flashA + vigA * d.f32(0.02),
+      d.f32(1),
     );
   })
   .$name('postFragment');
@@ -519,6 +561,7 @@ export function resolveSdfDrawWgsl(): string {
   return tgpu.resolve([
     sdfVertex,
     sdfFragment,
+    warpWorldGpu,
     decalVertex,
     decalFragment,
     postVertex,
@@ -533,7 +576,7 @@ export function resolveBgWgsl(): string {
 }
 
 export function resolvePostWgsl(): string {
-  return tgpu.resolve([postVertex, postFragment]);
+  return tgpu.resolve([postVertex, postFragment, warpPostUvGpu]);
 }
 
 export function isTypeGpuDrawShaders(): boolean {
@@ -575,6 +618,27 @@ export function evalCoverageGpu(dist: number): number {
   } catch {
     return dist < 0 ? 1 : 0;
   }
+}
+
+export function evalWarpWorldGpu(
+  x: number,
+  y: number,
+  hole: { x: number; y: number; z: number; w: number },
+): { x: number; y: number } {
+  try {
+    const out = warpWorldGpu({ x, y } as never, hole as never) as { x: number; y: number };
+    if (Number.isFinite(Number(out.x)) && Number.isFinite(Number(out.y))) {
+      return { x: Number(out.x), y: Number(out.y) };
+    }
+  } catch {
+    /* CPU fallback */
+  }
+  const dx = x - hole.x;
+  const dy = y - hole.y;
+  const dist = Math.hypot(dx, dy) || 1e-4;
+  const fall = Math.max(0, Math.min(1, 1 - dist / hole.z));
+  const k = hole.w * fall * fall;
+  return { x: x - dx * k, y: y - dy * k };
 }
 
 export function evalSmoothUnionGpu(a: number, b: number, k: number): number {

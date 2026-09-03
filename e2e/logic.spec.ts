@@ -100,6 +100,7 @@ test('editor can place every hazard type then playtest the draft', async ({ page
   await page.getByRole('button', { name: 'Share URL' }).click();
   const hash = await page.evaluate(() => location.hash);
   expect(hash.startsWith('#l=')).toBe(true);
+  expect(hash.slice(3)).not.toMatch(/[+/]/);
   await page.reload();
   await expect(page.locator('text=Level Editor')).toBeVisible({ timeout: 8_000 });
   await expect(page.locator('#edjson')).toContainText('"type": "spikes"');
@@ -118,9 +119,13 @@ test('settings persist toggles and editor property panel opens', async ({ page }
   await page.getByRole('button', { name: 'Save', exact: true }).click();
   await page.getByRole('button', { name: 'Settings' }).click();
   await expect(page.locator('#lit')).toBeChecked();
+  await expect(page.locator('#userlevels')).toBeVisible();
+  await expect(page.locator('text=User levels')).toBeVisible();
   await page.getByRole('button', { name: 'Back' }).click();
   await page.getByRole('button', { name: 'Level Editor' }).click();
   await expect(page.locator('text=Level Editor')).toBeVisible();
+  await page.getByRole('button', { name: 'Save library' }).click();
+  await expect(page.locator('#edlib')).toContainText(/Untitled|user-draft/i);
   await page.getByRole('button', { name: 'spawn' }).click();
   await page.getByRole('button', { name: 'Add at 12,6' }).click();
   await expect(page.locator('#edjson')).toContainText('spawns');
@@ -134,6 +139,11 @@ test('editor playtest starts a match from the draft', async ({ page }) => {
   await page.getByRole('button', { name: 'Playtest' }).click();
   await expect(page.locator('canvas#game')).toBeVisible();
   await expect(page.locator('[data-countdown]')).toBeVisible({ timeout: 8_000 });
+  await page.keyboard.press('Escape');
+  await expect(page.getByRole('heading', { name: 'Paused' })).toBeVisible();
+  await page.getByRole('button', { name: 'Quit' }).click();
+  await expect(page.locator('text=Level Editor')).toBeVisible({ timeout: 8_000 });
+  await expect(page.locator('#edjson')).toContainText('"type": "solid"');
 });
 
 test('F3 debug HUD and F1 overlay flags are wired', async ({ page }) => {

@@ -217,18 +217,27 @@ const DICT = [
   'false',
 ];
 
+function toUrlSafeB64(b64: string): string {
+  return b64.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
+}
+
+function fromUrlSafeB64(raw: string): string {
+  const b64 = raw.replace(/-/g, '+').replace(/_/g, '/');
+  return b64 + '='.repeat((4 - (b64.length % 4)) % 4);
+}
+
 export function compressLevelJson(json: string): string {
   let s = json;
   for (let i = 0; i < DICT.length; i++) {
     s = s.split(DICT[i]!).join(`\x01${String.fromCharCode(65 + i)}`);
   }
   const packed = lz77(s);
-  return `c1${btoa(unescape(encodeURIComponent(packed)))}`;
+  return `c1${toUrlSafeB64(btoa(unescape(encodeURIComponent(packed))))}`;
 }
 
 export function decompressLevelJson(hash: string): string {
   const raw = hash.startsWith('c1') ? hash.slice(2) : hash;
-  const packed = decodeURIComponent(escape(atob(raw)));
+  const packed = decodeURIComponent(escape(atob(fromUrlSafeB64(raw))));
   let s = unlz77(packed);
   for (let i = DICT.length - 1; i >= 0; i--) {
     s = s.split(`\x01${String.fromCharCode(65 + i)}`).join(DICT[i]!);
@@ -282,11 +291,24 @@ export function shareHash(state: EditorState): string {
   return compressLevelJson(JSON.stringify(state.level));
 }
 
+/** Payload after `#l=` — accepts percent-encoding and legacy `+/` base64. */
+export function levelHashFromLocation(hash: string): string {
+  const q = hash.startsWith('#') ? hash.slice(1) : hash;
+  if (!q.startsWith('l=')) return '';
+  const raw = q.slice(2);
+  try {
+    return decodeURIComponent(raw);
+  } catch {
+    return raw;
+  }
+}
+
 export function fromHash(hash: string): LevelDef | null {
   try {
-    const json = hash.startsWith('c1')
-      ? decompressLevelJson(hash)
-      : decodeURIComponent(escape(atob(hash)));
+    const payload = hash.includes('l=') ? levelHashFromLocation(hash) : hash;
+    const json = payload.startsWith('c1')
+      ? decompressLevelJson(payload)
+      : decodeURIComponent(escape(atob(fromUrlSafeB64(payload))));
     return parseLevel(JSON.parse(json));
   } catch {
     return null;
@@ -308,6 +330,8 @@ export async function loadMemory(): Promise<LevelDef[]> {
 }
 
 export async function saveLibrary(level: LevelDef): Promise<void> {
+  memoryStore.set(level.id, structuredClone(level));
+  if (typeof indexedDB === 'undefined') return;
   const db = await openDb();
   await new Promise<void>((resolve, reject) => {
     const tx = db.transaction('levels', 'readwrite');
@@ -318,12 +342,33 @@ export async function saveLibrary(level: LevelDef): Promise<void> {
 }
 
 export async function loadLibrary(): Promise<LevelDef[]> {
+  const mem = await loadMemory();
+  if (typeof indexedDB === 'undefined') return mem;
+  try {
+    const db = await openDb();
+    const fromDb = await new Promise<LevelDef[]>((resolve, reject) => {
+      const tx = db.transaction('levels', 'readonly');
+      const req = tx.objectStore('levels').getAll();
+      req.onsuccess = () => resolve((req.result as LevelDef[]) ?? []);
+      req.onerror = () => reject(req.error);
+    });
+    if (!fromDb.length) return mem;
+    const seen = new Set(fromDb.map((l) => l.id));
+    return [...fromDb, ...mem.filter((l) => !seen.has(l.id))];
+  } catch {
+    return mem;
+  }
+}
+
+export async function deleteLibrary(id: string): Promise<void> {
+  memoryStore.delete(id);
+  if (typeof indexedDB === 'undefined') return;
   const db = await openDb();
-  return new Promise((resolve, reject) => {
-    const tx = db.transaction('levels', 'readonly');
-    const req = tx.objectStore('levels').getAll();
-    req.onsuccess = () => resolve(req.result as LevelDef[]);
-    req.onerror = () => reject(req.error);
+  await new Promise<void>((resolve, reject) => {
+    const tx = db.transaction('levels', 'readwrite');
+    tx.objectStore('levels').delete(id);
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
   });
 }
 

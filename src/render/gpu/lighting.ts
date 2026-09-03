@@ -236,6 +236,7 @@ export function createLightingPass(
         pad: 0,
         view: d.vec2f(canvas?.width || 1280, canvas?.height || 720),
         shake: d.vec2f(frame.camera.shakeX, frame.camera.shakeY),
+        hole: d.vec4f(frame.hole?.x ?? 0, frame.hole?.y ?? 0, frame.hole?.r ?? 0, frame.hole?.r ? 0.35 : 0),
       });
       const items = Array.from({ length: 16 }, (_, i) => {
         const e = emitters[i];

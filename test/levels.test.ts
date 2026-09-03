@@ -21,6 +21,9 @@ describe('levels catalog', () => {
     expect(pool.some((l) => l.id === 'user-arena')).toBe(true);
     const subset = matchLevelPool(['user-arena'], extra);
     expect(subset.map((l) => l.id)).toEqual(['user-arena']);
+    const builtInOnly = matchLevelPool(['woods-01'], extra);
+    expect(builtInOnly.some((l) => l.id === 'woods-01')).toBe(true);
+    expect(builtInOnly.some((l) => l.id === 'user-arena')).toBe(true);
   });
 
   it('ships a per-hazard test level', () => {

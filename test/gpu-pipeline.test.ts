@@ -49,6 +49,7 @@ describe('TypeGPU live SDF draw path (PLAN §4.11)', () => {
     expect(wgsl).toMatch(/perlin|computeJunctionGradient|getJunctionGradient/i);
     expect(wgsl).toMatch(/sdBezier|bezier/i);
     expect(wgsl).toMatch(/opSmoothDifference|smoothDifference|smooth_difference/i);
+    expect(wgsl).toMatch(/warpWorldGpu|hole/i);
     // Pipeline factories used by the renderer are TypeGPU createRenderPipeline wrappers.
     expect(typeof createSdfDrawPipeline).toBe('function');
     expect(typeof createDecalDrawPipeline).toBe('function');
@@ -70,8 +71,8 @@ describe('TypeGPU live SDF draw path (PLAN §4.11)', () => {
 
   it('packs groups to the TypeGPU d.struct strides', () => {
     expect(GROUP_STRIDE).toBe(64);
-    expect(CAMERA_STRIDE).toBe(32);
-    expect(POST_STRIDE).toBe(16);
+    expect(CAMERA_STRIDE).toBe(48);
+    expect(POST_STRIDE).toBe(32);
     expect(PRIM_STRIDE).toBeGreaterThanOrEqual(32);
     const packed = packGroups([
       {
@@ -131,6 +132,7 @@ describe('TypeGPU live SDF draw path (PLAN §4.11)', () => {
     const wgsl = resolvePostWgsl();
     expect(wgsl).toMatch(/@vertex/);
     expect(wgsl).toMatch(/@fragment/);
+    expect(wgsl).toMatch(/warpPostUvGpu|hole/i);
     expect(typeof createPostDrawPipeline).toBe('function');
   });
 
@@ -161,6 +163,8 @@ describe('GPU boot order (PLAN §4.11)', () => {
     expect(renderer).toContain('layer0Count');
     expect(renderer).toContain('createPostDrawPipeline');
     expect(renderer).toContain('createBgDrawPipeline');
+    expect(renderer).toContain('sceneTex');
+    expect(renderer).toContain('ensureScene');
   });
 });
 

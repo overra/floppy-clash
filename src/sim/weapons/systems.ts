@@ -135,6 +135,30 @@ function heldWeapon(world: World, player: Entity): Entity | undefined {
   return undefined;
 }
 
+/** PLAN 4.9: held body is deactivated and posed at the hand so syncTransforms / net / render follow aim. */
+function poseHeldWeapon(
+  world: World,
+  weapon: Entity,
+  transform: { x: number; y: number },
+  aim: { x: number; y: number },
+  barrel: number,
+): void {
+  const ctx = getContext(world);
+  const hx = transform.x + aim.x * (0.45 + barrel * 0.25);
+  const hy = transform.y + aim.y * (0.45 + barrel * 0.25);
+  const angle = Math.atan2(aim.y, aim.x);
+  const wbody = ctx.bodies.get(weapon);
+  if (wbody) {
+    wbody.setActive(false);
+    wbody.setPosition(new Vec2(hx, hy));
+    wbody.setAngle(angle);
+    wbody.setLinearVelocity(new Vec2(0, 0));
+    wbody.setAngularVelocity(0);
+    return;
+  }
+  weapon.set(Transform, { x: hx, y: hy, angle });
+}
+
 export function weapons(world: World): void {
   const ctx = getContext(world);
 
@@ -178,6 +202,7 @@ export function weapons(world: World): void {
     const def = weaponByIndex(wep.defId);
     const body = ctx.bodies.get(entity);
     if (!body) return;
+    poseHeldWeapon(world, held, transform, aim, def.shape.length);
 
     if (rising(prev?.throw ?? false, input.throw)) {
       ctx.burstLeft.delete(entity);
@@ -253,8 +278,9 @@ export function weapons(world: World): void {
       held.set(Weapon, { ...wep, ammo: wep.ammo - 1 });
     }
     const vel = body.getLinearVelocity();
+    const along = def.recoil.forward - def.recoil.back;
     body.setLinearVelocity(
-      new Vec2(vel.x - aim.x * def.recoil.back + aim.x * def.recoil.forward, vel.y + def.recoil.up - aim.y * def.recoil.back),
+      new Vec2(vel.x + aim.x * along, vel.y + def.recoil.up + aim.y * along),
     );
     emit(world, { type: 'shot', source: entity, weaponId: def.id, x: muzzleX, y: muzzleY, aimX: aim.x, aimY: aim.y });
     if (def.id === 'blink-dagger') {

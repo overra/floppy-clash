@@ -1,8 +1,8 @@
 import {
   addObject,
+  deleteLibrary,
   exportLevel,
   EXTRA_TOOLS,
-  fromHash,
   hitTest,
   importLevel,
   loadLibrary,
@@ -101,7 +101,7 @@ export function mountEditor(root: HTMLElement, state: EditorState, fns: EditorVi
       location.hash = `l=${shareHash(state)}`;
     }),
     mk('Save library', () => {
-      void saveLibrary(state.level);
+      void saveLibrary(state.level).then(() => void refreshLibrary());
     }),
     mk('Playtest', () => fns.playtest(state.level)),
     mk('Back', () => fns.back()),
@@ -115,18 +115,42 @@ export function mountEditor(root: HTMLElement, state: EditorState, fns: EditorVi
     importLevel(state, text);
     draw();
   };
-  side.append(actions, file, fields, props);
+  const lib = document.createElement('div');
+  lib.id = 'edlib';
+  lib.style.cssText = 'font-size:12px;max-height:18vh;overflow:auto;background:#151820;padding:8px;margin:6px 0';
+  side.append(actions, file, fields, lib, props);
 
   wrap.append(pal, mid, side);
   root.append(wrap);
   paintTools();
 
-  const hash = location.hash.startsWith('#l=') ? location.hash.slice(3) : '';
-  if (hash) {
-    const loaded = fromHash(hash);
-    if (loaded) state.level = loaded;
+  async function refreshLibrary(): Promise<void> {
+    const levels = await loadLibrary().catch(() => []);
+    lib.innerHTML = levels.length
+      ? ''
+      : '<p style="color:#9aa3b2;margin:0">Library empty — Save library to keep this draft.</p>';
+    for (const level of levels) {
+      const row = document.createElement('div');
+      row.style.cssText = 'display:flex;gap:6px;align-items:center;margin:4px 0';
+      const label = document.createElement('span');
+      label.textContent = `${level.name} (${level.id})`;
+      const loadBtn = document.createElement('button');
+      loadBtn.textContent = 'Load';
+      loadBtn.onclick = () => {
+        state.level = structuredClone(level);
+        state.selected = 0;
+        draw();
+      };
+      const delBtn = document.createElement('button');
+      delBtn.textContent = 'Delete';
+      delBtn.onclick = () => {
+        void deleteLibrary(level.id).then(() => void refreshLibrary());
+      };
+      row.append(label, loadBtn, delBtn);
+      lib.append(row);
+    }
   }
-  void loadLibrary();
+  void refreshLibrary();
 
   let drag = false;
   const toWorld = (ev: PointerEvent) => {

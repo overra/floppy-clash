@@ -263,6 +263,30 @@ describe('PLAN gaps closed this audit', () => {
     expect((p.get(Transform)?.x ?? 10) - x0).toBeGreaterThan(3);
   });
 
+  it('blink dagger damages at the destination on the same tick', () => {
+    const sim = makeSim({ seed: 405, settings: { playerCount: 2 } });
+    const a = playerOf(sim, 0);
+    const b = playerOf(sim, 1);
+    sim.ctx.bodies.get(a)?.setPosition({ x: 10, y: 4 });
+    sim.ctx.bodies.get(b)?.setPosition({ x: 14, y: 4 });
+    a.set(Transform, { x: 10, y: 4, angle: 0 });
+    b.set(Transform, { x: 14, y: 4, angle: 0 });
+    const gun = spawnWeapon(sim.ecs, 'blink-dagger', 10, 5);
+    gun.add(Held(), HeldBy(a));
+    gun.remove(Loose);
+    const hp0 = b.get(Health)?.hp ?? 100;
+    for (let i = 0; i < 6; i++) {
+      sim.step([
+        hold({ attack: i === 1, aimX: 1, aimY: 0 }),
+        hold({}),
+        hold({}),
+        hold({}),
+      ]);
+    }
+    expect((a.get(Transform)?.x ?? 10)).toBeGreaterThan(13);
+    expect((b.get(Health)?.hp ?? 100)).toBeLessThan(hp0);
+  });
+
   it('flamethrower applies burn on a live hit', () => {
     const sim = makeSim({ seed: 19, settings: { playerCount: 2 } });
     const a = playerOf(sim, 0);
@@ -278,5 +302,91 @@ describe('PLAN gaps closed this audit', () => {
       sim.step([hold({ attack: true, aimX: 1, aimY: 0 }), hold({}), hold({}), hold({})]);
     }
     expect(b.get(Status)?.burning ?? 0).toBeGreaterThan(0);
+  });
+
+  it('held weapon Transform follows the hand after the player moves', () => {
+    const sim = makeSim({ seed: 401, settings: { playerCount: 1 } });
+    const p = playerOf(sim);
+    sim.ctx.bodies.get(p)?.setPosition({ x: 10, y: 4 });
+    p.set(Transform, { x: 10, y: 4, angle: 0 });
+    const gun = spawnWeapon(sim.ecs, 'pistol', 10.05, 4.15);
+    for (let i = 0; i < 16; i++) sim.step([hold({}), hold({}), hold({}), hold({})]);
+    expect(gun.has(Held)).toBe(true);
+    expect(sim.ctx.bodies.get(gun)?.isActive()).toBe(false);
+    sim.ctx.bodies.get(p)?.setPosition({ x: 16, y: 6 });
+    p.set(Transform, { x: 16, y: 6, angle: 0 });
+    for (let i = 0; i < 6; i++) {
+      sim.step([hold({ moveX: 1, aimX: 1, aimY: 0 }), hold({}), hold({}), hold({})]);
+    }
+    const wt = gun.get(Transform)!;
+    const pt = p.get(Transform)!;
+    expect(Math.hypot(wt.x - pt.x, wt.y - pt.y)).toBeLessThan(1.8);
+    expect(wt.x).toBeGreaterThan(14);
+  });
+
+  it('sword lunge applies forward impulse along aim Y', () => {
+    const sim = makeSim({ seed: 402, settings: { playerCount: 1 } });
+    const p = playerOf(sim);
+    sim.ctx.bodies.get(p)?.setPosition({ x: 10, y: 4 });
+    sim.ctx.bodies.get(p)?.setLinearVelocity({ x: 0, y: 0 });
+    p.set(Transform, { x: 10, y: 4, angle: 0 });
+    const gun = spawnWeapon(sim.ecs, 'sword', 10, 5);
+    gun.add(Held(), HeldBy(p));
+    gun.remove(Loose);
+    sim.step([hold({ attack: true, aimX: 0, aimY: 1 }), hold({}), hold({}), hold({})]);
+    expect(sim.ctx.bodies.get(p)?.getLinearVelocity().y ?? 0).toBeGreaterThan(4);
+  });
+
+  it('hung chain platform is a dynamic revolute-jointed body', () => {
+    const sim = makeSim({
+      level: getLevel('test-chain'),
+      seed: 406,
+      settings: { playerCount: 1 },
+    });
+    for (let i = 0; i < 8; i++) sim.step([hold({}), hold({}), hold({}), hold({})]);
+    const deck = { type: '', ok: false };
+    sim.ecs.query(Hazard).updateEach(([hz], e) => {
+      if (hz.kind !== HazardKind.Chain || hz.param3 !== 1) return;
+      deck.type = sim.ctx.bodies.get(e)?.getType() ?? '';
+      deck.ok = true;
+    });
+    expect(deck.ok).toBe(true);
+    expect(deck.type).toBe('dynamic');
+  });
+
+  it('breaking every chain link drops the hung platform', () => {
+    const sim = makeSim({
+      level: getLevel('test-chain'),
+      seed: 403,
+      settings: { playerCount: 1 },
+    });
+    for (let i = 0; i < 20; i++) sim.step([hold({}), hold({}), hold({}), hold({})]);
+    let y0 = 0;
+    sim.ecs.query(Hazard, Transform).updateEach(([hz, t]) => {
+      if (hz.kind === HazardKind.Chain && hz.param3 === 1) y0 = t.y;
+    });
+    expect(y0).toBeGreaterThan(2);
+    sim.ecs.query(Destructible, Hazard).updateEach(([d, hz]) => {
+      if (hz.kind === HazardKind.Chain && hz.param3 !== 1) d.hp = 0;
+    });
+    for (let i = 0; i < 50; i++) sim.step([hold({}), hold({}), hold({}), hold({})]);
+    let y1 = y0;
+    sim.ecs.query(Hazard, Transform).updateEach(([hz, t]) => {
+      if (hz.kind === HazardKind.Chain && hz.param3 === 1) y1 = t.y;
+    });
+    expect(y1).toBeLessThan(y0 - 0.25);
+  });
+
+  it('death drops a held weapon as a loose body', () => {
+    const sim = makeSim({ seed: 404, settings: { playerCount: 1 } });
+    const p = playerOf(sim);
+    const gun = spawnWeapon(sim.ecs, 'pistol', 8, 6);
+    gun.add(Held(), HeldBy(p));
+    gun.remove(Loose);
+    p.set(Health, { hp: 0, maxHp: 100 });
+    sim.step([hold({}), hold({}), hold({}), hold({})]);
+    expect(p.has(Dead)).toBe(true);
+    expect(gun.has(Held)).toBe(false);
+    expect(gun.has(Loose)).toBe(true);
   });
 });

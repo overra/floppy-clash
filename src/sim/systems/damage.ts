@@ -1,6 +1,7 @@
 import { createQuery, Not, type World } from 'koota';
 import { emit, getContext } from '../context';
 import { spawnRagdoll } from '../player/ragdoll';
+import { disarm } from '../player/combat';
 import { destroyBody } from '../physics/bodies';
 import { Combat, Controller, Dead, Health, Player, Status, Transform } from '../traits';
 
@@ -37,6 +38,7 @@ export function damageDeath(world: World): void {
     if (oob) health.hp = 0;
 
     if (health.hp <= 0) {
+      disarm(world, entity);
       entity.add(Dead());
       const ctrl = entity.get(Controller);
       spawnRagdoll(world, entity, ctrl?.vx ?? 0, ctrl?.vy ?? 0);

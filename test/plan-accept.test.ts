@@ -544,25 +544,30 @@ describe('PLAN accept stand-ins', () => {
     const a = playerOf(sim, 0);
     const b = playerOf(sim, 1);
     sim.ctx.bodies.get(a)?.setPosition({ x: 10, y: 4 });
-    sim.ctx.bodies.get(b)?.setPosition({ x: 10.7, y: 4 });
+    // Aim is straight up — put B in the punch circle at (10, 4.9), not beside A.
+    sim.ctx.bodies.get(b)?.setPosition({ x: 10.15, y: 4.85 });
+    a.set(Transform, { x: 10, y: 4, angle: 0 });
+    b.set(Transform, { x: 10.15, y: 4.85, angle: 0 });
     const gun = spawnWeapon(sim.ecs, 'pistol', 10, 5);
     gun.add(Held(), HeldBy(a));
     gun.remove(Loose);
     const hp0 = b.get(Health)?.hp ?? 100;
     const ammo0 = gun.get(Weapon)?.ammo ?? 15;
     const vy0 = sim.ctx.bodies.get(a)?.getLinearVelocity().y ?? 0;
-    for (let i = 0; i < 8; i++) {
-      sim.step([
-        hold({ block: true, attack: i === 1, aimX: 0, aimY: 1 }),
-        hold({}),
-        hold({}),
-        hold({}),
-      ]);
-    }
+    // Same tick: block becomes armed-punch-legal, attack rising edge, B still in the circle.
+    sim.step([
+      hold({ block: true, attack: true, aimX: 0, aimY: 1 }),
+      hold({}),
+      hold({}),
+      hold({}),
+    ]);
     expect(gun.get(Weapon)?.ammo).toBe(ammo0);
+    expect((b.get(Health)?.hp ?? 100)).toBeLessThan(hp0);
+    for (let i = 0; i < 5; i++) {
+      sim.step([hold({ block: true, aimX: 0, aimY: 1 }), hold({}), hold({}), hold({})]);
+    }
     const vy1 = sim.ctx.bodies.get(a)?.getLinearVelocity().y ?? 0;
     expect(vy1).toBeGreaterThan(vy0 + 2);
-    expect((b.get(Health)?.hp ?? 100) <= hp0).toBe(true);
   });
 
   it('rising lava lifts its surface over time', () => {
