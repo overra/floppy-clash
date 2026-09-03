@@ -4,7 +4,7 @@ import { describe, expect, it } from 'vitest';
 import { createCamera } from '../src/render/camera';
 import { buildFrame } from '../src/render/buildFrame';
 import { createDecalLayer, hashPixels } from '../src/render/fx/decals';
-import { emitFromEvents, type Decal } from '../src/render/fx/particles';
+import { emitFromEvents, type Decal, type Particle } from '../src/render/fx/particles';
 import { makeSim } from './helpers';
 
 const BLOOD = '#5a1010';
@@ -75,5 +75,20 @@ describe('PLAN 4.11 persistent decals', () => {
     expect(canvas).toContain('if (layer.dirty)');
     expect(canvas).toContain('renderer.decalUploads += 1');
     expect(canvas).toContain('layer.dirty = false');
+  });
+});
+
+describe('M5 muzzle / sparks / smoke', () => {
+  it('shot events emit a flash, sparks, and a smoke puff', () => {
+    const particles: Particle[] = [];
+    emitFromEvents(
+      [{ type: 'shot', source: 0, weaponId: 'pistol', x: 1, y: 1, aimX: 1, aimY: 0 }],
+      particles,
+      [],
+    );
+    expect(particles.length).toBeGreaterThanOrEqual(6);
+    expect(particles.some((p) => p.color === '#fff4aa')).toBe(true);
+    expect(particles.some((p) => p.color === '#8a8680')).toBe(true);
+    expect(particles.some((p) => p.color === '#ffb347' || p.color === '#ffe08a')).toBe(true);
   });
 });

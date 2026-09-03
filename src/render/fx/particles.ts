@@ -69,6 +69,18 @@ export function emitFromEvents(events: SimEvents, particles: Particle[], decals:
           color: i % 2 ? '#ffb347' : '#fff1c1',
         });
       }
+      for (let i = 0; i < 8; i++) {
+        const a = Math.random() * Math.PI * 2;
+        particles.push({
+          x: ev.x,
+          y: ev.y,
+          vx: Math.cos(a) * 1.6,
+          vy: Math.sin(a) * 1.6 + 0.8,
+          r: 0.16 + Math.random() * 0.1,
+          life: 0.7 + Math.random() * 0.4,
+          color: '#6a6560',
+        });
+      }
     }
     if (ev.type === 'shot') {
       particles.push({
@@ -76,9 +88,30 @@ export function emitFromEvents(events: SimEvents, particles: Particle[], decals:
         y: ev.y,
         vx: ev.aimX * 2,
         vy: ev.aimY * 2,
-        r: 0.08,
-        life: 0.08,
+        r: 0.11,
+        life: 0.07,
         color: '#fff4aa',
+      });
+      for (let i = 0; i < 5; i++) {
+        const j = (Math.random() - 0.5) * 0.8;
+        particles.push({
+          x: ev.x,
+          y: ev.y,
+          vx: ev.aimX * (4 + Math.random() * 5) + j,
+          vy: ev.aimY * (4 + Math.random() * 5) + j,
+          r: 0.03 + Math.random() * 0.03,
+          life: 0.12 + Math.random() * 0.1,
+          color: i % 2 ? '#ffb347' : '#ffe08a',
+        });
+      }
+      particles.push({
+        x: ev.x - ev.aimX * 0.05,
+        y: ev.y - ev.aimY * 0.05,
+        vx: -ev.aimX * 0.4,
+        vy: -ev.aimY * 0.4 + 0.6,
+        r: 0.14,
+        life: 0.35,
+        color: '#8a8680',
       });
     }
   }
