@@ -382,6 +382,14 @@ export function createGame(root: HTMLElement): Game {
     tip.textContent = rendererKind === 'gpu' ? 'SDF renderer' : 'Canvas fallback';
     hudEl.append(tip);
     if (debugHud) {
+      const players = sim
+        ? sim.players().map((e, i) => {
+            const slot = e.get(Player)?.slot ?? i;
+            const hpNow = e.get(Health)?.hp ?? 0;
+            const dead = e.has(Dead) ? ' dead' : '';
+            return `P${slot + 1} hp ${hpNow.toFixed(0)}${dead}`;
+          })
+        : [];
       const dbg = document.createElement('pre');
       dbg.style.cssText =
         'position:absolute;right:12px;top:10px;margin:0;padding:8px;background:rgba(0,0,0,0.55);font:12px/1.4 monospace';
@@ -392,6 +400,8 @@ export function createGame(root: HTMLElement): Game {
         `gpu  ${((frame.hud.gpuMs ?? 0)).toFixed(2)} ms`,
         `ents ${frame.hud.entities ?? 0}`,
         `rend ${rendererKind}`,
+        `phase ${frame.hud.phase ?? 0}`,
+        ...players,
       ].join('\n');
       hudEl.append(dbg);
     }
