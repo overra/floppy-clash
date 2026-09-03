@@ -881,14 +881,9 @@ test('first new pad claims the disconnected seat and keeps its color', async ({ 
       window.dispatchEvent(Object.assign(new Event('gamepadconnected'), { gamepad: pad }));
     }
   });
+  await expect(page.locator('[data-seat="1"]')).toContainText(/Blue/i);
   await page.evaluate(() => {
     const pads = (window as unknown as { __e2ePads: { buttons: { pressed: boolean }[] }[] }).__e2ePads;
-    pads[1]!.buttons[15]!.pressed = true;
-  });
-  await page.waitForTimeout(80);
-  await page.evaluate(() => {
-    const pads = (window as unknown as { __e2ePads: { buttons: { pressed: boolean }[] }[] }).__e2ePads;
-    pads[1]!.buttons[15]!.pressed = false;
     for (const pad of pads) pad.buttons[0]!.pressed = true;
   });
   await page.waitForTimeout(80);
@@ -1041,19 +1036,24 @@ test('editor remapped Start playtests the draft', async ({ page }) => {
     };
     Object.defineProperty(navigator, 'getGamepads', { value: () => [pad], configurable: true });
     (window as unknown as { __e2ePad: typeof pad }).__e2ePad = pad;
-    localStorage.setItem(
-      'floppy-clash.padmaps',
-      JSON.stringify({ 'e2e-editor-start': { jump: 0, attack: 7, block: 6, throw: 3, pause: 8 } }),
-    );
   });
   await page.goto('/');
+  await page.getByRole('button', { name: 'Settings' }).click();
+  await page.locator('#padid').fill('e2e-editor-start');
+  await page.locator('#map-pause').fill('8');
+  await page.getByRole('button', { name: 'Save remap' }).click();
+  await page.getByRole('button', { name: 'Back' }).click();
   await page.getByRole('button', { name: 'Level Editor' }).click();
   await expect(page.locator('text=Level Editor')).toBeVisible();
   await page.evaluate(() => {
     const pad = (window as unknown as { __e2ePad: { buttons: { pressed: boolean }[] } }).__e2ePad;
     pad.buttons[8]!.pressed = true;
   });
-  await expect(page.locator('canvas#game')).toBeVisible({ timeout: 8_000 });
+  await page.waitForTimeout(80);
+  await page.evaluate(() => {
+    const pad = (window as unknown as { __e2ePad: { buttons: { pressed: boolean }[] } }).__e2ePad;
+    pad.buttons[8]!.pressed = false;
+  });
   await expect(page.locator('[data-countdown]')).toBeVisible({ timeout: 8_000 });
 });
 
