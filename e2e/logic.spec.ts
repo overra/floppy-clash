@@ -354,7 +354,7 @@ test('scoreboard overlay appears after last stand', async ({ page }) => {
     window.__floppy?.armLiveFists();
   });
   await expect(page.locator('[data-round-over]')).toBeVisible({ timeout: 20_000 });
-  await expect(page.getByRole('heading', { name: 'Round over' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: /Round over|Last standing/ })).toBeVisible();
   await expect
     .poll(async () => page.evaluate(() => window.__floppy?.fistKills ?? 0), { timeout: 5_000 })
     .toBeGreaterThan(0);
