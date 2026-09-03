@@ -110,14 +110,13 @@ async function withTimeout<T>(p: Promise<T>, ms: number): Promise<T | null> {
   ]);
 }
 
-export async function tryCreateGpuRenderer(canvas: HTMLCanvasElement): Promise<Renderer | null> {
+async function createGpuRenderer(canvas: HTMLCanvasElement): Promise<Renderer | null> {
   if (!('gpu' in navigator) || !navigator.gpu) return null;
-  const adapter = await withTimeout(navigator.gpu.requestAdapter(), 2500);
+  const adapter = await navigator.gpu.requestAdapter();
   if (!adapter) return null;
   let root;
   try {
-    root = await withTimeout(tgpu.init(), 2500);
-    if (!root) return null;
+    root = await tgpu.init();
   } catch {
     return null;
   }
@@ -226,6 +225,14 @@ export async function tryCreateGpuRenderer(canvas: HTMLCanvasElement): Promise<R
       lastGpuMs = performance.now() - t0;
     },
   };
+}
+
+export async function tryCreateGpuRenderer(canvas: HTMLCanvasElement): Promise<Renderer | null> {
+  try {
+    return await withTimeout(createGpuRenderer(canvas), 4000);
+  } catch {
+    return null;
+  }
 }
 
 function parseColor(hex: string): [number, number, number] {
