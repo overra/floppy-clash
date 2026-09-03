@@ -98,6 +98,11 @@ function applyStatus(target: Entity, status: string, ticks: number): void {
   else target.add(Status(current));
 }
 
+function statusTicksFor(world: World, status: string, fallback: number): number {
+  if (status === 'burn') return getContext(world).tuning.burnDurationTicks;
+  return fallback;
+}
+
 function shieldBlocks(world: World, blocker: Entity, hx: number, hy: number, vx: number, vy: number): 'none' | 'absorb' | 'reflect' {
   const combat = blocker.get(Combat);
   const aim = blocker.get(Aim);
@@ -132,7 +137,9 @@ function explode(world: World, x: number, y: number, defId: number, owner?: Enti
     if (!world.has(target)) return;
     if (target.has(Player) && !target.has(Dead)) {
       takeDamage(world, target, damage * falloff, 'body', owner ?? -1, x, y);
-      if (def.projectile.status !== 'none') applyStatus(target, def.projectile.status, 180);
+      if (def.projectile.status !== 'none') {
+        applyStatus(target, def.projectile.status, statusTicksFor(world, def.projectile.status, 180));
+      }
     }
     if (target.has(Destructible)) {
       const d = target.get(Destructible);
@@ -213,7 +220,13 @@ export function projectiles(world: World): void {
         const hit = raycastClosest(world, ot.x, ot.y, ot.x + aim.x * 40, ot.y + aim.y * 40, (h) => h.entity === owner);
         if (hit && world.has(hit.entity as Entity) && (hit.entity as Entity).has(Player)) {
           takeDamage(world, hit.entity as Entity, proj.damage, 'body', owner ?? -1, hit.x, hit.y);
-          if (def.projectile.status !== 'none') applyStatus(hit.entity as Entity, def.projectile.status, 90);
+          if (def.projectile.status !== 'none') {
+            applyStatus(
+              hit.entity as Entity,
+              def.projectile.status,
+              statusTicksFor(world, def.projectile.status, 90),
+            );
+          }
         }
       }
       if (proj.fuse <= 0) ctx.pendingDestroy.push(entity);
@@ -263,7 +276,9 @@ export function projectiles(world: World): void {
           const duck = target.get(Controller)?.ducking ?? false;
           const zone = tt ? hitZoneAt(hit.y - tt.y, ctx.tuning.height, duck) : 'body';
           takeDamage(world, target, proj.damage, zone, owner ?? -1, hit.x, hit.y);
-          if (def.projectile.status !== 'none') applyStatus(target, def.projectile.status, 180);
+          if (def.projectile.status !== 'none') {
+            applyStatus(target, def.projectile.status, statusTicksFor(world, def.projectile.status, 180));
+          }
           const kb = def.knockback;
           const tb = ctx.bodies.get(target);
           if (tb) {
@@ -336,11 +351,48 @@ export function projectiles(world: World): void {
         if (ahead && ahead.fraction < 1) hitSomething = true;
       }
       if (ctx.contactHits.has(entity as unknown as number)) hitSomething = true;
+
+      // PLAN Appendix C: thruster pushes first, then pops. Time bubble freezes, then explodes.
+      if (hitSomething && def.id === 'thruster' && proj.bounces === 0) {
+        world.query(Player, Transform, Not(Dead)).updateEach(([_pl, pt], other) => {
+          if (other === owner && proj.ownerGrace > 0) return;
+          const ob = ctx.bodies.get(other);
+          const ox = ob?.getPosition().x ?? pt.x;
+          const oy = ob?.getPosition().y ?? pt.y;
+          if (Math.hypot(ox - proj.x, oy - proj.y) >= 1.4) return;
+          if (ob) {
+            const v = ob.getLinearVelocity();
+            const dir = Math.hypot(proj.vx, proj.vy) || 1;
+            ob.setLinearVelocity(
+              new Vec2(v.x + (proj.vx / dir) * def.knockback, v.y + (proj.vy / dir) * def.knockback),
+            );
+          }
+        });
+        proj.bounces = 1;
+        proj.fuse = Math.min(proj.fuse > 0 ? proj.fuse : 24, 24);
+        hitSomething = false;
+      }
+
+      if (hitSomething && def.id === 'time-bubble') {
+        world.query(Player, Transform, Not(Dead)).updateEach(([_pl, pt], other) => {
+          if (other === owner && proj.ownerGrace > 0) return;
+          const ob = ctx.bodies.get(other);
+          const ox = ob?.getPosition().x ?? pt.x;
+          const oy = ob?.getPosition().y ?? pt.y;
+          if (Math.hypot(ox - proj.x, oy - proj.y) >= 1.6) return;
+          takeDamage(world, other, def.projectile.damage, 'body', owner ?? -1, ox, oy);
+          applyStatus(other, 'bubble', Math.max(proj.fuse, 40));
+        });
+        hitSomething = false;
+      }
+
+      const delayedField = def.id === 'time-bubble' || def.id === 'black-hole' || def.id === 'thruster';
       const contactExplode =
-        proj.kind === ProjectileKind.Rocket ||
-        proj.kind === ProjectileKind.BurstInto ||
-        proj.kind === ProjectileKind.Field ||
-        (proj.kind === ProjectileKind.Grenade && proj.fuse <= 0);
+        !delayedField &&
+        (proj.kind === ProjectileKind.Rocket ||
+          proj.kind === ProjectileKind.BurstInto ||
+          proj.kind === ProjectileKind.Field ||
+          (proj.kind === ProjectileKind.Grenade && proj.fuse <= 0));
       if (hitSomething && contactExplode) {
         if (proj.kind === ProjectileKind.BurstInto) {
           const burst = def.projectile.burstInto === 'snake' ? 'snake' : 'spike';
@@ -383,10 +435,15 @@ export function projectiles(world: World): void {
     }
 
     if (proj.kind === ProjectileKind.Field && def.id === 'black-hole') {
-      applyExplosion(world, proj.x, proj.y, def.projectile.radius, -14);
+      const life = 180;
+      const age = Math.max(0, life - Math.max(proj.fuse, 0));
+      const radius = def.projectile.radius * (0.2 + 0.8 * Math.min(1, age / life));
+      applyExplosion(world, proj.x, proj.y, radius, -14);
       world.query(Player, Transform, Not(Dead)).updateEach(([_p, tr], other) => {
         const d = Math.hypot(tr.x - proj.x, tr.y - proj.y);
-        if (d < 0.6) takeDamage(world, other, 999, 'body', owner ?? -1, tr.x, tr.y, true);
+        if (d < Math.max(0.45, radius * 0.18)) {
+          takeDamage(world, other, 999, 'body', owner ?? -1, tr.x, tr.y, true);
+        }
       });
     }
   });

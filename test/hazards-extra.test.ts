@@ -78,11 +78,13 @@ describe('M4 hazard details', () => {
     sim.ecs.query(Destructible).updateEach(() => {
       before += 1;
     });
-    sim.ecs.query(Destructible).updateEach(([d]) => {
-      d.hp = 0;
-    });
     expect(before).toBeGreaterThan(0);
-    for (let i = 0; i < 10; i++) sim.step();
+    for (let n = 0; n < 6; n++) {
+      sim.ecs.query(Destructible).updateEach(([d]) => {
+        d.hp -= 8;
+      });
+      sim.step();
+    }
     let after = 0;
     sim.ecs.query(Destructible).updateEach(() => {
       after += 1;
@@ -228,6 +230,7 @@ describe('M4 hazard details', () => {
       });
     }
     expect(armed.some((a) => a === 0) && armed.some((a) => a === 1)).toBe(true);
+    expect(armed.some((a) => a === 2)).toBe(true);
 
     const fall = makeSim({
       level: getLevel('test-platform.collapsing'),

@@ -11,6 +11,7 @@ export type SchemaField = {
 const ENUMS: Record<string, string[]> = {
   dir: ['up', 'down', 'left', 'right'],
   mode: ['loop', 'pingpong'],
+  style: ['swing', 'roll', 'drop'],
 };
 
 /** Property-panel fields generated from the hazard zod object (PLAN 4.15). */

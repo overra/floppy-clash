@@ -167,7 +167,10 @@ export function buildFrame(
     if (hz.kind === HazardKind.Lava) {
       lights.push({ x, y, radius: 4.5, r: 1, g: 0.35, b: 0.08, intensity: 0.9 });
     }
-    const color = hz.kind === 4 ? theme.hazard : hz.kind === 3 ? '#222' : theme.solid;
+    let color = hz.kind === 4 ? theme.hazard : hz.kind === 3 ? '#222' : theme.solid;
+    if (hz.kind === HazardKind.Disappearing && hz.armed === 2 && ctx.tick % 8 < 4) {
+      color = '#ffcc66';
+    }
     const fx = hz.kind === HazardKind.Lava ? ('lava' as const) : undefined;
     const size = bodyHalfSize(ctx, e);
     const primitives = hazardPrimitives(hz.kind, x, y, size?.hx ?? 1.2, size?.hy ?? 0.35);

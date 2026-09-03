@@ -12,7 +12,7 @@ Numbers are from `src/sim/tuning.ts` and pinned by `test/movement.test.ts` (±10
 
 Live tuning: **F2** opens Tweakpane bound to `tuning.ts`.
 
-Debug (PLAN 4.16): **F1** physics overlay, **F3** tick/hash/ms HUD, **F4** spawn pistol, **F5** kill P1, **F6** toggle slow-mo scale, **F7** freeze camera, **F8** GPU ↔ Canvas, **F9** download replay JSON.
+Debug (PLAN 4.16): **F1** physics overlay, **F3** tick/hash/ms HUD, **F4** spawn pistol, **F5** kill P1, **F6** toggle slow-mo scale, **F7** freeze camera, **F8** GPU ↔ Canvas, **F9** download replay JSON, **F10** load a local replay tape.
 
 ## Hardware sign-off (not claimed)
 

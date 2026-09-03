@@ -31,6 +31,12 @@ describe('M2 combat and rounds', () => {
     expect(before - after).toBeGreaterThanOrEqual(20);
   });
 
+  it('airborne punch (dropkick) knocks harder than a grounded punch', () => {
+    const groundedKb = punchKnock(false);
+    const airKb = punchKnock(true);
+    expect(airKb).toBeGreaterThan(groundedKb * 1.1);
+  });
+
   it('out of bounds kills', () => {
     const sim = makeSim({ seed: 6, settings: { playerCount: 1 } });
     const p = playerOf(sim);
@@ -132,3 +138,18 @@ describe('M2 combat and rounds', () => {
     }
   });
 });
+
+function punchKnock(airborne: boolean): number {
+  const sim = makeSim({ level: woodsClearing, seed: airborne ? 21 : 20, settings: { playerCount: 2 } });
+  const a = playerOf(sim, 0);
+  const b = playerOf(sim, 1);
+  const y = airborne ? 8 : 4;
+  sim.ctx.bodies.get(a)?.setPosition({ x: 10, y });
+  sim.ctx.bodies.get(b)?.setPosition({ x: 10.75, y });
+  a.set(Transform, { x: 10, y, angle: 0 });
+  b.set(Transform, { x: 10.75, y, angle: 0 });
+  for (let i = 0; i < 6; i++) {
+    sim.step([hold({ attack: i === 1, aimX: 1, aimY: 0 }), hold({}), hold({}), hold({})]);
+  }
+  return Math.abs(sim.ctx.bodies.get(b)?.getLinearVelocity().x ?? 0);
+}

@@ -62,7 +62,11 @@ export function combat(world: World): void {
       else combat.blockMeter = Math.min(1, combat.blockMeter + 1 / t.blockMeterRefillTicks);
     }
 
-    const wantsPunch = rising(prev?.attack ?? false, input.attack) && !armed && combat.punchCooldown <= 0;
+    // PLAN 4.7: cannot fire while blocking, but can punch (block-punch jump) even when armed.
+    const wantsPunch =
+      rising(prev?.attack ?? false, input.attack) &&
+      combat.punchCooldown <= 0 &&
+      (!armed || combat.blocking);
     if (wantsPunch) {
       combat.punchCooldown = t.punchCooldownTicks;
       combat.punchActive = t.punchActiveTicks;
@@ -72,6 +76,8 @@ export function combat(world: World): void {
       body.setLinearVelocity(new Vec2(vel.x + aim.x * impulse, vel.y + aim.y * impulse));
       const hx = transform.x + aim.x * t.punchRange;
       const hy = transform.y + aim.y * t.punchRange;
+      const airborne = !_ctrl.grounded;
+      const kb = t.punchKnockback * (airborne ? t.dropkickKnockbackScale : 1);
       world.query(Player, Transform, Not(Dead)).updateEach(([_p, otherT], other) => {
         if (other === entity) return;
         const dx = otherT.x - hx;
@@ -84,7 +90,7 @@ export function combat(world: World): void {
           if (otherBody) {
             const ov = otherBody.getLinearVelocity();
             otherBody.setLinearVelocity(
-              new Vec2(ov.x + aim.x * t.punchKnockback, ov.y + aim.y * t.punchKnockback + t.punchKnockbackUp),
+              new Vec2(ov.x + aim.x * kb, ov.y + aim.y * kb + t.punchKnockbackUp),
             );
           }
           disarm(world, other);

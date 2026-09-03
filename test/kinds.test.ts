@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { woodsClearing } from '../src/levels/handauthored';
 import { spawnWeapon } from '../src/sim/systems/weapons';
-import { Held, HeldBy, Loose } from '../src/sim/traits';
+import { Health, Held, HeldBy, Loose, Projectile, Snake } from '../src/sim/traits';
 import { WEAPON_DEFS } from '../src/sim/weapons/defs';
 import { hold, makeSim, playerOf } from './helpers';
 
@@ -27,11 +27,29 @@ describe('projectile kinds', () => {
       const gun = spawnWeapon(sim.ecs, id, 8, 6);
       gun.add(Held(), HeldBy(p));
       gun.remove(Loose);
+      let shots = 0;
       expect(() => {
         for (let i = 0; i < 20; i++) {
-          sim.step([hold({ attack: i < 6, aimX: 1, aimY: 0 }), hold({}), hold({}), hold({})]);
+          const ev = sim.step([
+            hold({ attack: i < 6, aimX: 1, aimY: 0 }),
+            hold({}),
+            hold({}),
+            hold({}),
+          ]);
+          shots += ev.filter((e) => e.type === 'shot' || e.type === 'explosion' || e.type === 'hit')
+            .length;
         }
       }).not.toThrow();
+      let leftover = 0;
+      sim.ecs.query(Projectile).updateEach(() => {
+        leftover += 1;
+      });
+      sim.ecs.query(Snake).updateEach(() => {
+        leftover += 1;
+      });
+      const victim = playerOf(sim, 1);
+      const hurt = (victim.get(Health)?.hp ?? 100) < 100;
+      expect(shots + leftover > 0 || hurt, kind).toBe(true);
     }
   });
 });

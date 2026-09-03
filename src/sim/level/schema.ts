@@ -15,6 +15,7 @@ export const LevelObjectSchema = z
     path: z.array(Vec2Schema).optional(),
     speed: z.number().optional(),
     mode: z.enum(['loop', 'pingpong']).optional(),
+    style: z.enum(['swing', 'roll', 'drop']).optional(),
     period: z.number().optional(),
     delay: z.number().optional(),
     rate: z.number().optional(),

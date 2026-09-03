@@ -191,39 +191,78 @@ describe('PLAN accept stand-ins', () => {
     const sim = makeSim({ seed: 72, settings: { playerCount: 2 } });
     const a = playerOf(sim, 0);
     const b = playerOf(sim, 1);
-    sim.ctx.bodies.get(a)?.setPosition({ x: 10, y: 4 });
-    sim.ctx.bodies.get(b)?.setPosition({ x: 12.4, y: 4 });
-    a.set(Transform, { x: 10, y: 4, angle: 0 });
-    b.set(Transform, { x: 12.4, y: 4, angle: 0 });
+    sim.ctx.bodies.get(a)?.setPosition({ x: 10, y: 4.55 });
+    sim.ctx.bodies.get(b)?.setPosition({ x: 12.2, y: 4 });
+    a.set(Transform, { x: 10, y: 4.55, angle: 0 });
+    b.set(Transform, { x: 12.2, y: 4, angle: 0 });
     const gun = spawnWeapon(sim.ecs, 'pistol', 10, 5);
     gun.add(Held(), HeldBy(a));
     gun.remove(Loose);
     const before = b.get(Health)?.hp ?? 100;
-    for (let i = 0; i < 8; i++) {
-      sim.step([
-        hold({ attack: i === 1, aimX: 1, aimY: 0.35 }),
+    let zone = '';
+    let dmg = 0;
+    for (let i = 0; i < 10; i++) {
+      const ev = sim.step([
+        hold({ attack: i === 1, aimX: 1, aimY: 0 }),
         hold({}),
         hold({}),
         hold({}),
       ]);
+      const hit = ev.find((e) => e.type === 'hit');
+      if (hit && hit.type === 'hit') {
+        zone = hit.zone;
+        dmg = hit.damage;
+      }
     }
     const lost = before - (b.get(Health)?.hp ?? 100);
-    expect(lost).toBeGreaterThanOrEqual(32);
+    expect(zone).toBe('head');
+    expect(dmg).toBe(64);
+    expect(lost).toBe(64);
+  });
+
+  it('projectile neck hit applies 1.5× damage', () => {
+    const sim = makeSim({ seed: 72, settings: { playerCount: 2 } });
+    const a = playerOf(sim, 0);
+    const b = playerOf(sim, 1);
+    sim.ctx.bodies.get(a)?.setPosition({ x: 10, y: 4.35 });
+    sim.ctx.bodies.get(b)?.setPosition({ x: 12.2, y: 4 });
+    a.set(Transform, { x: 10, y: 4.35, angle: 0 });
+    b.set(Transform, { x: 12.2, y: 4, angle: 0 });
+    const gun = spawnWeapon(sim.ecs, 'pistol', 10, 5);
+    gun.add(Held(), HeldBy(a));
+    gun.remove(Loose);
+    let zone = '';
+    let dmg = 0;
+    for (let i = 0; i < 10; i++) {
+      const ev = sim.step([
+        hold({ attack: i === 1, aimX: 1, aimY: 0 }),
+        hold({}),
+        hold({}),
+        hold({}),
+      ]);
+      const hit = ev.find((e) => e.type === 'hit');
+      if (hit && hit.type === 'hit') {
+        zone = hit.zone;
+        dmg = hit.damage;
+      }
+    }
+    expect(zone).toBe('neck');
+    expect(dmg).toBe(48);
   });
 
   it('status effects burn / slow / glue / bubble apply', () => {
-    const sim = makeSim({ seed: 73, settings: { playerCount: 2 } });
-    const a = playerOf(sim, 0);
-    const b = playerOf(sim, 1);
-    sim.ctx.bodies.get(a)?.setPosition({ x: 10, y: 4 });
-    sim.ctx.bodies.get(b)?.setPosition({ x: 11.2, y: 4 });
-    const gun = spawnWeapon(sim.ecs, 'ice-gun', 10, 5);
+    const ice = makeSim({ seed: 73, settings: { playerCount: 2 } });
+    const a = playerOf(ice, 0);
+    const b = playerOf(ice, 1);
+    ice.ctx.bodies.get(a)?.setPosition({ x: 10, y: 4 });
+    ice.ctx.bodies.get(b)?.setPosition({ x: 11.2, y: 4 });
+    const gun = spawnWeapon(ice.ecs, 'ice-gun', 10, 5);
     gun.add(Held(), HeldBy(a));
     gun.remove(Loose);
-    for (let i = 0; i < 12; i++) {
-      sim.step([hold({ attack: true, aimX: 1, aimY: 0 }), hold({}), hold({}), hold({})]);
+    for (let i = 0; i < 16; i++) {
+      ice.step([hold({ attack: true, aimX: 1, aimY: 0 }), hold({}), hold({}), hold({})]);
     }
-    expect((b.get(Status)?.slowed ?? 0) > 0 || (b.get(Health)?.hp ?? 100) < 100).toBe(true);
+    expect(b.get(Status)?.slowed ?? 0).toBeGreaterThan(0);
 
     const glue = makeSim({ seed: 74, settings: { playerCount: 2 } });
     const ga = playerOf(glue, 0);
@@ -233,10 +272,20 @@ describe('PLAN accept stand-ins', () => {
     const goo = spawnWeapon(glue.ecs, 'glue-gun', 10, 5);
     goo.add(Held(), HeldBy(ga));
     goo.remove(Loose);
-    for (let i = 0; i < 12; i++) {
+    for (let i = 0; i < 16; i++) {
       glue.step([hold({ attack: true, aimX: 1, aimY: 0 }), hold({}), hold({}), hold({})]);
     }
-    expect((gb.get(Status)?.glued ?? 0) > 0 || (gb.get(Health)?.hp ?? 100) < 100).toBe(true);
+    expect(gb.get(Status)?.glued ?? 0).toBeGreaterThan(0);
+    const vx = glue.ctx.bodies.get(gb)?.getLinearVelocity().x ?? 1;
+    expect(Math.abs(vx)).toBeLessThan(0.2);
+
+    const burn = makeSim({ seed: 75, settings: { playerCount: 1 } });
+    const bp = playerOf(burn);
+    bp.set(Status, { burning: 60, slowed: 0, glued: 0, bubbled: 0 });
+    const hp0 = bp.get(Health)?.hp ?? 100;
+    burn.step([hold({}), hold({}), hold({}), hold({})]);
+    expect((bp.get(Health)?.hp ?? 100)).toBe(hp0 - 5);
+    expect(bp.get(Status)?.burning).toBe(59);
   });
 
   it('a player can stand on a loose weapon (weapon jump)', () => {
@@ -307,7 +356,8 @@ describe('PLAN accept stand-ins', () => {
         hold({}),
       ]);
     }
-    expect((b.get(Health)?.hp ?? 100) >= hp0 - 32 || spear.has(Loose)).toBe(true);
+    expect(b.get(Health)?.hp ?? 100).toBe(hp0);
+    expect(spear.has(Loose)).toBe(false);
   });
 
   it('offers remap for non-standard mappings', () => {
@@ -362,5 +412,196 @@ describe('PLAN accept stand-ins', () => {
     const v = sim.ctx.bodies.get(p)?.getLinearVelocity();
     expect(Math.abs(v?.x ?? 1)).toBeLessThan(0.05);
     expect(Math.abs(v?.y ?? 1)).toBeLessThan(0.05);
+  });
+
+  it('time bubble freezes on hit then explodes later', () => {
+    const sim = makeSim({ seed: 85, settings: { playerCount: 2 } });
+    const a = playerOf(sim, 0);
+    const b = playerOf(sim, 1);
+    sim.ctx.bodies.get(a)?.setPosition({ x: 10, y: 4 });
+    sim.ctx.bodies.get(b)?.setPosition({ x: 11.2, y: 4 });
+    const gun = spawnWeapon(sim.ecs, 'time-bubble', 10, 5);
+    gun.add(Held(), HeldBy(a));
+    gun.remove(Loose);
+    const hp0 = b.get(Health)?.hp ?? 100;
+    let froze = false;
+    let exploded = false;
+    for (let i = 0; i < 120; i++) {
+      const ev = sim.step([
+        hold({ attack: i === 1, aimX: 1, aimY: 0 }),
+        hold({}),
+        hold({}),
+        hold({}),
+      ]);
+      if ((b.get(Status)?.bubbled ?? 0) > 0 && (b.get(Health)?.hp ?? 100) > hp0 - 80) froze = true;
+      if (ev.some((e) => e.type === 'explosion')) exploded = true;
+    }
+    expect(froze).toBe(true);
+    expect(exploded).toBe(true);
+    expect((b.get(Health)?.hp ?? 100) < hp0 - 50 || b.has(Dead)).toBe(true);
+  });
+
+  it('thruster pushes the target then pops for 15', () => {
+    const sim = makeSim({ seed: 86, settings: { playerCount: 2 } });
+    const a = playerOf(sim, 0);
+    const b = playerOf(sim, 1);
+    sim.ctx.bodies.get(a)?.setPosition({ x: 10, y: 4 });
+    sim.ctx.bodies.get(b)?.setPosition({ x: 12.2, y: 4 });
+    a.set(Transform, { x: 10, y: 4, angle: 0 });
+    b.set(Transform, { x: 12.2, y: 4, angle: 0 });
+    const gun = spawnWeapon(sim.ecs, 'thruster', 10, 5);
+    gun.add(Held(), HeldBy(a));
+    gun.remove(Loose);
+    const hp0 = b.get(Health)?.hp ?? 100;
+    let pushed = false;
+    let popped = false;
+    for (let i = 0; i < 80; i++) {
+      const ev = sim.step([
+        hold({ attack: i === 1, aimX: 1, aimY: 0 }),
+        hold({}),
+        hold({}),
+        hold({}),
+      ]);
+      const vx = sim.ctx.bodies.get(b)?.getLinearVelocity().x ?? 0;
+      if (vx > 2 && (b.get(Health)?.hp ?? 100) > hp0 - 10) pushed = true;
+      if (ev.some((e) => e.type === 'explosion')) popped = true;
+    }
+    expect(pushed).toBe(true);
+    expect(popped).toBe(true);
+  });
+
+  it('god pistol rolls 30–60 damage per shot', () => {
+    const damages: number[] = [];
+    for (let seed = 90; seed < 96; seed++) {
+      const sim = makeSim({ seed, settings: { playerCount: 2 } });
+      const a = playerOf(sim, 0);
+      const b = playerOf(sim, 1);
+      sim.ctx.bodies.get(a)?.setPosition({ x: 10, y: 4 });
+      sim.ctx.bodies.get(b)?.setPosition({ x: 12.2, y: 4 });
+      a.set(Transform, { x: 10, y: 4, angle: 0 });
+      b.set(Transform, { x: 12.2, y: 4, angle: 0 });
+      const gun = spawnWeapon(sim.ecs, 'god-pistol', 10, 5);
+      gun.add(Held(), HeldBy(a));
+      gun.remove(Loose);
+      for (let i = 0; i < 10; i++) {
+        const ev = sim.step([
+          hold({ attack: i === 1, aimX: 1, aimY: 0 }),
+          hold({}),
+          hold({}),
+          hold({}),
+        ]);
+        const hit = ev.find((e) => e.type === 'hit');
+        if (hit && hit.type === 'hit') damages.push(hit.damage);
+      }
+    }
+    expect(damages.length).toBeGreaterThan(0);
+    expect(Math.min(...damages)).toBeGreaterThanOrEqual(30);
+    expect(Math.max(...damages)).toBeLessThanOrEqual(60);
+  });
+
+  it('black hole attractor radius grows over its fuse', () => {
+    const sim = makeSim({ seed: 87, settings: { playerCount: 2 } });
+    const a = playerOf(sim, 0);
+    const b = playerOf(sim, 1);
+    sim.ctx.bodies.get(a)?.setPosition({ x: 8, y: 4 });
+    sim.ctx.bodies.get(b)?.setPosition({ x: 14, y: 4 });
+    const gun = spawnWeapon(sim.ecs, 'black-hole', 8, 5);
+    gun.add(Held(), HeldBy(a));
+    gun.remove(Loose);
+    const x0 = b.get(Transform)?.x ?? 14;
+    for (let i = 0; i < 8; i++) {
+      sim.step([hold({ attack: i === 1, aimX: 1, aimY: 0 }), hold({}), hold({}), hold({})]);
+    }
+    const early = b.get(Transform)?.x ?? 14;
+    for (let i = 0; i < 80; i++) sim.step([hold({}), hold({}), hold({}), hold({})]);
+    const late = b.get(Transform)?.x ?? 14;
+    expect(Math.abs(early - x0)).toBeLessThan(1.2);
+    expect(late).toBeLessThan(early - 0.15);
+  });
+
+  it('armed block-punch still fires a punch (cannot shoot)', () => {
+    const sim = makeSim({ seed: 88, settings: { playerCount: 2 } });
+    const a = playerOf(sim, 0);
+    const b = playerOf(sim, 1);
+    sim.ctx.bodies.get(a)?.setPosition({ x: 10, y: 4 });
+    sim.ctx.bodies.get(b)?.setPosition({ x: 10.7, y: 4 });
+    const gun = spawnWeapon(sim.ecs, 'pistol', 10, 5);
+    gun.add(Held(), HeldBy(a));
+    gun.remove(Loose);
+    const hp0 = b.get(Health)?.hp ?? 100;
+    const ammo0 = gun.get(Weapon)?.ammo ?? 15;
+    const vy0 = sim.ctx.bodies.get(a)?.getLinearVelocity().y ?? 0;
+    for (let i = 0; i < 8; i++) {
+      sim.step([
+        hold({ block: true, attack: i === 1, aimX: 0, aimY: 1 }),
+        hold({}),
+        hold({}),
+        hold({}),
+      ]);
+    }
+    expect(gun.get(Weapon)?.ammo).toBe(ammo0);
+    const vy1 = sim.ctx.bodies.get(a)?.getLinearVelocity().y ?? 0;
+    expect(vy1).toBeGreaterThan(vy0 + 2);
+    expect((b.get(Health)?.hp ?? 100) <= hp0).toBe(true);
+  });
+
+  it('rising lava lifts its surface over time', () => {
+    const sim = makeSim({ level: getLevel('test-lava'), seed: 89, settings: { playerCount: 1 } });
+    const y0 = { n: 0 };
+    sim.ecs.query(Hazard, Transform).updateEach(([hz, t]) => {
+      if (hz.kind === HazardKind.Lava) y0.n = t.y;
+    });
+    for (let i = 0; i < 90; i++) sim.step();
+    let y1 = y0.n;
+    sim.ecs.query(Hazard, Transform).updateEach(([hz, t]) => {
+      if (hz.kind === HazardKind.Lava) y1 = t.y;
+    });
+    expect(y1).toBeGreaterThan(y0.n + 0.02);
+  });
+
+  it('saw follows an optional path', () => {
+    const sim = makeSim({ level: getLevel('test-saw'), seed: 90, settings: { playerCount: 1 } });
+    const xs: number[] = [];
+    for (let i = 0; i < 80; i++) {
+      sim.step();
+      sim.ecs.query(Hazard, Transform).updateEach(([hz, t]) => {
+        if (hz.kind === HazardKind.Saw) xs.push(t.x);
+      });
+    }
+    expect(Math.max(...xs) - Math.min(...xs)).toBeGreaterThan(0.4);
+  });
+
+  it('rolling and dropping spikeballs move without a hang joint', () => {
+    const roll = makeSim({
+      level: getLevel('test-spikeball-roll'),
+      seed: 91,
+      settings: { playerCount: 1 },
+    });
+    const x0 = { n: 0 };
+    roll.ecs.query(Hazard, Transform).updateEach(([hz, t]) => {
+      if (hz.kind === HazardKind.Spikeball) x0.n = t.x;
+    });
+    for (let i = 0; i < 50; i++) roll.step();
+    let x1 = x0.n;
+    roll.ecs.query(Hazard, Transform).updateEach(([hz, t]) => {
+      if (hz.kind === HazardKind.Spikeball) x1 = t.x;
+    });
+    expect(Math.abs(x1 - x0.n)).toBeGreaterThan(0.3);
+
+    const drop = makeSim({
+      level: getLevel('test-spikeball-drop'),
+      seed: 92,
+      settings: { playerCount: 1 },
+    });
+    const y0 = { n: 0 };
+    drop.ecs.query(Hazard, Transform).updateEach(([hz, t]) => {
+      if (hz.kind === HazardKind.Spikeball) y0.n = t.y;
+    });
+    for (let i = 0; i < 40; i++) drop.step();
+    let y1 = y0.n;
+    drop.ecs.query(Hazard, Transform).updateEach(([hz, t]) => {
+      if (hz.kind === HazardKind.Spikeball) y1 = t.y;
+    });
+    expect(y1).toBeLessThan(y0.n - 0.4);
   });
 });

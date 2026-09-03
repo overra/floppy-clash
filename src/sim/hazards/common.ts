@@ -50,6 +50,13 @@ export function paramsFromObject(obj: LevelObject): {
       return { param0: obj.w ?? 2, param1: obj.speed ?? 16, param2: 0, param3: 0 };
     case 'saw':
       return { param0: obj.omega ?? 6, param1: obj.speed ?? 0, param2: 0, param3: 0 };
+    case 'spikeball':
+      return {
+        param0: obj.r ?? 0.4,
+        param1: 0,
+        param2: obj.style === 'roll' ? 1 : obj.style === 'drop' ? 2 : 0,
+        param3: 0,
+      };
     case 'crusher':
       return { param0: obj.period ?? 60, param1: obj.speed ?? 4, param2: 0, param3: 0 };
     case 'platform.disappearing':

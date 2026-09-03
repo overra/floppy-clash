@@ -52,10 +52,12 @@ function spawnBullet(
   const speed = def.projectile.speed;
   const vx = Math.cos(angle) * speed;
   const vy = Math.sin(angle) * speed;
+  const damage =
+    def.id === 'god-pistol' ? 30 + ctx.rng.next() * 30 : def.projectile.damage;
   const proj = world.spawn(
     Projectile({
       kind: kindId(def.projectile.kind),
-      damage: def.projectile.damage,
+      damage,
       speed,
       bounces: def.projectile.bounce,
       fuse: def.projectile.kind === 'rocket' && def.projectile.fuse === 0 ? 180 : def.projectile.fuse,

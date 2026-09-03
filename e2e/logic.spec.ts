@@ -205,6 +205,84 @@ test('controller disconnect overlay pauses the match', async ({ page }) => {
   await expect(page.getByRole('heading', { name: 'Controller disconnected' })).toBeVisible();
 });
 
+test('join left/right picks a seat color', async ({ page }) => {
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Local Play' }).click();
+  await expect(page.getByRole('heading', { name: 'Join' })).toBeVisible();
+  await page.keyboard.press('Space');
+  await expect(page.locator('[data-seat="0"]')).toContainText(/Yellow/i);
+  await page.keyboard.press('ArrowRight');
+  await expect(page.locator('[data-seat="0"]')).toContainText(/Blue/i);
+  await page.keyboard.press('ArrowLeft');
+  await expect(page.locator('[data-seat="0"]')).toContainText(/Yellow/i);
+});
+
+test('Escape opens the pause overlay and Resume continues', async ({ page }) => {
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Solo vs Bots' }).click();
+  await page.keyboard.press('Enter');
+  await page.waitForTimeout(800);
+  if (await page.getByRole('heading', { name: 'Join' }).isVisible()) {
+    await page.getByRole('button', { name: 'Start' }).click();
+  }
+  await page.waitForFunction(() => window.__floppy?.phase === 2, null, { timeout: 15_000 });
+  await page.keyboard.press('Escape');
+  await expect(page.getByRole('heading', { name: 'Paused' })).toBeVisible();
+  await page.getByRole('button', { name: 'Resume' }).click();
+  await expect(page.locator('canvas#game')).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Paused' })).toHaveCount(0);
+});
+
+test('scoreboard overlay appears after last stand', async ({ page }) => {
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Solo vs Bots' }).click();
+  await page.keyboard.press('Enter');
+  await page.waitForTimeout(800);
+  if (await page.getByRole('heading', { name: 'Join' }).isVisible()) {
+    await page.getByRole('button', { name: 'Start' }).click();
+  }
+  await page.waitForFunction(() => window.__floppy?.phase === 2, null, { timeout: 15_000 });
+  await page.evaluate(() => window.__floppy?.forceLastStand());
+  await expect(page.locator('[data-round-over]')).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByRole('heading', { name: 'Round over' })).toBeVisible();
+});
+
+test('per-pad remap persists in localStorage', async ({ page }) => {
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Settings' }).click();
+  await page.locator('#padid').fill('e2e-pad');
+  await page.locator('#map-jump').fill('2');
+  await page.getByRole('button', { name: 'Save remap' }).click();
+  const stored = await page.evaluate(() => localStorage.getItem('floppy-clash.padmaps'));
+  expect(stored).toContain('e2e-pad');
+  expect(stored).toContain('"jump":2');
+});
+
+test('F10 replay loader accepts a seed+input tape', async ({ page }) => {
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Solo vs Bots' }).click();
+  await page.keyboard.press('Enter');
+  await page.waitForTimeout(800);
+  if (await page.getByRole('heading', { name: 'Join' }).isVisible()) {
+    await page.getByRole('button', { name: 'Start' }).click();
+  }
+  await page.waitForFunction(() => window.__floppy?.phase === 2, null, { timeout: 15_000 });
+  const tape = JSON.stringify({
+    seed: 44,
+    levelId: 'gym',
+    inputs: Array.from({ length: 12 }, () => [
+      { moveX: 1, jump: false, down: false, attack: false, block: false, throw: false, aimX: 1, aimY: 0 },
+      { moveX: 0, jump: false, down: false, attack: false, block: false, throw: false, aimX: 1, aimY: 0 },
+      { moveX: 0, jump: false, down: false, attack: false, block: false, throw: false, aimX: 1, aimY: 0 },
+      { moveX: 0, jump: false, down: false, attack: false, block: false, throw: false, aimX: 1, aimY: 0 },
+    ]),
+  });
+  const ok = await page.evaluate((json) => window.__floppy?.loadReplay?.(json) ?? false, tape);
+  expect(ok).toBe(true);
+  await expect.poll(async () => page.evaluate(() => window.__floppy?.replayLoaded ?? false)).toBe(true);
+  await expect.poll(async () => page.evaluate(() => window.__floppy?.tick ?? 0)).toBeGreaterThanOrEqual(12);
+});
+
 test('service worker registers for PWA offline cache', async ({ page }) => {
   await page.goto('/');
   const state = await page.evaluate(async () => {

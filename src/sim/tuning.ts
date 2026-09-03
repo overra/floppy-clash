@@ -57,6 +57,14 @@ export const tuning = {
   lavaDamage: 35,
   lavaCooldownTicks: 30,
 
+  /** PLAN Appendix C flamethrower: 5/s burn for 6 s. */
+  burnDamage: 5,
+  burnIntervalTicks: 60,
+  burnDurationTicks: 360,
+
+  /** PLAN 2.2 dropkick: extra knockback on an airborne punch. */
+  dropkickKnockbackScale: 1.35,
+
   countdownTicks: 180,
   lastKillSlowmo: 0.25,
   slowmoTicks: 72,

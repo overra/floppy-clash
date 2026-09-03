@@ -17,8 +17,7 @@ import {
 } from './ui/menus';
 import { scoreboardMarkup } from './ui/scoreboard';
 import { loadMaps, saveMap, shouldOfferRemap } from './input/remap';
-import { gymLevel } from './levels/catalog';
-import { matchLevelPool } from './levels/catalog';
+import { getLevel, gymLevel, matchLevelPool } from './levels/catalog';
 import { addShake, createCamera } from './render/camera';
 import { buildFrame } from './render/buildFrame';
 import { createCanvasRenderer, type Renderer } from './render/canvas/renderer';
@@ -57,7 +56,7 @@ import {
   signalingUrlFromLocation,
   type NetSession,
 } from './net/transport';
-import { createRecorder } from './input/replay';
+import { createRecorder, parseReplay } from './input/replay';
 import type { LevelDef } from './sim/level/schema';
 
 export type Game = {
@@ -93,6 +92,8 @@ type FloppyDebug = {
   rendererSwitches: number;
   lastReplayBytes: number;
   lastReplayName: string;
+  replayLoaded: boolean;
+  loadReplay: (json: string) => boolean;
   netPeers: number;
   netSlot: number;
   entities: number;
@@ -151,6 +152,7 @@ export function createGame(root: HTMLElement): Game {
   const remoteBySlot: Array<PlayerInput | null> = [null, null, null, null];
   const inputHist: PlayerInput[] = [];
   let chatOpen = false;
+  let replayLoaded = false;
   let matchChatEl: HTMLDivElement | null = null;
   let raf = 0;
   let last = performance.now();
@@ -454,6 +456,45 @@ export function createGame(root: HTMLElement): Game {
     drainChangeTrackers(sim.ecs);
   }
 
+  /** PLAN M9 stretch: seed + input tape, local only. */
+  function loadReplayTape(raw: string): boolean {
+    try {
+      const replay = parseReplay(raw);
+      const level = getLevel(replay.levelId);
+      recorder = createRecorder(replay.seed, replay.levelId);
+      sim = createSimWorld({
+        level,
+        seed: replay.seed,
+        extraLevels,
+        settings: {
+          playerCount: 2,
+          bots: 0,
+          maxHp: settings.maxHp,
+          firstTo: 0,
+          enabledWeapons: settings.enabledWeapons,
+          enabledLevels: settings.enabledLevels,
+          rotation: settings.rotation,
+          showWins: settings.showWins,
+        },
+      });
+      for (const tickInputs of replay.inputs) {
+        recorder.push(tickInputs);
+        sim.step(tickInputs);
+      }
+      replayLoaded = true;
+      cam = createCamera(level.bounds);
+      clearFx(fx);
+      decalLayer = createDecalLayer(level.bounds);
+      menus.screen = 'play';
+      paused = true;
+      show();
+      return true;
+    } catch {
+      replayLoaded = false;
+      return false;
+    }
+  }
+
   function padMapFor(id: string) {
     return maps[id];
   }
@@ -735,6 +776,8 @@ export function createGame(root: HTMLElement): Game {
       rendererSwitches,
       lastReplayBytes: recorder.lastBytes(),
       lastReplayName: recorder.lastName(),
+      replayLoaded,
+      loadReplay: loadReplayTape,
       netPeers: net.peerCount,
       netSlot,
       entities: sim?.ctx.bodies.size ?? clientView?.sim.ctx.bodies.size ?? 0,
@@ -906,6 +949,17 @@ export function createGame(root: HTMLElement): Game {
       if (e.code === 'F7') freezeCam = !freezeCam;
       if (e.code === 'F8') void switchRenderer();
       if (e.code === 'F9') recorder.download();
+      if (e.code === 'F10') {
+        const picker = document.createElement('input');
+        picker.type = 'file';
+        picker.accept = 'application/json';
+        picker.onchange = () => {
+          void picker.files?.[0]?.text().then((text) => {
+            if (text) loadReplayTape(text);
+          });
+        };
+        picker.click();
+      }
     });
   }
 

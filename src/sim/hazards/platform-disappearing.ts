@@ -11,8 +11,11 @@ export const disappearingPlatform: HazardModule = {
     const ctx = getContext(world);
     const period = hz.param0 || 180;
     const phase = (ctx.tick + (hz.param1 || 0)) % period;
-    const solid = phase < period * 0.55;
-    hz.armed = solid ? 1 : 0;
+    const solidFor = period * 0.55;
+    const warn = 18;
+    const solid = phase < solidFor;
+    const warning = solid && phase >= solidFor - warn;
+    hz.armed = !solid ? 0 : warning ? 2 : 1;
     const body = ctx.bodies.get(entity);
     if (body) body.setActive(solid);
   },

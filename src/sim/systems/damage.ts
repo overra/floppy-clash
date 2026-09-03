@@ -15,8 +15,10 @@ export function damageDeath(world: World): void {
     const status = entity.get(Status);
     if (status) {
       if (status.burning > 0) {
+        if (status.burning % ctx.tuning.burnIntervalTicks === 0) {
+          health.hp -= ctx.tuning.burnDamage;
+        }
         status.burning -= 1;
-        if (ctx.tick % 12 === 0) health.hp -= 5;
       }
       if (status.slowed > 0) status.slowed -= 1;
       if (status.glued > 0) status.glued -= 1;

@@ -112,7 +112,26 @@ describe('M3 weapons', () => {
       const ev = sim.step([hold({ attack: i === 2, aimX: 1, aimY: 0 }), hold({}), hold({}), hold({})]);
       if (ev.some((e) => e.type === 'explosion')) exploded = true;
     }
-    expect((b.get(Health)?.hp ?? 100) < before || exploded).toBe(true);
+    expect(exploded).toBe(true);
+    const nearLost = before - (b.get(Health)?.hp ?? 100);
+    expect(nearLost).toBeGreaterThan(0);
+
+    const far = makeSim({ level: woodsClearing, seed: 14, settings: { playerCount: 2 } });
+    const fa = playerOf(far, 0);
+    const fb = playerOf(far, 1);
+    far.ctx.bodies.get(fa)?.setPosition({ x: 10, y: 4 });
+    far.ctx.bodies.get(fb)?.setPosition({ x: 18, y: 4 });
+    fa.set(Transform, { x: 10, y: 4, angle: 0 });
+    fb.set(Transform, { x: 18, y: 4, angle: 0 });
+    const farGun = spawnWeapon(far.ecs, 'rpg', 10, 5);
+    farGun.add(Held(), HeldBy(fa));
+    farGun.remove(Loose);
+    const farBefore = fb.get(Health)?.hp ?? 100;
+    for (let i = 0; i < 50; i++) {
+      far.step([hold({ attack: i === 2, aimX: 1, aimY: 0 }), hold({}), hold({}), hold({})]);
+    }
+    const farLost = farBefore - (fb.get(Health)?.hp ?? 100);
+    expect(nearLost).toBeGreaterThan(farLost);
   });
 
   it('thrown weapons deal 55 on first hit and bounce off a block', () => {
@@ -135,7 +154,9 @@ describe('M3 weapons', () => {
         hold({}),
       ]);
     }
-    expect((b.get(Health)?.hp ?? 100) <= before - 50 || gun.get(Weapon)?.thrownHit).toBe(true);
+    const lost = before - (b.get(Health)?.hp ?? 100);
+    expect(gun.get(Weapon)?.thrownHit).toBe(true);
+    expect(lost).toBe(55);
   });
 });
 

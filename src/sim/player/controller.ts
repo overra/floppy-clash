@@ -88,13 +88,16 @@ export function controller(world: World): void {
     const speed = t.runSpeed * (ctrl.ducking ? t.duckSpeedScale : 1) * (slowed ? 0.45 : 1) * (glued ? 0.15 : 1);
     const accel = (ctrl.grounded ? groundAccel : airAccel) * (glued ? 0.2 : 1);
 
-    if (ctrl.lockTicks > 0) {
+    if (glued) {
+      // PLAN Appendix C glue gun: pins the player in place.
+      vx = 0;
+    } else if (ctrl.lockTicks > 0) {
       ctrl.lockTicks -= 1;
     } else if (Math.abs(input.moveX) > 0.05) {
       const target = input.moveX * speed;
       if (input.moveX > 0 && vx < target) vx = Math.min(target, vx + accel);
       if (input.moveX < 0 && vx > target) vx = Math.max(target, vx - accel);
-    } else if (ctrl.grounded && !glued) {
+    } else if (ctrl.grounded) {
       const onIce =
         ctx.onIce.has(entity as unknown as number) || iceUnderfoot(world, pos.x, pos.y);
       if (onIce) vx *= 0.992;

@@ -1415,7 +1415,7 @@ export const test_saw: LevelDef = {
   drops: { enabled: false, xMin: 4, xMax: 20, intervalScale: 1 },
   objects: [
     { type: 'solid', x: 12, y: 1, w: 24, h: 2 },
-    { type: 'saw', x: 16, y: 5, r: 0.45 },
+    { type: 'saw', x: 16, y: 5, r: 0.45, speed: 2.4 },
   ],
 };
 
@@ -1615,6 +1615,34 @@ export const test_spikeball: LevelDef = {
   ],
 };
 
+export const test_spikeball_roll: LevelDef = {
+  id: 'test-spikeball-roll',
+  name: 'Test spikeball roll',
+  theme: 'arena',
+  bounds: { x: 0, y: 0, w: 24, h: 14 },
+  killMargin: 6,
+  spawns: [{ x: 4, y: 4 }, { x: 20, y: 4 }, { x: 8, y: 8 }, { x: 16, y: 8 }],
+  drops: { enabled: false, xMin: 4, xMax: 20, intervalScale: 1 },
+  objects: [
+    { type: 'solid', x: 12, y: 1, w: 24, h: 2 },
+    { type: 'spikeball', x: 10, y: 3.2, r: 0.4, style: 'roll' },
+  ],
+};
+
+export const test_spikeball_drop: LevelDef = {
+  id: 'test-spikeball-drop',
+  name: 'Test spikeball drop',
+  theme: 'arena',
+  bounds: { x: 0, y: 0, w: 24, h: 14 },
+  killMargin: 6,
+  spawns: [{ x: 4, y: 4 }, { x: 20, y: 4 }, { x: 8, y: 8 }, { x: 16, y: 8 }],
+  drops: { enabled: false, xMin: 4, xMax: 20, intervalScale: 1 },
+  objects: [
+    { type: 'solid', x: 12, y: 1, w: 24, h: 2 },
+    { type: 'spikeball', x: 16, y: 11, r: 0.4, style: 'drop' },
+  ],
+};
+
 export const test_trigger_drop: LevelDef = {
   id: 'test-trigger.drop',
   name: 'Test trigger.drop',
@@ -1744,6 +1772,8 @@ export const GENERATED_LEVELS: LevelDef[] = [
   test_block_destructible,
   test_chain,
   test_spikeball,
+  test_spikeball_roll,
+  test_spikeball_drop,
   test_trigger_drop,
   test_platform_momentum,
   test_void,
