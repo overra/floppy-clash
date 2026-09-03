@@ -5,13 +5,17 @@ import { Dead, Health, Player, Transform } from '../traits';
 /** Scripted walk-and-punch. Uses inputs only — no teleport, HP force, or hazard mute. */
 export function fistDriveForSeat(world: World, seat: number, tick: number): PlayerInput {
   const input = cloneInput(EMPTY_INPUT);
-  let self: { x: number; y: number } | null = null;
-  const others: { x: number; y: number }[] = [];
+  const found: { self: { x: number; y: number } | null; others: { x: number; y: number }[] } = {
+    self: null,
+    others: [],
+  };
   world.query(Player, Transform).updateEach(([p, t], e) => {
     if (e.has(Dead) || (e.get(Health)?.hp ?? 0) <= 0) return;
-    if (p.slot === seat || p.inputIndex === seat) self = { x: t.x, y: t.y };
-    else others.push({ x: t.x, y: t.y });
+    if (p.slot === seat || p.inputIndex === seat) found.self = { x: t.x, y: t.y };
+    else found.others.push({ x: t.x, y: t.y });
   });
+  const self = found.self;
+  const others = found.others;
   if (!self || others.length === 0) return input;
   let best = others[0]!;
   let bestD = Math.hypot(best.x - self.x, best.y - self.y);
