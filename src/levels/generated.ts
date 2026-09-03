@@ -1597,7 +1597,7 @@ export const test_chain: LevelDef = {
   drops: { enabled: false, xMin: 4, xMax: 20, intervalScale: 1 },
   objects: [
     { type: 'solid', x: 12, y: 1, w: 24, h: 2 },
-    { type: 'chain', x: 16, y: 14, links: 5 },
+    { type: 'chain', x: 16, y: 14, links: 5, w: 3.2, h: 0.45 },
   ],
 };
 

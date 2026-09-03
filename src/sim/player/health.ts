@@ -4,8 +4,11 @@ import { Dead, Health } from '../traits';
 import type { HitZone } from '../events';
 
 export function hitZoneAt(localY: number, height: number, ducking: boolean): HitZone {
-  const top = ducking ? height * 0.7 : height;
-  const fromTop = top / 2 - localY;
+  // PLAN 4.6 / 4.7: ducking shortens the pose and lowers the head/neck bands.
+  const poseH = ducking ? height * 0.7 : height;
+  const topY = poseH / 2;
+  const fromTop = topY - localY;
+  if (fromTop < 0) return 'body';
   if (fromTop <= 0.45) return 'head';
   if (fromTop <= 0.6) return 'neck';
   return 'body';

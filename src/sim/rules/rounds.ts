@@ -1,6 +1,6 @@
 import { createQuery, type World } from 'koota';
 import { emit, getContext } from '../context';
-import { Crown, Dead, MatchState, Player, RoundPhase, RoundState } from '../traits';
+import { Crown, Dead, DropState, MatchState, Player, RoundPhase, RoundState } from '../traits';
 import { nextMatchLevel, respawnPlayers } from '../systems/reset';
 
 const playersQ = createQuery(Player);
@@ -30,6 +30,7 @@ export function rules(world: World): void {
     if (round.ticks >= ctx.tuning.countdownTicks) {
       round.phase = RoundPhase.Fighting;
       round.ticks = 0;
+      scheduleFirstDrop(world);
       emit(world, { type: 'round-phase', phase: 'fighting' });
     }
   } else if (round.phase === RoundPhase.Fighting) {
@@ -80,6 +81,16 @@ export function assignCrownToLeader(world: World, match: { wins0: number; wins1:
     if (should && !e.has(Crown)) e.add(Crown());
     if (!should && e.has(Crown)) e.remove(Crown);
   });
+}
+
+/** PLAN 4.9 / Appendix A: first sky drop is `firstDropDelayTicks` after countdown ends. */
+export function scheduleFirstDrop(world: World): void {
+  const ctx = getContext(world);
+  const drop = world.get(DropState);
+  if (!drop) return;
+  drop.nextDrop = ctx.tick + ctx.tuning.firstDropDelayTicks;
+  drop.looseCount = 0;
+  world.set(DropState, drop);
 }
 
 export function stepScaleForPhase(world: World): number {

@@ -1,4 +1,4 @@
-import { lerp } from '../core/math';
+import { clamp, lerp } from '../core/math';
 import { tuning } from '../sim/tuning';
 
 export type CameraState = {
@@ -43,10 +43,19 @@ export function updateCamera(
   const spanY = Math.max(maxY - minY, 6);
   const ppmFit = Math.min(viewW / spanX, viewH / spanY);
   const ppmArena = Math.min(viewW / bounds.w, viewH / bounds.h);
-  const zoom = Math.min(ppmFit, ppmArena * 1.8);
+  // PLAN 4.11 / Appendix A: never zoom out past the whole-arena view.
+  const zoom = Math.max(ppmArena, Math.min(ppmFit, ppmArena * 1.8));
   cam.x = lerp(cam.x, cx, tuning.cameraLerp);
   cam.y = lerp(cam.y, cy, tuning.cameraLerp);
   cam.zoom = lerp(cam.zoom, zoom, tuning.cameraZoomLerp);
+  const halfW = viewW / (2 * Math.max(cam.zoom, 1e-6));
+  const halfH = viewH / (2 * Math.max(cam.zoom, 1e-6));
+  const minX = bounds.x + halfW;
+  const maxX = bounds.x + bounds.w - halfW;
+  const minY = bounds.y + halfH;
+  const maxY = bounds.y + bounds.h - halfH;
+  if (minX <= maxX) cam.x = clamp(cam.x, minX, maxX);
+  if (minY <= maxY) cam.y = clamp(cam.y, minY, maxY);
   cam.shake *= 0.85;
   cam.shakeX = (Math.random() - 0.5) * cam.shake;
   cam.shakeY = (Math.random() - 0.5) * cam.shake;

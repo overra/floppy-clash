@@ -1,10 +1,21 @@
 import { createQuery, Not, type Entity, type World } from 'koota';
 import { emit, getContext } from '../context';
 import { moduleForKind } from '../hazards';
+import { assignNetId, createBoxBody, registerBody } from '../physics/bodies';
 import { applyExplosion } from '../physics/queries';
 import { takeDamage } from '../player/health';
 import type { FixtureUserData } from '../physics/categories';
-import { Controller, Dead, Destructible, Hazard, HazardKind, Player, Transform } from '../traits';
+import {
+  Controller,
+  Dead,
+  Destructible,
+  Hazard,
+  HazardKind,
+  Lifetime,
+  Player,
+  PrevTransform,
+  Transform,
+} from '../traits';
 import { spawnSnake } from '../weapons/projectiles';
 
 const hazards = createQuery(Hazard, Transform);
@@ -23,7 +34,9 @@ export function hazardsStep(world: World): void {
       if (!pt) return;
       const dx = Math.abs(pt.x - ht.x);
       const dy = Math.abs(pt.y - ht.y);
-      const near = dx < 1.6 && dy < 1.6;
+      const hung = hz.kind === HazardKind.Chain && hz.param3 === 1;
+      const reach = hung ? Math.max(2.2, (hz.param0 || 2.8) / 2 + 0.5) : 1.6;
+      const near = dx < reach && dy < 1.6;
       const mod = moduleForKind(hz.kind);
       if (!mod?.contact) return;
       if (!near && hz.kind !== HazardKind.Laser && hz.kind !== HazardKind.Conveyor) return;
@@ -48,6 +61,41 @@ export function hazardsStep(world: World): void {
         spawnSnake(world, t.x + 0.2, t.y + 0.2, undefined, false, false);
       }
     }
+    if (hz?.kind === HazardKind.Destructible) {
+      spawnDestructibleDebris(world, t.x, t.y);
+    }
     ctx.pendingDestroy.push(entity);
   });
+}
+
+/** PLAN Appendix D: broken destructibles become short-lived dynamic chunks + particles. */
+function spawnDestructibleDebris(world: World, x: number, y: number): void {
+  const ctx = getContext(world);
+  emit(world, { type: 'explosion', x, y, radius: 0.8, damage: 0 });
+  for (let i = 0; i < 4; i++) {
+    const ox = (i - 1.5) * 0.18;
+    const chunk = world.spawn(
+      Transform({ x: x + ox, y: y, angle: 0 }),
+      PrevTransform({ x: x + ox, y: y, angle: 0 }),
+      Hazard({
+        kind: HazardKind.Debris,
+        param0: 0.24,
+        param1: 0.24,
+        param2: 0,
+        param3: 0,
+        hp: 0,
+        armed: 1,
+      }),
+      Lifetime({ ticksLeft: 50 }),
+    );
+    assignNetId(world, chunk);
+    const body = createBoxBody(ctx.physics, chunk, 'prop', x + ox, y, 0.12, 0.12, 'dynamic', {
+      density: 0.35,
+      friction: 0.4,
+      restitution: 0.15,
+      fixedRotation: false,
+    });
+    body.setLinearVelocity({ x: (i - 1.5) * 3.2, y: 3.5 + i * 0.4 });
+    registerBody(world, chunk, body);
+  }
 }

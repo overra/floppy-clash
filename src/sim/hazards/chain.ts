@@ -2,7 +2,7 @@ import { RevoluteJoint } from 'planck';
 import { getContext } from '../context';
 import { assignNetId, createBoxBody, registerBody } from '../physics/bodies';
 import { Destructible, Hazard, HazardKind, Static, Transform } from '../traits';
-import { spawnHazardEntity } from './common';
+import { carryRider, spawnHazardEntity } from './common';
 import type { HazardModule } from './types';
 
 export const chain: HazardModule = {
@@ -39,6 +39,43 @@ export const chain: HazardModule = {
       );
       prevBody = body;
     }
+    // PLAN Appendix D: hanging links can carry a platform.
+    const platW = obj.w ?? 2.8;
+    const platH = obj.h ?? 0.4;
+    const platY = obj.y - links * 0.35 - platH * 0.5;
+    const platform = spawnHazardEntity(
+      world,
+      { ...obj, x: obj.x, y: platY, w: platW, h: platH },
+      HazardKind.Chain,
+    );
+    const ph = platform.get(Hazard);
+    if (ph) platform.set(Hazard, { ...ph, param3: 1, param0: platW, param1: platH });
+    platform.add(Destructible({ hp: 40, maxHp: 40 }));
+    const deck = createBoxBody(
+      ctx.physics,
+      platform,
+      'prop',
+      obj.x,
+      platY,
+      platW / 2,
+      platH / 2,
+      'dynamic',
+      { density: 0.55, friction: 0.85, fixedRotation: false },
+    );
+    registerBody(world, platform, deck);
+    ctx.physics.createJoint(
+      new RevoluteJoint(
+        { collideConnected: false, enableLimit: true, lowerAngle: -0.5, upperAngle: 0.5 },
+        prevBody,
+        deck,
+        { x: obj.x, y: obj.y - links * 0.35 },
+      ),
+    );
     return entity;
+  },
+  contact(world, player, hz, ht, ctrl, dt, hazard) {
+    if (hz.param3 !== 1) return;
+    const pt = player.get(Transform);
+    if (pt) carryRider(world, player, hazard, pt, ht, ctrl, dt);
   },
 };

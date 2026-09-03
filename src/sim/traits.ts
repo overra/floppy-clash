@@ -192,6 +192,8 @@ export const HazardKind = {
   Crusher: 18,
   TriggerDrop: 19,
   Boss: 20,
+  /** Short-lived chunks from a broken `block.destructible` (Appendix D). */
+  Debris: 21,
 } as const;
 
 export const ProjectileKind = {

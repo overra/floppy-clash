@@ -71,7 +71,7 @@ export function createSimWorld(opts: CreateSimOptions): SimHandle {
       round: 0,
     }),
     SimClock({ tick: 0, stepScale: 1 }),
-    DropState({ nextDrop: 180, looseCount: 0 }),
+    DropState({ nextDrop: Number.MAX_SAFE_INTEGER, looseCount: 0 }),
   );
 
   loadLevel(ecs, opts.level);

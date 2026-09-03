@@ -73,7 +73,9 @@ export function combat(world: World): void {
       const bonus = combat.blocking ? t.blockPunchBonus : 0;
       const impulse = t.punchSelfImpulse + bonus;
       const vel = body.getLinearVelocity();
-      body.setLinearVelocity(new Vec2(vel.x + aim.x * impulse, vel.y + aim.y * impulse));
+      // PLAN 2.2: holding down while airborne punching is a punch slam (fast descent).
+      const slam = input.down && !_ctrl.grounded ? t.punchSlamImpulse : 0;
+      body.setLinearVelocity(new Vec2(vel.x + aim.x * impulse, vel.y + aim.y * impulse - slam));
       const hx = transform.x + aim.x * t.punchRange;
       const hy = transform.y + aim.y * t.punchRange;
       const airborne = !_ctrl.grounded;

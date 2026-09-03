@@ -14,6 +14,7 @@ import {
   shareHash,
 } from '../src/editor/editor';
 import { parseLevel } from '../src/sim/level/schema';
+import { hold, makeSim } from './helpers';
 
 describe('M7 editor', () => {
   it('can place every hazard type, export, and reload', () => {
@@ -30,6 +31,10 @@ describe('M7 editor', () => {
     moveSelected(copy, 10, 7);
     resizeSelected(copy, 3, 2);
     expect(copy.level.objects[copy.selected]?.w).toBeGreaterThan(1);
+    const sim = makeSim({ level: parseLevel(JSON.parse(json)), seed: 3, settings: { playerCount: 1 } });
+    expect(() => {
+      for (let i = 0; i < 45; i++) sim.step([hold({}), hold({}), hold({}), hold({})]);
+    }).not.toThrow();
   });
 
   it('share URL hash round-trips and memory library stores a draft', async () => {

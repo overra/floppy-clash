@@ -97,6 +97,12 @@ test('editor can place every hazard type then playtest the draft', async ({ page
   for (const tool of tools) {
     expect(json).toContain(`"type": "${tool}"`);
   }
+  await page.getByRole('button', { name: 'Share URL' }).click();
+  const hash = await page.evaluate(() => location.hash);
+  expect(hash.startsWith('#l=')).toBe(true);
+  await page.goto(`/${hash}`);
+  await page.getByRole('button', { name: 'Level Editor' }).click();
+  await expect(page.locator('#edjson')).toContainText('"type": "spikes"');
   await page.getByRole('button', { name: 'Playtest' }).click();
   await expect(page.locator('canvas#game')).toBeVisible();
   await expect(page.locator('[data-countdown]')).toBeVisible({ timeout: 8_000 });

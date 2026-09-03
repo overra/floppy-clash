@@ -19,6 +19,6 @@ Levels are JSON validated by zod (`src/sim/level/schema.ts`). The in-browser edi
 
 Optional props (`w`, `h`, `dir`, `path`, `speed`, `mode`, `style`, `period`, `onTicks`, …) are generated into the editor property panel from the zod object.
 
-`spikeball.style` is `swing` (default hang joint), `roll` (free dynamic circle), or `drop` (falls from spawn height). `platform.disappearing` sets `armed=2` during the last 18 ticks of the solid phase (warning blink).
+`spikeball.style` is `swing` (default hang joint), `roll` (free dynamic circle), or `drop` (falls from spawn height). `platform.disappearing` sets `armed=2` during the last 18 ticks of the solid phase (warning blink). A `chain` hangs a rideable platform from its last link (`w`/`h`, default 2.8×0.4). `block.destructible` death spawns short-lived debris chunks.
 
 User levels saved to the library are merged into match rotation when **Include user levels** is on.

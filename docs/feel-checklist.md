@@ -9,6 +9,7 @@ Numbers are from `src/sim/tuning.ts` and pinned by `test/movement.test.ts` (±10
 | Block punch jump | ≈ 2.5–3× | Hold block while punch-jumping |
 | Wall climb | 6-tile shaft in ≤ 4 wall jumps | Gym shaft interior x=3–5, walls to y≈14 |
 | Run | 30 m in ≈ 4 s | Dedicated `run-track` (60 m floor), `runSpeed` 8 |
+| Punch slam | Fast descent | Hold `down` while airborne punching (`punchSlamImpulse`) |
 
 Live tuning: **F2** opens Tweakpane bound to `tuning.ts`.
 

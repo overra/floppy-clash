@@ -23,6 +23,8 @@ export const tuning = {
 
   punchSelfImpulse: 4,
   blockPunchBonus: 3,
+  /** PLAN 2.2: holding down while punching adds a fast-descent slam. */
+  punchSlamImpulse: 7,
   punchDamage: 22,
   punchKnockback: 6,
   punchKnockbackUp: 0.3,

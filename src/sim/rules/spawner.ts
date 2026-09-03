@@ -9,7 +9,8 @@ export function spawner(world: World): void {
   const round = world.get(RoundState);
   const drop = world.get(DropState);
   if (!round || !drop || !ctx.level.drops?.enabled) return;
-  if (round.phase !== RoundPhase.Fighting && round.phase !== RoundPhase.Countdown) return;
+  // PLAN 4.9: first drop is `firstDropDelay` *after* countdown, then every interval.
+  if (round.phase !== RoundPhase.Fighting) return;
 
   let loose = 0;
   world.query(Weapon, Loose).forEach(() => {
