@@ -19,7 +19,7 @@ import { matchLevelPool } from './levels/catalog';
 import { addShake, createCamera } from './render/camera';
 import { buildFrame } from './render/buildFrame';
 import { createCanvasRenderer, type Renderer } from './render/canvas/renderer';
-import { tryCreateGpuRenderer } from './render/gpu/renderer';
+import { getLastGpuInitError, tryCreateGpuRenderer } from './render/gpu/renderer';
 import { createDecalLayer, stampFxDecals, type PersistentDecalLayer } from './render/fx/decals';
 import { emitIntoWorld, listParticles, stepFxParticles } from './render/fx/particles';
 import { clearFx, createFxWorld } from './render/fx/world';
@@ -98,6 +98,7 @@ type FloppyDebug = {
   gpuPipelineBackend: 'typegpu' | 'none';
   gpuPipelineApi: 'root.createRenderPipeline' | '';
   gpuPipelineResourceType: string;
+  gpuInitError: string;
 };
 
 declare global {
@@ -107,7 +108,7 @@ declare global {
 }
 
 export function createGame(root: HTMLElement): Game {
-  const canvas = root.querySelector('#game') as HTMLCanvasElement;
+  let canvas = root.querySelector('#game') as HTMLCanvasElement;
   const menusEl = root.querySelector('#menus') as HTMLElement;
   const hudEl = root.querySelector('#hud') as HTMLElement;
   const settings: UserSettings = loadSettings();
@@ -733,6 +734,7 @@ export function createGame(root: HTMLElement): Game {
       gpuPipelineBackend: renderer?.pipelineBackend ?? 'none',
       gpuPipelineApi: renderer?.pipelineApi ?? '',
       gpuPipelineResourceType: renderer?.pipelineResourceType ?? '',
+      gpuInitError: getLastGpuInitError(),
       inspect:
         (sim ?? clientView?.sim)
           ? formatInspect(inspectWorld((sim ?? clientView!.sim).ecs, 12))
@@ -893,20 +895,50 @@ export function createGame(root: HTMLElement): Game {
     });
   }
 
-  async function switchRenderer() {
-    rendererSwitches += 1;
-    if (rendererKind === 'gpu') {
-      renderer = createCanvasRenderer(canvas);
-      rendererKind = 'canvas';
-      menus.notice = 'Canvas fallback';
-    } else if (settings.renderer !== 'canvas') {
+  function replaceGameCanvas(): HTMLCanvasElement {
+    const next = canvas.cloneNode(false) as HTMLCanvasElement;
+    next.id = 'game';
+    canvas.replaceWith(next);
+    canvas = next;
+    return canvas;
+  }
+
+  /** PLAN §4.11 boot: probe WebGPU/TypeGPU first; Canvas only after a failed probe. */
+  async function attachPreferredRenderer(): Promise<void> {
+    if (settings.renderer !== 'canvas') {
       const gpu = await tryCreateGpuRenderer(canvas, { lighting: settings.lighting });
       if (gpu) {
         renderer = gpu;
         rendererKind = 'gpu';
         menus.notice = 'SDF renderer';
+        return;
       }
     }
+    renderer = createCanvasRenderer(canvas);
+    rendererKind = 'canvas';
+    menus.notice = 'Canvas fallback';
+  }
+
+  async function switchRenderer() {
+    rendererSwitches += 1;
+    replaceGameCanvas();
+    if (rendererKind === 'gpu' || settings.renderer === 'canvas') {
+      renderer = createCanvasRenderer(canvas);
+      rendererKind = 'canvas';
+      menus.notice = 'Canvas fallback';
+    } else {
+      const gpu = await tryCreateGpuRenderer(canvas, { lighting: settings.lighting });
+      if (gpu) {
+        renderer = gpu;
+        rendererKind = 'gpu';
+        menus.notice = 'SDF renderer';
+      } else {
+        renderer = createCanvasRenderer(canvas);
+        rendererKind = 'canvas';
+        menus.notice = 'Canvas fallback';
+      }
+    }
+    renderer.resize(canvas.clientWidth || 1280, canvas.clientHeight || 720);
     if (menus.screen !== 'play') show();
   }
 
@@ -983,23 +1015,11 @@ export function createGame(root: HTMLElement): Game {
           }
         }
       });
-      renderer = createCanvasRenderer(canvas);
-      menus.notice = 'Canvas fallback';
+      await attachPreferredRenderer();
       if (menus.screen !== 'play') show();
       bindDebug();
       if ('serviceWorker' in navigator) void navigator.serviceWorker.register('/sw.js');
       raf = requestAnimationFrame(tick);
-      if (settings.renderer !== 'canvas') {
-        void tryCreateGpuRenderer(canvas, { lighting: settings.lighting })
-          .then((gpu) => {
-            if (!gpu) return;
-            renderer = gpu;
-            rendererKind = 'gpu';
-            menus.notice = 'SDF renderer';
-            if (menus.screen !== 'play') show();
-          })
-          .catch(() => undefined);
-      }
       void net;
       void MatchState;
     },

@@ -41,7 +41,10 @@ test('GPU renderer initialises or the fallback notice is shown', async ({ page }
     backend: window.__floppy?.gpuPipelineBackend,
     api: window.__floppy?.gpuPipelineApi,
     resourceType: window.__floppy?.gpuPipelineResourceType,
+    initError: window.__floppy?.gpuInitError ?? '',
   }));
+  // eslint-disable-next-line no-console
+  console.log('gpu-debug', frame);
   expect(frame.kind === 'gpu' || frame.kind === 'canvas').toBe(true);
   expect(frame.groups + frame.colored).toBeGreaterThan(0);
   if (frame.kind === 'gpu') {

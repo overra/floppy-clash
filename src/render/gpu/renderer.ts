@@ -20,6 +20,21 @@ import {
   sdfLayout,
 } from './shaders';
 
+let lastGpuInitError = '';
+
+export function getLastGpuInitError(): string {
+  return lastGpuInitError;
+}
+
+function failInit(reason: string): null {
+  lastGpuInitError = reason;
+  return null;
+}
+
+function errMsg(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
 async function withTimeout<T>(p: Promise<T>, ms: number): Promise<T | null> {
   return Promise.race([
     p,
@@ -37,31 +52,42 @@ async function createGpuRenderer(
   canvas: HTMLCanvasElement,
   opts: GpuRendererOpts = {},
 ): Promise<Renderer | null> {
-  if (!('gpu' in navigator) || !navigator.gpu) return null;
+  lastGpuInitError = '';
+  if (!('gpu' in navigator) || !navigator.gpu) return failInit('no-navigator-gpu');
   const adapter = await navigator.gpu.requestAdapter();
-  if (!adapter) return null;
+  if (!adapter) return failInit('no-adapter');
   let root: TgpuRoot;
   try {
     root = await tgpu.init();
-  } catch {
-    return null;
+  } catch (err) {
+    return failInit(`tgpu.init: ${errMsg(err)}`);
   }
   const context = canvas.getContext('webgpu');
-  if (!context) return null;
+  if (!context) return failInit('no-webgpu-context');
   const device = root.device;
   const format = navigator.gpu.getPreferredCanvasFormat();
   context.configure({ device, format, alphaMode: 'premultiplied' });
 
-  const pipeline = createSdfDrawPipeline(root, format);
-  if (!isRenderPipeline(pipeline) || pipeline.resourceType !== 'render-pipeline') {
-    return null;
+  let pipeline;
+  try {
+    pipeline = createSdfDrawPipeline(root, format);
+  } catch (err) {
+    return failInit(`createSdfDrawPipeline: ${errMsg(err)}`);
   }
-  const decalPipeline = createDecalDrawPipeline(root, format);
+  if (!isRenderPipeline(pipeline) || pipeline.resourceType !== 'render-pipeline') {
+    return failInit('pipeline-not-typegpu');
+  }
+  let decalPipeline;
+  try {
+    decalPipeline = createDecalDrawPipeline(root, format);
+  } catch (err) {
+    return failInit(`createDecalDrawPipeline: ${errMsg(err)}`);
+  }
   try {
     pipeline.initSync();
     decalPipeline.initSync();
-  } catch {
-    return null;
+  } catch (err) {
+    return failInit(`initSync: ${errMsg(err)}`);
   }
 
   const cameraBuf = root.createBuffer(GpuCamera).$usage('uniform');
@@ -184,9 +210,11 @@ export async function tryCreateGpuRenderer(
   opts: GpuRendererOpts = {},
 ): Promise<Renderer | null> {
   try {
-    return await withTimeout(createGpuRenderer(canvas, opts), 4000);
-  } catch {
-    return null;
+    const created = await withTimeout(createGpuRenderer(canvas, opts), 4000);
+    if (!created && !lastGpuInitError) lastGpuInitError = 'timeout-or-null';
+    return created;
+  } catch (err) {
+    return failInit(`tryCreate: ${errMsg(err)}`);
   }
 }
 

@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { isTgpuFragmentFn, isTgpuVertexFn } from 'typegpu';
 import {
@@ -69,6 +71,20 @@ describe('TypeGPU live SDF draw path (PLAN §4.11)', () => {
     expect(gv.getFloat32(0, true)).toBe(0);
     expect(gv.getFloat32(16, true)).toBeCloseTo(1);
     expect(gv.getUint32(36, true)).toBe(1);
+  });
+});
+
+describe('GPU boot order (PLAN §4.11)', () => {
+  it('probes TypeGPU on a canvas that does not already have a 2D context', () => {
+    const game = readFileSync(resolve(process.cwd(), 'src/game.ts'), 'utf8');
+    expect(game).toContain('attachPreferredRenderer');
+    const attach = game.indexOf('async function attachPreferredRenderer');
+    const body = game.slice(attach, game.indexOf('async function switchRenderer'));
+    expect(body.indexOf('tryCreateGpuRenderer')).toBeGreaterThan(-1);
+    expect(body.indexOf('tryCreateGpuRenderer')).toBeLessThan(body.indexOf('createCanvasRenderer'));
+    const renderer = readFileSync(resolve(process.cwd(), 'src/render/gpu/renderer.ts'), 'utf8');
+    expect(renderer).toContain("canvas.getContext('webgpu')");
+    expect(renderer).toContain('createSdfDrawPipeline');
   });
 });
 
