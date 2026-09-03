@@ -65,15 +65,20 @@ async function createGpuRenderer(
   if (!('gpu' in navigator) || !navigator.gpu) return failInit('no-navigator-gpu');
   const adapter = await navigator.gpu.requestAdapter();
   if (!adapter) return failInit('no-adapter');
+  let device: GPUDevice;
+  try {
+    device = await adapter.requestDevice();
+  } catch (err) {
+    return failInit(`requestDevice: ${errMsg(err)}`);
+  }
   let root: TgpuRoot;
   try {
-    root = await tgpu.init();
+    root = tgpu.initFromDevice({ device });
   } catch (err) {
-    return failInit(`tgpu.init: ${errMsg(err)}`);
+    return failInit(`tgpu.initFromDevice: ${errMsg(err)}`);
   }
   const context = canvas.getContext('webgpu');
   if (!context) return failInit('no-webgpu-context');
-  const device = root.device;
   const format = navigator.gpu.getPreferredCanvasFormat();
   let readbackEnabled = false;
   let readbackError = '';
@@ -160,6 +165,7 @@ async function createGpuRenderer(
   let pendingRead: ((value: FramebufferReadback) => void) | null = null;
   let inflightRead: Promise<FramebufferReadback> | null = null;
   void root;
+  (window as unknown as { __gpuKeepAlive?: unknown }).__gpuKeepAlive = { root, device, staging };
 
   function failRead(reason: string): FramebufferReadback {
     const out = emptyReadback('unavailable', reason);

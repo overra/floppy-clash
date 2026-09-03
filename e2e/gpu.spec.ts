@@ -1,5 +1,24 @@
 import { expect, test } from '@playwright/test';
 
+test('SwiftShader can map a raw WebGPU buffer and offscreen texture', async ({ page }) => {
+  await page.goto('/gpu-probe.html');
+  await page.waitForFunction(
+    () => (window as unknown as { __gpuProbe?: unknown }).__gpuProbe,
+    null,
+    {
+      timeout: 10_000,
+    },
+  );
+  const probe = await page.evaluate(
+    () =>
+      (window as unknown as { __gpuProbe: { hasGpu: boolean; rawMap: string; texMap: string } })
+        .__gpuProbe,
+  );
+  expect(probe.hasGpu, JSON.stringify(probe)).toBe(true);
+  expect(probe.rawMap, JSON.stringify(probe)).toMatch(/^ok:/);
+  expect(probe.texMap, JSON.stringify(probe)).toMatch(/^ok:/);
+});
+
 test('GPU renderer initialises and PLAN §6 reads framebuffer pixels', async ({ page }) => {
   await page.goto('/');
   await expect(page.getByRole('heading', { name: 'Floppy Clash' })).toBeVisible();
