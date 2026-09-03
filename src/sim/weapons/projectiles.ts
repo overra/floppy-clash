@@ -16,6 +16,7 @@ import {
   Loose,
   OwnedBy,
   Player,
+  PrevTransform,
   Projectile,
   ProjectileKind,
   Snake,
@@ -168,6 +169,7 @@ export function spawnSnake(world: World, x: number, y: number, owner: Entity | u
     Snake({ hp, giant: giant ? 1 : 0, flying: flying ? 1 : 0, biteCooldown: 0 }),
     Health({ hp, maxHp: hp }),
     Transform({ x, y, angle: 0 }),
+    PrevTransform({ x, y, angle: 0 }),
   );
   if (owner) snake.add(OwnedBy(owner));
   assignNetId(world, snake);

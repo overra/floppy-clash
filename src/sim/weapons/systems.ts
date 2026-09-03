@@ -3,7 +3,7 @@ import { Vec2 } from 'planck';
 import { emit, getContext } from '../context';
 import { rising } from '../input';
 import { createBoxBody, registerBody, assignNetId } from '../physics/bodies';
-import { Aim, Combat, Controller, Dead, Held, HeldBy, Loose, OwnedBy, Player, Projectile, ProjectileKind, Transform, Weapon } from '../traits';
+import { Aim, Combat, Controller, Dead, Held, HeldBy, Loose, OwnedBy, Player, PrevTransform, Projectile, ProjectileKind, Transform, Weapon } from '../traits';
 import type { WeaponDef } from './schema';
 import { weaponByIndex, weaponIndex } from './defs';
 import { rollIfRanged } from './mapping';
@@ -113,6 +113,7 @@ export function spawnWeapon(world: World, defId: string, x: number, y: number, l
       thrownHit: false,
     }),
     Transform({ x, y, angle: 0 }),
+    PrevTransform({ x, y, angle: 0 }),
   );
   assignNetId(world, entity);
   if (loose) entity.add(Loose());

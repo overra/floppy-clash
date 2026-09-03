@@ -10,6 +10,12 @@ export function registerBody(world: World, entity: Entity, body: Body): void {
   ctx.bodies.set(entity, body);
   ctx.entityOf.set(body, entity);
   entity.add(PhysBody({ body }));
+  // syncTransforms only writes entities that have PrevTransform. Weapons, snakes,
+  // chain links and other props must interpolate and pick up from the live body.
+  const t = entity.get(Transform);
+  if (t && !entity.get(PrevTransform)) {
+    entity.add(PrevTransform({ x: t.x, y: t.y, angle: t.angle }));
+  }
 }
 
 export function destroyBody(world: World, entity: Entity): void {

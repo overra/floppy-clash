@@ -2,7 +2,7 @@ import { createQuery, type Entity, type World } from 'koota';
 import { RevoluteJoint } from 'planck';
 import { getContext } from '../context';
 import { createBoxBody, registerBody } from '../physics/bodies';
-import { Aim, PhysArm, Player, Transform } from '../traits';
+import { Aim, PhysArm, Player, PrevTransform, Transform } from '../traits';
 
 const arms = createQuery(PhysArm, Transform);
 
@@ -14,7 +14,11 @@ export function attachPhysicsArms(world: World, player: Entity): void {
   if (!root || !t) return;
   const owner = player.get(Player)?.slot ?? 0;
   for (const side of [-1, 1] as const) {
-    const arm = world.spawn(PhysArm({ side, owner }), Transform({ x: t.x + side * 0.28, y: t.y + 0.28, angle: 0 }));
+    const arm = world.spawn(
+      PhysArm({ side, owner }),
+      Transform({ x: t.x + side * 0.28, y: t.y + 0.28, angle: 0 }),
+      PrevTransform({ x: t.x + side * 0.28, y: t.y + 0.28, angle: 0 }),
+    );
     const body = createBoxBody(ctx.physics, arm, 'sensor', t.x + side * 0.28, t.y + 0.28, 0.08, 0.22, 'dynamic', {
       density: 0.15,
       friction: 0,

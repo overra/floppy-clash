@@ -50,12 +50,12 @@ export function updateCamera(
   cam.zoom = lerp(cam.zoom, zoom, tuning.cameraZoomLerp);
   const halfW = viewW / (2 * Math.max(cam.zoom, 1e-6));
   const halfH = viewH / (2 * Math.max(cam.zoom, 1e-6));
-  const minX = bounds.x + halfW;
-  const maxX = bounds.x + bounds.w - halfW;
-  const minY = bounds.y + halfH;
-  const maxY = bounds.y + bounds.h - halfH;
-  if (minX <= maxX) cam.x = clamp(cam.x, minX, maxX);
-  if (minY <= maxY) cam.y = clamp(cam.y, minY, maxY);
+  const viewMinX = bounds.x + halfW;
+  const viewMaxX = bounds.x + bounds.w - halfW;
+  const viewMinY = bounds.y + halfH;
+  const viewMaxY = bounds.y + bounds.h - halfH;
+  if (viewMinX <= viewMaxX) cam.x = clamp(cam.x, viewMinX, viewMaxX);
+  if (viewMinY <= viewMaxY) cam.y = clamp(cam.y, viewMinY, viewMaxY);
   cam.shake *= 0.85;
   cam.shakeX = (Math.random() - 0.5) * cam.shake;
   cam.shakeY = (Math.random() - 0.5) * cam.shake;

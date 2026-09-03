@@ -3,6 +3,7 @@ import { woodsClearing } from '../src/levels/handauthored';
 import { getLevel } from '../src/levels/catalog';
 import { hitZoneAt } from '../src/sim/player/health';
 import { spawnWeapon } from '../src/sim/systems/weapons';
+import { spawnSnake } from '../src/sim/weapons/projectiles';
 import {
   Controller,
   Dead,
@@ -18,6 +19,7 @@ import {
   RagdollPart,
   RoundPhase,
   RoundState,
+  Snake,
   Status,
   Transform,
   Weapon,
@@ -105,6 +107,7 @@ describe('PLAN gaps closed this audit', () => {
       seed: 14,
       settings: { playerCount: 1 },
     });
+    for (let i = 0; i < 40; i++) sim.step([hold({}), hold({}), hold({}), hold({})]);
     const plat = { x: 16, y: 0, found: false };
     sim.ecs.query(Hazard, Transform).updateEach(([hz, t]) => {
       if (hz.kind === HazardKind.Chain && hz.param3 === 1) {
@@ -115,15 +118,68 @@ describe('PLAN gaps closed this audit', () => {
     });
     expect(plat.found).toBe(true);
     const p = playerOf(sim);
-    sim.ctx.bodies.get(p)?.setPosition({ x: plat.x, y: plat.y + 1.05 });
-    p.set(Transform, { x: plat.x, y: plat.y + 1.05, angle: 0 });
+    const standY = plat.y + 1.25;
+    sim.ctx.bodies.get(p)?.setPosition({ x: plat.x, y: standY });
+    sim.ctx.bodies.get(p)?.setLinearVelocity({ x: 0, y: 0 });
+    p.set(Transform, { x: plat.x, y: standY, angle: 0 });
+    let grounded = false;
     const ys: number[] = [];
     for (let i = 0; i < 50; i++) {
       sim.step([hold({}), hold({}), hold({}), hold({})]);
       ys.push(p.get(Transform)?.y ?? 0);
+      if (p.get(Controller)?.grounded) grounded = true;
     }
-    expect(Math.min(...ys)).toBeGreaterThan(plat.y + 0.35);
-    expect(p.get(Controller)?.grounded || Math.min(...ys) > plat.y + 0.5).toBe(true);
+    let liveY = plat.y;
+    sim.ecs.query(Hazard, Transform).updateEach(([hz, t]) => {
+      if (hz.kind === HazardKind.Chain && hz.param3 === 1) liveY = t.y;
+    });
+    expect(Math.min(...ys)).toBeGreaterThan(5);
+    expect(p.get(Transform)?.y ?? 0).toBeGreaterThan(liveY);
+    expect(grounded).toBe(true);
+  });
+
+  it('loose weapon Transform tracks the falling body', () => {
+    const sim = makeSim({ seed: 21, settings: { playerCount: 1 } });
+    const gun = spawnWeapon(sim.ecs, 'pistol', 10, 12);
+    for (let i = 0; i < 45; i++) sim.step([hold({}), hold({}), hold({}), hold({})]);
+    const t = gun.get(Transform)!;
+    const body = sim.ctx.bodies.get(gun)!.getPosition();
+    expect(t.y).toBeCloseTo(body.y, 2);
+    expect(t.y).toBeLessThan(8);
+  });
+
+  it('pickup uses the landed pose, not the sky spawn', () => {
+    const sim = makeSim({ seed: 23, settings: { playerCount: 1 } });
+    const p = playerOf(sim);
+    sim.ctx.bodies.get(p)?.setPosition({ x: 8, y: 4 });
+    p.set(Transform, { x: 8, y: 4, angle: 0 });
+    const gun = spawnWeapon(sim.ecs, 'pistol', 46, 16);
+    for (let i = 0; i < 50; i++) sim.step([hold({}), hold({}), hold({}), hold({})]);
+    expect(gun.has(Held)).toBe(false);
+    const wt = gun.get(Transform)!;
+    expect(wt.y).toBeLessThan(6);
+    expect(wt.x).toBeGreaterThan(40);
+    sim.ctx.bodies.get(p)?.setPosition({ x: wt.x, y: wt.y + 0.45 });
+    p.set(Transform, { x: wt.x, y: wt.y + 0.45, angle: 0 });
+    for (let i = 0; i < 12; i++) sim.step([hold({}), hold({}), hold({}), hold({})]);
+    expect(gun.has(Held)).toBe(true);
+  });
+
+  it('snake Transform tracks the creature body', () => {
+    const sim = makeSim({ seed: 22, settings: { playerCount: 1 } });
+    spawnSnake(sim.ecs, 10, 10, undefined, false, false);
+    for (let i = 0; i < 30; i++) sim.step([hold({}), hold({}), hold({}), hold({})]);
+    const seen = { y: 10, bodyY: 10, ok: false };
+    sim.ecs.query(Snake, Transform).updateEach(([_s, t], e) => {
+      const body = sim.ctx.bodies.get(e);
+      if (!body) return;
+      seen.y = t.y;
+      seen.bodyY = body.getPosition().y;
+      seen.ok = true;
+    });
+    expect(seen.ok).toBe(true);
+    expect(seen.y).toBeCloseTo(seen.bodyY, 2);
+    expect(Math.abs(seen.y - 10)).toBeGreaterThan(0.05);
   });
 
   it('destructible death spawns short-lived debris chunks', () => {
