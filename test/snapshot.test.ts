@@ -55,6 +55,21 @@ function countJoints(physics: PhysicsWorld): number {
 }
 
 describe('M8 snapshot', () => {
+  it('host scoreboardTicks rides the snapshot onto the guest view', () => {
+    const host = makeSim({ seed: 318, settings: { playerCount: 2 } });
+    host.ctx.tuning.scoreboardTicks = 48;
+    const snap = serializeWorld(host.ecs);
+    expect(snap.scoreboardTicks).toBe(48);
+    const view = createClientView(snap);
+    expect(view.sim.ctx.tuning.scoreboardTicks).toBe(48);
+    const omitted = { ...snap };
+    delete omitted.scoreboardTicks;
+    const fallback = makeSim({ seed: 319, settings: { playerCount: 2 } });
+    expect(fallback.ctx.tuning.scoreboardTicks).toBe(90);
+    restoreWorld(fallback.ecs, omitted);
+    expect(fallback.ctx.tuning.scoreboardTicks).toBe(90);
+  });
+
   it('late-join restores each HP preset onto Health and MatchState', () => {
     for (const maxHp of [1, 25, 50, 200] as const) {
       const host = makeSim({ seed: 300 + maxHp, settings: { playerCount: 2, maxHp } });

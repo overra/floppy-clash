@@ -35,7 +35,8 @@ export function hazardsStep(world: World): void {
       const dx = Math.abs(pt.x - ht.x);
       const dy = Math.abs(pt.y - ht.y);
       const hung = hz.kind === HazardKind.Chain && hz.param3 === 1;
-      const reach = hung ? Math.max(2.2, (hz.param0 || 2.8) / 2 + 0.5) : 1.6;
+      // param0 is authored deck width. 0 means no extra hang reach — do not `|| 2.8`.
+      const reach = hung ? Math.max(2.2, hz.param0 / 2 + 0.5) : 1.6;
       const prev = hazard.get(PrevTransform);
       const pprev = player.get(PrevTransform);
       const body = ctx.bodies.get(hazard);
@@ -44,15 +45,16 @@ export function hazardsStep(world: World): void {
       const sweep =
         hz.kind === HazardKind.Saw ||
         hz.kind === HazardKind.Crusher ||
-        hz.kind === HazardKind.Spikeball
+        hz.kind === HazardKind.Spikeball ||
+        hz.kind === HazardKind.Lava
           ? pt.x >= Math.min(prev?.x ?? ht.x, ht.x, pos?.x ?? ht.x) - reach &&
             pt.x <= Math.max(prev?.x ?? ht.x, ht.x, pos?.x ?? ht.x) + reach &&
             pt.y >= Math.min(prev?.y ?? ht.y, ht.y, pos?.y ?? ht.y) - 1.6 &&
             pt.y <= Math.max(prev?.y ?? ht.y, ht.y, pos?.y ?? ht.y) + 1.6
           : false;
-      // Static kill beds: last-tick player skip must still invoke contact.
+      // Static / rising kill beds: last-tick player skip must still invoke contact.
       const playerSweep =
-        hz.kind === HazardKind.Spikes
+        hz.kind === HazardKind.Spikes || hz.kind === HazardKind.Lava
           ? ht.x >= Math.min(pprev?.x ?? pt.x, pt.x) - reach &&
             ht.x <= Math.max(pprev?.x ?? pt.x, pt.x) + reach &&
             ht.y >= Math.min(pprev?.y ?? pt.y, pt.y) - 1.6 &&

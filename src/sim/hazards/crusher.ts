@@ -50,8 +50,9 @@ export const crusher: HazardModule = {
     const lastY = prev?.y ?? ht.y;
     const bodyX = pos?.x ?? ht.x;
     const bodyY = pos?.y ?? ht.y;
-    const halfW = hz.param2 > 0 ? hz.param2 : 0.75;
-    const halfH = hz.param3 > 0 ? hz.param3 : 3;
+    // param2/param3 are authored half-extents. 0 means no box — do not `|| 0.75` / `|| 3`.
+    const halfW = hz.param2;
+    const halfH = hz.param3;
     const samples = [
       [pt.x, pt.y],
       [pprev?.x ?? pt.x, pprev?.y ?? pt.y],

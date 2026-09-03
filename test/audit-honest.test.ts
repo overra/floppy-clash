@@ -3,7 +3,9 @@ import { getLevel } from '../src/levels/catalog';
 import { woodsClearing } from '../src/levels/handauthored';
 import { diskSweepsPlayer } from '../src/sim/hazards/common';
 import { crusherOverlaps } from '../src/sim/hazards/crusher';
+import { lavaSweepsPlayer } from '../src/sim/hazards/lava';
 import { sawOverlaps } from '../src/sim/hazards/saw';
+import { weaponIndex } from '../src/sim/weapons/defs';
 import { nextMatchLevel } from '../src/sim/systems/reset';
 import {
   Dead,
@@ -17,6 +19,7 @@ import {
   RoundPhase,
   RoundState,
   Transform,
+  Weapon,
 } from '../src/sim/traits';
 import {
   freezeHazardKinematics,
@@ -857,6 +860,250 @@ describe('honest PLAN stand-ins (no pin/pred OR, no scoreboard shrink)', () => {
     sim.step([hold({}), hold({}), hold({}), hold({})]);
     expect(p.has(Dead)).toBe(false);
     expect(p.get(Health)?.hp ?? 1).toBeGreaterThan(0);
+  });
+
+  it('lavaSweepsPlayer hits a last→now pass whose endpoints miss the bed', () => {
+    // Endpoints sit just outside the y band (hy-1 .. hy+0.6). Current-pose gates miss this.
+    expect(lavaSweepsPlayer(16, 10, 16, 0.45, 16, 1.6, 16, 1.6, 8)).toBe(true);
+    expect(lavaSweepsPlayer(16, 10, 16, 10, 16, 1.6, 16, 1.6, 8)).toBe(false);
+    expect(lavaSweepsPlayer(16, 10, 16, 0.45, 16, 1.6, 16, 1.6, 0)).toBe(false);
+  });
+
+  it('lava last-tick PrevTransform deals 35 after a live skip with velocity zeroed', () => {
+    const level = {
+      ...getLevel('test-lava'),
+      id: 'sweep-lava-prev',
+      objects: [
+        { type: 'solid' as const, x: 12, y: 1, w: 24, h: 2 },
+        { type: 'lava' as const, x: 16, y: 1.6, w: 8, h: 1.2, rate: 0 },
+      ],
+    };
+    const sim = makeSim({ level, seed: 166, settings: { playerCount: 1 } });
+    const p = playerOf(sim);
+    freezeHazardKinematics(sim, HazardKind.Lava);
+    // Start just under the band so neither endpoint stays in the current-pose volume.
+    place(sim, p, 16, 0.45);
+    sim.ctx.bodies.get(p)?.setLinearVelocity({ x: 0, y: 200 });
+    sim.ctx.holdHazards = true;
+    sim.step([hold({}), hold({}), hold({}), hold({})]);
+    sim.ctx.holdHazards = false;
+    const prev = p.get(PrevTransform);
+    const now = p.get(Transform);
+    expect(prev?.y ?? 2).toBeLessThan(0.6);
+    expect(now?.y ?? 0).toBeGreaterThan(2.2);
+    place(sim, p, 16, 10);
+    expect(p.get(PrevTransform)?.y ?? 2).toBeLessThan(0.6);
+    sim.ctx.bodies.get(p)?.setLinearVelocity({ x: 0, y: 0 });
+    const before = p.get(Health)?.hp ?? 100;
+    sim.step([hold({}), hold({}), hold({}), hold({})]);
+    expect(before - (p.get(Health)?.hp ?? 100)).toBe(35);
+  });
+
+  it('lava does not damage after the last-tick skip is collapsed onto the far pose', () => {
+    const level = {
+      ...getLevel('test-lava'),
+      id: 'sweep-lava-collapsed',
+      objects: [
+        { type: 'solid' as const, x: 12, y: 1, w: 24, h: 2 },
+        { type: 'lava' as const, x: 16, y: 1.6, w: 8, h: 1.2, rate: 0 },
+      ],
+    };
+    const sim = makeSim({ level, seed: 167, settings: { playerCount: 1 } });
+    const p = playerOf(sim);
+    freezeHazardKinematics(sim, HazardKind.Lava);
+    place(sim, p, 16, 0.45);
+    sim.ctx.bodies.get(p)?.setLinearVelocity({ x: 0, y: 200 });
+    sim.ctx.holdHazards = true;
+    sim.step([hold({}), hold({}), hold({}), hold({})]);
+    sim.ctx.holdHazards = false;
+    place(sim, p, 16, 10);
+    p.set(PrevTransform, { x: 16, y: 10, angle: 0 });
+    sim.ctx.bodies.get(p)?.setLinearVelocity({ x: 0, y: 0 });
+    const before = p.get(Health)?.hp ?? 100;
+    sim.step([hold({}), hold({}), hold({}), hold({})]);
+    expect(p.get(Health)?.hp ?? 0).toBe(before);
+  });
+
+  it('a conveyor with param0 = 0 does not carry even when standing on the body', () => {
+    const sim = makeSim({
+      level: getLevel('test-conveyor'),
+      seed: 168,
+      settings: { playerCount: 1 },
+    });
+    const p = playerOf(sim);
+    const belt = getLevel('test-conveyor').objects.find((o) => o.type === 'conveyor');
+    sim.ecs.query(Hazard).updateEach(([hz]) => {
+      if (hz.kind === HazardKind.Conveyor) hz.param0 = 0;
+    });
+    sim.ctx.bodies.get(p)?.setPosition({ x: belt?.x ?? 16, y: (belt?.y ?? 2.2) + 1.1 });
+    for (let i = 0; i < 6; i++) sim.step([hold({}), hold({}), hold({}), hold({})]);
+    const x0 = p.get(Transform)?.x ?? 0;
+    for (let i = 0; i < 16; i++) sim.step([hold({}), hold({}), hold({}), hold({})]);
+    // A `|| 3` width would still apply belt speed at the body center.
+    expect(Math.abs((p.get(Transform)?.x ?? 0) - x0)).toBeLessThan(0.25);
+  });
+
+  it('a conveyor with omitted w still carries at the default width of 2', () => {
+    const sim = makeSim({
+      level: {
+        ...getLevel('test-conveyor'),
+        id: 'conveyor-omitted-w',
+        objects: [
+          { type: 'solid' as const, x: 12, y: 1, w: 24, h: 2 },
+          { type: 'conveyor' as const, x: 16, y: 2.2, speed: 4 },
+        ],
+      },
+      seed: 169,
+      settings: { playerCount: 1 },
+    });
+    const p = playerOf(sim);
+    sim.ctx.bodies.get(p)?.setPosition({ x: 16, y: 3.3 });
+    const xs: number[] = [];
+    for (let i = 0; i < 40; i++) {
+      sim.step([hold({}), hold({}), hold({}), hold({})]);
+      xs.push(p.get(Transform)?.x ?? 0);
+    }
+    expect(Math.max(...xs) - Math.min(...xs)).toBeGreaterThan(0.2);
+  });
+
+  it('a bounce pad with param0 = 0 does not launch even when standing on the body', () => {
+    const sim = makeSim({
+      level: getLevel('test-bounce'),
+      seed: 170,
+      settings: { playerCount: 1 },
+    });
+    const p = playerOf(sim);
+    const pad = getLevel('test-bounce').objects.find((o) => o.type === 'bounce');
+    sim.ecs.query(Hazard).updateEach(([hz]) => {
+      if (hz.kind === HazardKind.Bounce) hz.param0 = 0;
+    });
+    sim.ctx.bodies.get(p)?.setPosition({ x: pad?.x ?? 13, y: (pad?.y ?? 2.3) + 0.9 });
+    let launched = false;
+    for (let i = 0; i < 20; i++) {
+      sim.step([hold({}), hold({}), hold({}), hold({})]);
+      if ((sim.ctx.bodies.get(p)?.getLinearVelocity().y ?? 0) > 4) launched = true;
+    }
+    expect(launched).toBe(false);
+  });
+
+  it('a bounce pad with omitted w still launches at the default width of 2', () => {
+    const sim = makeSim({
+      level: {
+        ...getLevel('test-bounce'),
+        id: 'bounce-omitted-w',
+        objects: [
+          { type: 'solid' as const, x: 12, y: 1, w: 24, h: 2 },
+          { type: 'bounce' as const, x: 13, y: 2.3, speed: 16 },
+        ],
+      },
+      seed: 171,
+      settings: { playerCount: 1 },
+    });
+    const p = playerOf(sim);
+    sim.ctx.bodies.get(p)?.setPosition({ x: 13, y: 3.2 });
+    let launched = false;
+    for (let i = 0; i < 20; i++) {
+      sim.step([hold({}), hold({}), hold({}), hold({})]);
+      if ((sim.ctx.bodies.get(p)?.getLinearVelocity().y ?? 0) > 4) launched = true;
+    }
+    expect(launched).toBe(true);
+  });
+
+  it('a collapsing platform with param0 = 0 does not start falling under a standing player', () => {
+    const sim = makeSim({
+      level: {
+        ...getLevel('test-platform.collapsing'),
+        id: 'collapse-zero-w',
+        objects: [
+          { type: 'solid' as const, x: 12, y: 1, w: 24, h: 2 },
+          { type: 'platform.collapsing' as const, x: 12, y: 5, w: 4, h: 0.5, delay: 0 },
+        ],
+      },
+      seed: 172,
+      settings: { playerCount: 1 },
+    });
+    const p = playerOf(sim);
+    sim.ecs.query(Hazard).updateEach(([hz]) => {
+      if (hz.kind === HazardKind.Collapsing) hz.param0 = 0;
+    });
+    place(sim, p, 12, 6.15);
+    for (let i = 0; i < 8; i++) sim.step([hold({}), hold({}), hold({}), hold({})]);
+    let armed = 0;
+    sim.ecs.query(Hazard).updateEach(([hz]) => {
+      if (hz.kind === HazardKind.Collapsing) armed = hz.armed;
+    });
+    expect(armed).toBe(1);
+  });
+
+  it('a spikeball with param0 = 0 does not kill at the substituted 0.4 radius', () => {
+    const sim = makeSim({
+      level: getLevel('test-spikeball'),
+      seed: 173,
+      settings: { playerCount: 1 },
+    });
+    const p = playerOf(sim);
+    const ball = { x: 12, y: 6 };
+    sim.ecs.query(Hazard, Transform).updateEach(([hz, t]) => {
+      if (hz.kind !== HazardKind.Spikeball) return;
+      hz.param0 = 0;
+      ball.x = t.x;
+      ball.y = t.y;
+    });
+    freezeHazardKinematics(sim, HazardKind.Spikeball);
+    pin(sim, p, ball.x + 0.55, ball.y);
+    sim.step([hold({}), hold({}), hold({}), hold({})]);
+    expect(p.has(Dead)).toBe(false);
+    expect(p.get(Health)?.hp ?? 1).toBeGreaterThan(0);
+  });
+
+  it('a crusher with zero half-extents does not kill at the substituted 0.75 box', () => {
+    const sim = makeSim({
+      level: getLevel('test-crusher'),
+      seed: 174,
+      settings: { playerCount: 1 },
+    });
+    const p = playerOf(sim);
+    const box = { x: 10, y: 5 };
+    sim.ecs.query(Hazard, Transform).updateEach(([hz, t]) => {
+      if (hz.kind !== HazardKind.Crusher) return;
+      hz.param2 = 0;
+      hz.param3 = 0;
+      box.x = t.x;
+      box.y = t.y;
+    });
+    freezeHazardKinematics(sim, HazardKind.Crusher);
+    pin(sim, p, box.x + 1.0, box.y);
+    sim.step([hold({}), hold({}), hold({}), hold({})]);
+    expect(p.has(Dead)).toBe(false);
+    expect(p.get(Health)?.hp ?? 1).toBeGreaterThan(0);
+  });
+
+  it('trigger.drop with weapon fists keeps index 0 (does not || 1 into pistol)', () => {
+    const sim = makeSim({
+      level: {
+        ...getLevel('test-trigger.drop'),
+        id: 'trigger-fists',
+        objects: [
+          { type: 'solid' as const, x: 12, y: 1, w: 24, h: 2 },
+          { type: 'trigger.drop' as const, x: 16, y: 12, atTick: 0, weapon: 'fists' },
+        ],
+      },
+      seed: 175,
+      settings: { playerCount: 1 },
+    });
+    let kind = '';
+    for (let i = 0; i < 4; i++) {
+      const ev = sim.step([hold({}), hold({}), hold({}), hold({})]);
+      const spawn = ev.find((e) => e.type === 'spawn' && String(e.kind).startsWith('weapon:'));
+      if (spawn && spawn.type === 'spawn') kind = spawn.kind;
+    }
+    expect(kind).toBe('weapon:fists');
+    let defId = -1;
+    sim.ecs.query(Weapon).updateEach(([w]) => {
+      defId = w.defId;
+    });
+    expect(defId).toBe(weaponIndex('fists'));
+    expect(defId).toBe(0);
   });
 
   it('createSimWorld without boxes does not dump M0 crates onto a match arena', () => {

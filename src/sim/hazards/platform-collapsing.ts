@@ -12,7 +12,8 @@ export const collapsingPlatform: HazardModule = {
     if (hz.armed !== 1) return;
     let stood = false;
     world.query(Player, Transform, Not(Dead)).updateEach(([_p, pt]) => {
-      if (Math.abs(pt.x - tr.x) < (hz.param0 || 2) && pt.y > tr.y && pt.y < tr.y + 1.4) stood = true;
+      // param0 is authored width (default 3). 0 means no stand reach — do not `|| 2`.
+      if (Math.abs(pt.x - tr.x) < hz.param0 && pt.y > tr.y && pt.y < tr.y + 1.4) stood = true;
     });
     if (stood) hz.param1 += 1;
     const body = getContext(world).bodies.get(entity);

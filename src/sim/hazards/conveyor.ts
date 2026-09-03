@@ -13,7 +13,8 @@ export const conveyor: HazardModule = {
     if (!pt || !ctrl.grounded) return;
     const dx = Math.abs(pt.x - ht.x);
     const dy = Math.abs(pt.y - ht.y);
-    if (dx < (hz.param0 || 3) && dy < 1.1 && !ctrl.ducking) {
+    // param0 is authored width (default 2). 0 means no belt reach — do not `|| 3`.
+    if (dx < hz.param0 && dy < 1.1 && !ctrl.ducking) {
       const body = getContext(world).bodies.get(player);
       if (body) {
         const v = body.getLinearVelocity();

@@ -17,7 +17,8 @@ function iceUnderfoot(world: World, x: number, y: number): boolean {
   let ice = false;
   world.query(Hazard, Transform).updateEach(([hz, t]) => {
     if (hz.kind !== HazardKind.Ice) return;
-    const hw = Math.max(3, hz.param0 / 2 || 3);
+    // param0 is authored ice width. 0 means no look-ahead — do not `|| 3`.
+    const hw = hz.param0 / 2;
     if (Math.abs(t.x - x) < hw + 0.5 && Math.abs(t.y - y) < 2.8) ice = true;
   });
   return ice;

@@ -82,6 +82,8 @@ export type WorldSnapshot = {
   nextDrop?: number;
   looseCount?: number;
   stepScale?: number;
+  /** Host Appendix A window. Guest scoreboard must use this, not a local default 90. */
+  scoreboardTicks?: number;
   entities: TraitSnapshot[];
   /** false = Changed(Transform) + Added/Removed NetId (PLAN 4.13). Late join uses full. */
   full?: boolean;
@@ -282,6 +284,7 @@ export function serializeWorld(world: World, opts?: { skipOwnedByCache?: boolean
     nextDrop: drop?.nextDrop,
     looseCount: drop?.looseCount,
     stepScale: clock?.stepScale,
+    scoreboardTicks: ctx.tuning.scoreboardTicks,
     entities,
     full: true,
   };
@@ -362,6 +365,7 @@ export function mergeSnapshot(base: WorldSnapshot, delta: WorldSnapshot): WorldS
   return {
     ...delta,
     full: true,
+    scoreboardTicks: delta.scoreboardTicks ?? base.scoreboardTicks,
     entities: [...byNet.values()].sort((a, b) => a.netId - b.netId),
     added: delta.added,
     removed: delta.removed,
@@ -748,6 +752,9 @@ function applyWorldTraits(world: World, snap: WorldSnapshot): void {
       tick: snap.tick,
       stepScale: snap.stepScale ?? clock.stepScale,
     });
+  }
+  if (snap.scoreboardTicks != null) {
+    getContext(world).tuning.scoreboardTicks = snap.scoreboardTicks;
   }
 }
 

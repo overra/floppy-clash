@@ -8,6 +8,7 @@ const FLAG_LEVEL = 2;
 const FLAG_ADDED = 4;
 const FLAG_REMOVED = 8;
 const FLAG_WINS = 16;
+const FLAG_SCOREBOARD = 32;
 
 const TRAIT = {
   Transform: 0,
@@ -466,6 +467,7 @@ export function encodeSnapshotBinary(snap: WorldSnapshot): Uint8Array {
   if (snap.added?.length) flags |= FLAG_ADDED;
   if (snap.removed?.length) flags |= FLAG_REMOVED;
   if (snap.wins) flags |= FLAG_WINS;
+  if (snap.scoreboardTicks != null) flags |= FLAG_SCOREBOARD;
   w.u8w(SNAPSHOT_WIRE_VERSION);
   w.u8w(flags);
   w.u32(snap.tick >>> 0);
@@ -515,6 +517,10 @@ export function encodeSnapshotBinary(snap: WorldSnapshot): Uint8Array {
     const removed = snap.removed ?? [];
     w.u16(removed.length);
     for (const id of removed) w.u16(id);
+  }
+  // Trailing optional field: old v2 decoders ignore leftover bytes.
+  if (flags & FLAG_SCOREBOARD) {
+    w.u16(Math.max(0, Math.min(0xffff, Math.round(snap.scoreboardTicks ?? 90))));
   }
   return w.bytes();
 }
@@ -572,6 +578,7 @@ export function decodeSnapshotBinary(buf: Uint8Array): WorldSnapshot {
     removed = [];
     for (let i = 0; i < c; i++) removed.push(r.u16());
   }
+  const scoreboardTicks = flags & FLAG_SCOREBOARD ? r.u16() : undefined;
   return {
     tick,
     rng,
@@ -593,6 +600,7 @@ export function decodeSnapshotBinary(buf: Uint8Array): WorldSnapshot {
     nextDrop,
     looseCount,
     stepScale,
+    scoreboardTicks,
     entities,
     full: (flags & FLAG_FULL) !== 0,
     added,

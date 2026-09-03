@@ -63,6 +63,18 @@ describe('M8 netcode', () => {
     expect(shaped?.traits.BodyShape).toBeTruthy();
     const decodedShape = decoded.entities.find((e) => e.netId === shaped?.netId)?.traits.BodyShape;
     expect(Number(decodedShape?.hx ?? decodedShape?.radius)).toBeGreaterThan(0);
+    expect(decoded.scoreboardTicks).toBe(90);
+  });
+
+  it('binary snapshot carries a non-default host scoreboardTicks', () => {
+    const host = makeSim({ settings: { playerCount: 2 } });
+    host.ctx.tuning.scoreboardTicks = 120;
+    const snap = host.snapshot();
+    expect(snap.scoreboardTicks).toBe(120);
+    const decoded = decodeSnapshotBinary(encodeSnapshotBinary(snap));
+    expect(decoded.scoreboardTicks).toBe(120);
+    const view = createClientView(decoded);
+    expect(view.sim.ctx.tuning.scoreboardTicks).toBe(120);
   });
 
   it('encodeWire puts snapshots on a binary payload, not JSON', () => {

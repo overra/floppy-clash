@@ -13,7 +13,8 @@ export const bounce: HazardModule = {
     if (!pt || !ctrl.grounded) return;
     const dx = Math.abs(pt.x - ht.x);
     const dy = Math.abs(pt.y - ht.y);
-    if (dx < (hz.param0 || 1.2) && dy < 1) {
+    // param0 is authored width (default 2). 0 means no pad reach — do not `|| 1.2`.
+    if (dx < hz.param0 && dy < 1) {
       const body = getContext(world).bodies.get(player);
       if (body && hz.param1 !== 0) {
         const v = body.getLinearVelocity();

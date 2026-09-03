@@ -49,7 +49,8 @@ export const spikeball: HazardModule = {
     const lastY = prev?.y ?? ht.y;
     const bodyX = pos?.x ?? ht.x;
     const bodyY = pos?.y ?? ht.y;
-    const reach = (hz.param0 || 0.4) + 0.35;
+    // param0 is authored radius (default 0.4). 0 means point + capsule pad — do not `|| 0.4`.
+    const reach = hz.param0 + 0.35;
     const samples = [
       [pt.x, pt.y],
       [pprev?.x ?? pt.x, pprev?.y ?? pt.y],

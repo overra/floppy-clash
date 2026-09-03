@@ -108,8 +108,9 @@ export const chain: HazardModule = {
     if (hz.param3 !== 1) return;
     const pt = player.get(Transform);
     if (!pt) return;
-    const halfW = (hz.param0 || 2.8) / 2 + 0.35;
-    const halfH = (hz.param1 || 0.4) / 2;
+    // param0/param1 are authored deck size (default 2.8×0.4). 0 means no reach.
+    const halfW = hz.param0 / 2 + 0.35;
+    const halfH = hz.param1 / 2;
     if (Math.abs(pt.x - ht.x) >= halfW) return;
     if (pt.y <= ht.y - 0.05 || pt.y >= ht.y + halfH + 1.55) return;
     ctrl.grounded = true;
