@@ -1,13 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import { woodsClearing } from '../src/levels/handauthored';
 import { spawnWeapon } from '../src/sim/systems/weapons';
-import { Combat, Dead, Health, Held, HeldBy, Loose, Player, Transform, Weapon } from '../src/sim/traits';
+import { Combat, Dead, Health, Held, HeldBy, Loose, Player, PrevTransform, Transform, Weapon } from '../src/sim/traits';
 import { weaponIndex } from '../src/sim/weapons/defs';
 import { damageMultiplier, takeDamage } from '../src/sim/player/health';
 import { applyExplosion } from '../src/sim/physics/queries';
+import { playerCrossesBeam } from '../src/sim/hazards/laser';
 import type { FixtureUserData } from '../src/sim/physics/categories';
 import type { Entity } from 'koota';
-import { hold, makeSim, playerOf } from './helpers';
+import { hold, makeSim, pin, playerOf } from './helpers';
 
 describe('M3 weapons', () => {
   it('picks up a loose weapon and refills ammo', () => {
@@ -169,6 +170,28 @@ describe('M3 weapons', () => {
     }
     expect(bounce).toBe(true);
     expect(bb.get(Health)?.hp ?? 100).toBe(hp0);
+  });
+
+  it('does not tunnel a player through an on lava-stream in one tick (PLAN M6 sweep)', () => {
+    expect(playerCrossesBeam(14, 1, 14, 8, 10, 4, 50, 4)).toBeTruthy();
+    expect(playerCrossesBeam(14, 1, 14, 2, 10, 4, 50, 4)).toBeNull();
+
+    const sim = makeSim({ level: woodsClearing, seed: 21, settings: { playerCount: 2 } });
+    const a = playerOf(sim, 0);
+    const b = playerOf(sim, 1);
+    const gun = spawnWeapon(sim.ecs, 'lava-stream', 10, 5);
+    gun.add(Held(), HeldBy(a));
+    gun.remove(Loose);
+    pin(sim, a, 10, 4);
+    pin(sim, b, 14, 1);
+    b.set(PrevTransform, { x: 14, y: 1, angle: 0 });
+    sim.step([hold({ attack: true, aimX: 1, aimY: 0 }), hold({}), hold({}), hold({})]);
+    expect(b.has(Dead) || (b.get(Health)?.hp ?? 100) < 100).toBe(false);
+    pin(sim, a, 10, 4);
+    pin(sim, b, 14, 8);
+    b.set(PrevTransform, { x: 14, y: 1, angle: 0 });
+    sim.step([hold({ attack: true, aimX: 1, aimY: 0 }), hold({}), hold({}), hold({})]);
+    expect(b.has(Dead) || (b.get(Health)?.hp ?? 100) < 100).toBe(true);
   });
 });
 

@@ -28,6 +28,7 @@ import { disarm } from '../player/combat';
 import { weaponByIndex } from './defs';
 import { explodeDamageAt, rollIfRanged } from './mapping';
 import type { FixtureUserData } from '../physics/categories';
+import { playerCrossesBeam } from '../hazards/laser';
 
 const bullets = createQuery(Projectile);
 const heldWeapons = createQuery(Weapon);
@@ -133,6 +134,33 @@ function applyStatus(target: Entity, status: string, ticks: number): void {
 function statusTicksFor(world: World, status: string, fallback: number): number {
   if (status === 'burn') return getContext(world).tuning.burnDurationTicks;
   return fallback;
+}
+
+function applyBeamHit(
+  world: World,
+  target: Entity,
+  owner: Entity | undefined,
+  def: ReturnType<typeof weaponByIndex>,
+  damage: number,
+  aimX: number,
+  aimY: number,
+  x: number,
+  y: number,
+): void {
+  const block = shieldBlocks(world, target, x, y, aimX, aimY);
+  if (block !== 'none') {
+    emit(world, { type: 'block', player: target, reflected: block === 'reflect' });
+    return;
+  }
+  takeDamage(world, target, damage, 'body', owner ?? -1, x, y);
+  if (def.projectile.status !== 'none') {
+    applyStatus(target, def.projectile.status, statusTicksFor(world, def.projectile.status, 90));
+  }
+  const tb = getContext(world).bodies.get(target);
+  if (tb && def.knockback) {
+    const v = tb.getLinearVelocity();
+    tb.setLinearVelocity(new Vec2(v.x + aimX * def.knockback, v.y + aimY * def.knockback));
+  }
 }
 
 function bounceOffShield(
@@ -269,24 +297,49 @@ export function projectiles(world: World): void {
       const aim = owner?.get(Aim);
       const ot = owner?.get(Transform);
       if (active && aim && ot) {
-        const hit = raycastClosest(world, ot.x, ot.y, ot.x + aim.x * 40, ot.y + aim.y * 40, (h) => h.entity === owner);
-        if (hit && world.has(hit.entity as Entity) && (hit.entity as Entity).has(Player)) {
-          const target = hit.entity as Entity;
-          const block = shieldBlocks(world, target, hit.x, hit.y, aim.x, aim.y);
-          if (block !== 'none') {
-            emit(world, { type: 'block', player: target, reflected: block === 'reflect' });
-          } else {
-            takeDamage(world, target, proj.damage, 'body', owner ?? -1, hit.x, hit.y);
-            if (def.projectile.status !== 'none') {
-              applyStatus(target, def.projectile.status, statusTicksFor(world, def.projectile.status, 90));
-            }
-            const tb = ctx.bodies.get(target);
-            if (tb && def.knockback) {
-              const v = tb.getLinearVelocity();
-              tb.setLinearVelocity(new Vec2(v.x + aim.x * def.knockback, v.y + aim.y * def.knockback));
-            }
-          }
+        const x2 = ot.x + aim.x * 40;
+        const y2 = ot.y + aim.y * 40;
+        const ignore = (h: { entity: number }) => h.entity === owner;
+        const hit = raycastClosest(world, ot.x, ot.y, x2, y2, ignore);
+        const hitPlayer =
+          hit && world.has(hit.entity as Entity) && (hit.entity as Entity).has(Player)
+            ? (hit.entity as Entity)
+            : undefined;
+        if (hitPlayer && !hitPlayer.has(Dead)) {
+          applyBeamHit(world, hitPlayer, owner, def, proj.damage, aim.x, aim.y, hit!.x, hit!.y);
         }
+        // PLAN M6 / 4.9: Appendix D keeps the on-tick ray; M4-style player-path
+        // sweep so a 60 Hz skip cannot tunnel through an active beam.
+        world.query(Player, Transform).updateEach(([_p, pt], player) => {
+          if (player === owner || player === hitPlayer || player.has(Dead)) return;
+          const prev = player.get(PrevTransform);
+          const pb = ctx.bodies.get(player);
+          const pos = pb?.getPosition();
+          const vel = pb?.getLinearVelocity();
+          const lastX = prev?.x ?? pt.x;
+          const lastY = prev?.y ?? pt.y;
+          const bodyX = pos?.x ?? pt.x;
+          const bodyY = pos?.y ?? pt.y;
+          const predX = bodyX + (vel?.x ?? 0) * dt;
+          const predY = bodyY + (vel?.y ?? 0) * dt;
+          const paths = [
+            [lastX, lastY, pt.x, pt.y],
+            [pt.x, pt.y, bodyX, bodyY],
+            [bodyX, bodyY, predX, predY],
+          ] as const;
+          for (const [ax, ay, bx, by] of paths) {
+            const cross = playerCrossesBeam(ax, ay, bx, by, ot.x, ot.y, x2, y2);
+            if (!cross) continue;
+            const block = raycastClosest(world, ot.x, ot.y, cross.x, cross.y, ignore);
+            if (block && block.kind !== 'player') {
+              const toBlock = Math.hypot(block.x - ot.x, block.y - ot.y);
+              const toCross = Math.hypot(cross.x - ot.x, cross.y - ot.y);
+              if (toBlock < toCross - 0.05) continue;
+            }
+            applyBeamHit(world, player, owner, def, proj.damage, aim.x, aim.y, cross.x, cross.y);
+            return;
+          }
+        });
       }
       if (proj.fuse <= 0) ctx.pendingDestroy.push(entity);
       return;

@@ -21,7 +21,7 @@ import {
   Transform,
   Weapon,
 } from '../src/sim/traits';
-import { hold, makeSim, playerOf, pos } from './helpers';
+import { hold, makeSim, pin, playerOf, pos } from './helpers';
 
 describe('client interpolation view', () => {
   it('restoreWorld drives a client view from late-join snapshots', () => {
@@ -189,8 +189,16 @@ describe('client interpolation view', () => {
 
   it('rebuilds the client world when the host rotates levels', () => {
     const host = makeSim({
+      level: woodsClearing,
       seed: 88,
-      settings: { playerCount: 2, rotation: 'ordered', firstTo: 0 },
+      settings: {
+        playerCount: 2,
+        rotation: 'ordered',
+        firstTo: 0,
+        maxHp: 1,
+        enabledWeapons: [],
+        enabledLevels: ['woods-01', 'woods-02'],
+      },
     });
     host.ctx.tuning.countdownTicks = 2;
     host.ctx.tuning.slowmoTicks = 1;
@@ -198,15 +206,25 @@ describe('client interpolation view', () => {
     const first = host.snapshot();
     const view = createClientView(first);
     expect(view.sim.ctx.level.id).toBe(first.levelId);
-    for (let i = 0; i < 500; i++) {
-      const phase = host.ecs.get(RoundState)?.phase;
-      if (phase === RoundPhase.Fighting) {
+    let kills = 0;
+    for (let i = 0; i < 800; i++) {
+      const fighting = host.ecs.get(RoundState)?.phase === RoundPhase.Fighting;
+      if (fighting) {
+        const a = playerOf(host, 0);
         const victim = playerOf(host, 1);
-        if ((victim.get(Health)?.hp ?? 0) > 0) victim.set(Health, { hp: 0, maxHp: 100 });
+        pin(host, a, 10, 4);
+        if ((victim.get(Health)?.hp ?? 0) > 0) pin(host, victim, 10.55, 4);
       }
-      host.step([hold({}), hold({}), hold({}), hold({})]);
+      const ev = host.step([
+        hold({ moveX: 0.2, attack: fighting && i % 8 === 0, aimX: 1, aimY: 0 }),
+        hold({}),
+        hold({}),
+        hold({}),
+      ]);
+      kills += ev.filter((e) => e.type === 'kill').length;
       if (host.ctx.level.id !== first.levelId) break;
     }
+    expect(kills).toBeGreaterThan(0);
     expect(host.ctx.level.id).not.toBe(first.levelId);
     const snap = host.snapshot();
     expect(snap.levelId).toBe(host.ctx.level.id);
