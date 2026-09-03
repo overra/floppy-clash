@@ -711,6 +711,130 @@ describe('honest PLAN stand-ins (no pin/pred OR, no scoreboard shrink)', () => {
     expect(leftoverProps(sim)).toBe(0);
   });
 
+  it('a laser with onTicks = 0 never fires', () => {
+    const level = {
+      ...getLevel('test-laser'),
+      id: 'laser-zero-on',
+      objects: [
+        { type: 'solid' as const, x: 12, y: 1, w: 24, h: 2 },
+        { type: 'laser' as const, x: 2, y: 7, onTicks: 0, offTicks: 40, warningTicks: 0 },
+      ],
+    };
+    const sim = makeSim({ level, seed: 160, settings: { playerCount: 1 } });
+    const p = playerOf(sim);
+    place(sim, p, 8, 7);
+    for (let i = 0; i < 50; i++) sim.step([hold({}), hold({}), hold({}), hold({})]);
+    expect(p.has(Dead)).toBe(false);
+    expect(p.get(Health)?.hp ?? 1).toBeGreaterThan(0);
+  });
+
+  it('a disappearing platform with period = 0 stays solid', () => {
+    const sim = makeSim({
+      level: {
+        ...getLevel('test-platform.disappearing'),
+        id: 'disappear-frozen',
+        objects: [
+          { type: 'solid' as const, x: 12, y: 1, w: 24, h: 2 },
+          { type: 'platform.disappearing' as const, x: 12, y: 6, w: 4, h: 0.5, period: 0 },
+        ],
+      },
+      seed: 161,
+      settings: { playerCount: 1 },
+    });
+    for (let i = 0; i < 200; i++) sim.step([hold({}), hold({}), hold({}), hold({})]);
+    let active = false;
+    sim.ecs.query(Hazard).updateEach(([hz], e) => {
+      if (hz.kind !== HazardKind.Disappearing) return;
+      expect(hz.armed).toBe(1);
+      active = sim.ctx.bodies.get(e)?.isActive() ?? false;
+    });
+    expect(active).toBe(true);
+  });
+
+  it('a collapsing platform with delay = 0 falls on the first stand tick', () => {
+    const sim = makeSim({
+      level: {
+        ...getLevel('test-platform.collapsing'),
+        id: 'collapse-now',
+        objects: [
+          { type: 'solid' as const, x: 12, y: 1, w: 24, h: 2 },
+          { type: 'platform.collapsing' as const, x: 12, y: 5, w: 4, h: 0.5, delay: 0 },
+        ],
+      },
+      seed: 162,
+      settings: { playerCount: 1 },
+    });
+    const p = playerOf(sim);
+    const plat = { x: 12, y: 5 };
+    sim.ecs.query(Hazard, Transform).updateEach(([hz, t]) => {
+      if (hz.kind === HazardKind.Collapsing) {
+        plat.x = t.x;
+        plat.y = t.y;
+      }
+    });
+    place(sim, p, plat.x, plat.y + 1.15);
+    for (let i = 0; i < 8; i++) sim.step([hold({}), hold({}), hold({}), hold({})]);
+    let armed = 1;
+    sim.ecs.query(Hazard).updateEach(([hz]) => {
+      if (hz.kind === HazardKind.Collapsing) armed = hz.armed;
+    });
+    expect(armed).toBe(0);
+  });
+
+  it('a crusher with period = 0 does not oscillate even when speed is set', () => {
+    const sim = makeSim({
+      level: {
+        ...getLevel('test-crusher'),
+        id: 'crusher-period-zero',
+        objects: [
+          { type: 'solid' as const, x: 12, y: 1, w: 24, h: 2 },
+          { type: 'crusher' as const, x: 10, y: 5, w: 1.5, h: 2, period: 0, speed: 720 },
+        ],
+      },
+      seed: 163,
+      settings: { playerCount: 1 },
+    });
+    const x0 = { n: 10 };
+    sim.ecs.query(Hazard, Transform).updateEach(([hz, t]) => {
+      if (hz.kind === HazardKind.Crusher) x0.n = t.x;
+    });
+    for (let i = 0; i < 12; i++) sim.step([hold({}), hold({}), hold({}), hold({})]);
+    let x1 = x0.n;
+    sim.ecs.query(Hazard, Transform).updateEach(([hz, t]) => {
+      if (hz.kind === HazardKind.Crusher) x1 = t.x;
+    });
+    expect(Math.abs(x1 - x0.n)).toBeLessThan(0.02);
+  });
+
+  it('spikes last-tick PrevTransform kills after a live skip with velocity zeroed', () => {
+    const level = {
+      ...getLevel('test-spikes'),
+      id: 'sweep-spikes-prev',
+      objects: [
+        { type: 'solid' as const, x: 12, y: 1, w: 24, h: 2 },
+        { type: 'spikes' as const, x: 12, y: 6, w: 4, dir: 'up' as const },
+      ],
+    };
+    const sim = makeSim({ level, seed: 164, settings: { playerCount: 1 } });
+    const p = playerOf(sim);
+    // Planck clamps a tick to ~2 m; start just under the bed so the skip crosses it.
+    place(sim, p, 12, 4.8);
+    sim.ctx.bodies.get(p)?.setLinearVelocity({ x: 0, y: 200 });
+    sim.ctx.holdHazards = true;
+    sim.step([hold({}), hold({}), hold({}), hold({})]);
+    sim.ctx.holdHazards = false;
+    const prev = p.get(PrevTransform);
+    const now = p.get(Transform);
+    expect(prev?.y ?? 6).toBeLessThan(6);
+    expect(now?.y ?? 3).toBeGreaterThan(6);
+    place(sim, p, 12, 10);
+    expect(p.get(PrevTransform)?.y ?? 6).toBeLessThan(6);
+    sim.ctx.bodies.get(p)?.setLinearVelocity({ x: 0, y: 0 });
+    sim.step([hold({}), hold({}), hold({}), hold({})]);
+    expect(p.has(Dead)).toBe(true);
+    expect(p.get(Health)?.hp ?? 1).toBeLessThanOrEqual(0);
+  });
+
   it('createSimWorld without boxes does not dump M0 crates onto a match arena', () => {
     const sim = makeSim({
       level: woodsClearing,

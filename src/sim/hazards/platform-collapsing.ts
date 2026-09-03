@@ -16,7 +16,8 @@ export const collapsingPlatform: HazardModule = {
     });
     if (stood) hz.param1 += 1;
     const body = getContext(world).bodies.get(entity);
-    if (hz.param1 > (hz.param2 || 20) && body) {
+    // param2 is authored delay. 0 means collapse on the first stand tick.
+    if (hz.param1 > hz.param2 && body) {
       body.setType('dynamic');
       hz.armed = 0;
     }

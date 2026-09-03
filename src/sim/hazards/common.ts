@@ -35,7 +35,7 @@ export function paramsFromObject(obj: LevelObject): {
         param3: 0,
       };
     case 'lava':
-      return { param0: obj.rate ?? 0, param1: obj.w ?? 4, param2: obj.h ?? 1.2, param3: 0 };
+      return { param0: obj.rate ?? 0, param1: obj.w ?? 2, param2: obj.h ?? 1, param3: 0 };
     case 'laser':
       return {
         param0: obj.onTicks ?? 40,
@@ -44,9 +44,9 @@ export function paramsFromObject(obj: LevelObject): {
         param3: 14,
       };
     case 'ice':
-      return { param0: obj.w ?? 6, param1: 0, param2: 0, param3: 0 };
+      return { param0: obj.w ?? 2, param1: 0, param2: 0, param3: 0 };
     case 'conveyor':
-      return { param0: obj.w ?? 6, param1: obj.speed ?? 4, param2: 0, param3: 0 };
+      return { param0: obj.w ?? 2, param1: obj.speed ?? 4, param2: 0, param3: 0 };
     case 'bounce':
       return { param0: obj.w ?? 2, param1: obj.speed ?? 16, param2: 0, param3: 0 };
     case 'saw':
@@ -84,6 +84,9 @@ export function paramsFromObject(obj: LevelObject): {
       };
     case 'platform.momentum':
       return { param0: obj.w ?? 4, param1: obj.h ?? 0.6, param2: obj.x, param3: obj.y };
+    case 'crate':
+    case 'barrel.explosive':
+      return { param0: obj.w ?? 2, param1: obj.h ?? 1, param2: 0, param3: 0 };
     default:
       return {
         param0: obj.speed ?? obj.period ?? obj.w ?? 0,
@@ -295,9 +298,13 @@ export function nearKill(
   ht: TransformView,
   reach = 0.7,
 ): void {
-  const dx = Math.abs(pt.x - ht.x);
-  const dy = Math.abs(pt.y - ht.y);
-  if (dx < reach && dy < reach) kill(world, player, pt.x, pt.y);
+  const prev = player.get(PrevTransform);
+  const lastX = prev?.x ?? pt.x;
+  const lastY = prev?.y ?? pt.y;
+  // Static hazard vs the player's last→now capsule (PLAN M4 60 Hz no-tunnel).
+  if (diskSweepsPlayer(ht.x, ht.y, pt.x, pt.y, reach, lastX, lastY)) {
+    kill(world, player, pt.x, pt.y);
+  }
 }
 
 export function carryRider(

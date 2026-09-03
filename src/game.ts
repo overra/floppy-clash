@@ -1254,7 +1254,10 @@ export function createGame(root: HTMLElement): Game {
       matchRound: handle?.ecs.get(MatchState)?.round ?? 0,
       scoreboardTicksSeen:
         menus.netRole === 'client' && clientView ? clientView.scoreboardTicksSeen : scoreboardTicksSeen,
-      scoreboardWindow: handle?.ctx.tuning.scoreboardTicks ?? 0,
+      scoreboardWindow:
+        menus.netRole === 'client' && clientView
+          ? clientView.sim.ctx.tuning.scoreboardTicks
+          : (handle?.ctx.tuning.scoreboardTicks ?? 0),
       clientViewTick: clientView?.appliedTick ?? 0,
       clientAppliedX: clientView?.appliedX ?? 0,
       clientRestored: clientView?.restored ?? false,

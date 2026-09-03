@@ -146,17 +146,23 @@ export const laser: HazardModule = {
   },
   step(world, entity, hz, tr) {
     const ctx = getContext(world);
-    const on = hz.param0 || 40;
-    const off = hz.param1 || 50;
+    // param0/param1 are authored on/off ticks. 0 means that half of the cycle
+    // is empty — do not `|| 40` / `|| 50` or a frozen emitter keeps firing.
+    const on = hz.param0;
+    const off = hz.param1;
     const warn = hz.param2;
     const cycle = on + off;
+    if (cycle <= 0) {
+      hz.armed = 0;
+      return;
+    }
     const phase = ctx.tick % cycle;
     if (phase < warn) hz.armed = 2;
-    else if (phase < on) hz.armed = 1;
+    else if (on > 0 && phase < on) hz.armed = 1;
     else hz.armed = 0;
 
     if (hz.armed !== 1) return;
-    const reach = hz.param3 || 14;
+    const reach = hz.param3 > 0 ? hz.param3 : 14;
     const ang = tr.angle;
     const x2 = tr.x + Math.cos(ang) * reach;
     const y2 = tr.y + Math.sin(ang) * reach;

@@ -30,7 +30,9 @@ export const crusher: HazardModule = {
   create: (world, obj) => createKinematicBox(world, obj, HazardKind.Crusher),
   step(world, entity, hz) {
     const ctx = getContext(world);
-    const t = Math.sin(ctx.tick / (hz.param0 || 50));
+    // param0 is authored period. 0 means no oscillation — do not `|| 50`.
+    const period = hz.param0;
+    const t = period > 0 ? Math.sin(ctx.tick / period) : 0;
     const body = ctx.bodies.get(entity);
     // param1 is authored speed (default 4 in paramsFromObject). 0 means frozen —
     // do not `|| 4` or a last-tick freeze becomes a 4 m/s this-tick drive.
@@ -48,8 +50,8 @@ export const crusher: HazardModule = {
     const lastY = prev?.y ?? ht.y;
     const bodyX = pos?.x ?? ht.x;
     const bodyY = pos?.y ?? ht.y;
-    const halfW = hz.param2 || 0.75;
-    const halfH = hz.param3 || 3;
+    const halfW = hz.param2 > 0 ? hz.param2 : 0.75;
+    const halfH = hz.param3 > 0 ? hz.param3 : 3;
     const samples = [
       [pt.x, pt.y],
       [pprev?.x ?? pt.x, pprev?.y ?? pt.y],

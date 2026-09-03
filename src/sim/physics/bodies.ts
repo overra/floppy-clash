@@ -81,6 +81,30 @@ export function createBoxBody(
   return body;
 }
 
+/** Host fixture extents for late-join spawnMissing (PLAN 4.13). 0 is a legal size. */
+export function readBodyShape(body: Body): {
+  circle: number;
+  hx: number;
+  hy: number;
+  radius: number;
+} | null {
+  const fixture = body.getFixtureList();
+  if (!fixture) return null;
+  const shape = fixture.getShape();
+  if (shape instanceof Circle) {
+    return { circle: 1, hx: 0, hy: 0, radius: shape.getRadius() };
+  }
+  const verts = (shape as { m_vertices?: { x: number; y: number }[] }).m_vertices ?? [];
+  let hx = 0;
+  let hy = 0;
+  for (const v of verts) {
+    hx = Math.max(hx, Math.abs(v.x));
+    hy = Math.max(hy, Math.abs(v.y));
+  }
+  if (hx <= 0 && hy <= 0) return null;
+  return { circle: 0, hx, hy, radius: 0 };
+}
+
 export function createCircleBody(
   physics: PhysicsWorld,
   entity: Entity,

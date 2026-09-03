@@ -1,9 +1,9 @@
 import { createAdded, createChanged, createRemoved, type Entity, type World } from 'koota';
 import { fnv1a, hashToHex, quantize } from '../core/hash';
 import { isolateChainBody } from './hazards/chain';
-import { createLateJoinHazardBody, lateJoinBodySpec } from './hazards/lateJoin';
+import { applyBodyShapeToSpec, createLateJoinHazardBody, lateJoinBodySpec } from './hazards/lateJoin';
 import { attachLateJoinHazardJoints } from './hazards/lateJoinJoints';
-import { createBoxBody, createCircleBody, destroyBody, registerBody } from './physics/bodies';
+import { createBoxBody, createCircleBody, destroyBody, readBodyShape, registerBody } from './physics/bodies';
 import { getContext } from './context';
 import { spawnPlayer } from './level/loader';
 import { attachRagdollJoints, isRagdollRoot, ragdollPartSpec, RAGDOLL_JOINTS } from './player/ragdoll';
@@ -247,6 +247,11 @@ export function serializeWorld(world: World, opts?: { skipOwnedByCache?: boolean
         speed: path.speed,
         points: path.points.map((p) => `${p.x},${p.y}`).join(';'),
       };
+    }
+    const body = ctx.bodies.get(entity);
+    if (body) {
+      const shape = readBodyShape(body);
+      if (shape) snap.traits.BodyShape = shape;
     }
     entities.push(snap);
   });
@@ -919,11 +924,14 @@ function spawnMissing(
       param2: Number(hz.param2 ?? 0),
       param3: Number(hz.param3 ?? 0),
     };
-    const spec = lateJoinBodySpec(kind, params, {
-      isStatic: Boolean(rec.traits.Static),
-      chainDeck: kind === HazardKind.Chain && params.param3 === 1,
-      spikeStyle: kind === HazardKind.Spikeball ? params.param2 : 0,
-    });
+    const spec = applyBodyShapeToSpec(
+      lateJoinBodySpec(kind, params, {
+        isStatic: Boolean(rec.traits.Static),
+        chainDeck: kind === HazardKind.Chain && params.param3 === 1,
+        spikeStyle: kind === HazardKind.Spikeball ? params.param2 : 0,
+      }),
+      rec.traits.BodyShape,
+    );
     const dest = rec.traits.Destructible;
     const life = rec.traits.Lifetime;
     const boss = rec.traits.Boss;

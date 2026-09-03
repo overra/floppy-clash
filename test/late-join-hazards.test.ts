@@ -6,7 +6,7 @@ import { getLevel } from '../src/levels/catalog';
 import { DYNAMIC_APPENDIX_D_KINDS, lateJoinBodySpec } from '../src/sim/hazards/lateJoin';
 import { destroyBody } from '../src/sim/physics/bodies';
 import { restoreWorld, serializeWorld } from '../src/sim/snapshot';
-import { Destructible, Hazard, HazardKind, NetId, PhysBody, SpawnPoint, Static } from '../src/sim/traits';
+import { Destructible, Hazard, HazardKind, NetId, PhysBody, SpawnPoint, Static, Transform } from '../src/sim/traits';
 import { hold, makeSim } from './helpers';
 import type { SimHandle } from '../src/sim/world';
 import type { Body } from 'planck';
@@ -469,6 +469,181 @@ describe('spawnMissing restores host hazard density/type', () => {
       if (Math.abs(d - 1) < 0.01) boxed += 1;
     });
     expect(boxed).toBe(0);
+  });
+
+  it('saw spawnMissing keeps host radius (not the 0.45 fallback)', () => {
+    const level = {
+      ...getLevel('test-saw'),
+      id: 'saw-fat',
+      objects: [
+        { type: 'solid' as const, x: 12, y: 1, w: 24, h: 2 },
+        { type: 'saw' as const, x: 12, y: 5, r: 0.9 },
+      ],
+    };
+    const host = makeSim({ level, seed: 501, settings: { playerCount: 1 } });
+    const wanted: number[] = [];
+    host.ecs.query(Hazard, NetId).updateEach(([hz, n], e) => {
+      if (hz.kind !== HazardKind.Saw) return;
+      const fixture = host.ctx.bodies.get(e)?.getFixtureList();
+      expect(fixture?.getShape() instanceof Circle).toBe(true);
+      expect((fixture?.getShape() as Circle).getRadius()).toBeCloseTo(0.9, 5);
+      wanted.push(n.id);
+    });
+    expect(wanted.length).toBe(1);
+    const snap = serializeWorld(host.ecs);
+    const rec = snap.entities.find((e) => e.netId === wanted[0]);
+    expect(Number(rec?.traits.BodyShape?.radius)).toBeCloseTo(0.9, 2);
+    expect(Number(rec?.traits.BodyShape?.circle)).toBe(1);
+    const view = createClientView(snap, 120, level);
+    const kill: Entity[] = [];
+    view.sim.ecs.query(Hazard, NetId).updateEach(([_hz, n], e) => {
+      if (wanted.includes(n.id)) kill.push(e);
+    });
+    for (const e of kill) {
+      destroyBody(view.sim.ecs, e);
+      e.destroy();
+    }
+    restoreWorld(view.sim.ecs, snap);
+    view.sim.ecs.query(Hazard, NetId).updateEach(([hz, n], e) => {
+      if (hz.kind !== HazardKind.Saw || !wanted.includes(n.id)) return;
+      const r = (view.sim.ctx.bodies.get(e)?.getFixtureList()?.getShape() as Circle).getRadius();
+      expect(r).toBeCloseTo(0.9, 5);
+      expect(r).not.toBeCloseTo(0.45, 5);
+    });
+  });
+
+  it('crate / ice without authored w match host create extents (not || defaults)', () => {
+    const level = {
+      ...getLevel('test-crate'),
+      id: 'omit-w',
+      objects: [
+        { type: 'solid' as const, x: 16, y: 1, w: 32, h: 2 },
+        { type: 'crate' as const, x: 10, y: 3 },
+        { type: 'ice' as const, x: 18, y: 2.2 },
+      ],
+    };
+    const host = makeSim({ level, seed: 502, settings: { playerCount: 1 } });
+    const crate = { id: 0, hx: 0, hy: 0 };
+    const ice = { id: 0, hx: 0, hy: 0 };
+    host.ecs.query(Hazard, NetId).updateEach(([hz, n], e) => {
+      const ext = boxExtents(host, e);
+      if (hz.kind === HazardKind.Crate) Object.assign(crate, { id: n.id, ...ext });
+      if (hz.kind === HazardKind.Ice) Object.assign(ice, { id: n.id, ...ext });
+    });
+    expect(crate.hx).toBeCloseTo(1, 5);
+    expect(crate.hy).toBeCloseTo(0.5, 5);
+    expect(ice.hx).toBeCloseTo(1, 5);
+    const snap = serializeWorld(host.ecs);
+    const view = createClientView(snap, 120, level);
+    const kill: Entity[] = [];
+    view.sim.ecs.query(Hazard, NetId).updateEach(([_hz, n], e) => {
+      if (n.id === crate.id || n.id === ice.id) kill.push(e);
+    });
+    for (const e of kill) {
+      destroyBody(view.sim.ecs, e);
+      e.destroy();
+    }
+    restoreWorld(view.sim.ecs, snap);
+    view.sim.ecs.query(Hazard, NetId).updateEach(([hz, n], e) => {
+      const ext = boxExtents(view.sim, e);
+      if (n.id === crate.id) {
+        expect(ext.hx).toBeCloseTo(1, 5);
+        expect(ext.hy).toBeCloseTo(0.5, 5);
+        expect(ext.hx).not.toBeCloseTo(0.55, 5);
+      }
+      if (n.id === ice.id) {
+        expect(ext.hx).toBeCloseTo(1, 5);
+        expect(ext.hx).not.toBeCloseTo(3, 5);
+      }
+    });
+  });
+
+  it('spikeball hang at x=0 stays on the authored hang, not the swung pose', () => {
+    const level = {
+      ...getLevel('test-spikeball'),
+      id: 'hang-origin',
+      objects: [
+        { type: 'solid' as const, x: 16, y: 1, w: 32, h: 2 },
+        { type: 'spikeball' as const, x: 0, y: 4, r: 0.4 },
+      ],
+    };
+    const host = makeSim({ level, seed: 503, settings: { playerCount: 1 } });
+    step(host, 24);
+    let netId = 0;
+    let ballX = 0;
+    host.ecs.query(Hazard, NetId, Transform).updateEach(([hz, n, t]) => {
+      if (hz.kind !== HazardKind.Spikeball) return;
+      netId = n.id;
+      ballX = t.x;
+      expect(hz.param1).toBe(0);
+      expect(hz.param3).toBeCloseTo(6.4, 5);
+    });
+    expect(Math.abs(ballX)).toBeGreaterThan(0.15);
+    const snap = serializeWorld(host.ecs);
+    const view = createClientView(snap, 120, level);
+    const kill: Entity[] = [];
+    view.sim.ecs.query(Hazard, NetId).updateEach(([_hz, n], e) => {
+      if (n.id === netId) kill.push(e);
+    });
+    for (const e of kill) {
+      destroyBody(view.sim.ecs, e);
+      e.destroy();
+    }
+    restoreWorld(view.sim.ecs, snap);
+    let hangX = 99;
+    view.sim.ecs.query(Hazard, NetId).updateEach(([_hz, n], e) => {
+      if (n.id !== netId) return;
+      const edge = view.sim.ctx.bodies.get(e)?.getJointList();
+      const a = edge?.joint.getAnchorA();
+      hangX = a?.x ?? 99;
+    });
+    expect(Math.abs(hangX)).toBeLessThan(0.08);
+    expect(Math.abs(hangX - ballX)).toBeGreaterThan(0.1);
+  });
+
+  it('momentum platform at x=0 rebuilds the slider on the origin, not the live deck', () => {
+    const level = {
+      ...getLevel('test-platform.momentum'),
+      id: 'mom-origin',
+      objects: [
+        { type: 'solid' as const, x: 16, y: 1, w: 32, h: 2 },
+        { type: 'platform.momentum' as const, x: 0, y: 6, w: 4, h: 0.6 },
+      ],
+    };
+    const host = makeSim({ level, seed: 504, settings: { playerCount: 1 } });
+    step(host, 8);
+    let netId = 0;
+    host.ecs.query(Hazard, NetId).updateEach(([hz, n]) => {
+      if (hz.kind === HazardKind.Momentum) {
+        netId = n.id;
+        expect(hz.param2).toBe(0);
+      }
+    });
+    expect(netId).toBeGreaterThan(0);
+    const snap = serializeWorld(host.ecs);
+    const view = createClientView(snap, 120, level);
+    const kill: Entity[] = [];
+    view.sim.ecs.query(Hazard, NetId).updateEach(([_hz, n], e) => {
+      if (n.id === netId) kill.push(e);
+    });
+    for (const e of kill) {
+      destroyBody(view.sim.ecs, e);
+      e.destroy();
+    }
+    restoreWorld(view.sim.ecs, snap);
+    let joints = 0;
+    let anchorX = 99;
+    view.sim.ecs.query(Hazard, NetId).updateEach(([_hz, n], e) => {
+      if (n.id !== netId) return;
+      const body = view.sim.ctx.bodies.get(e);
+      joints = jointCount(body);
+      for (let edge = body?.getJointList(); edge; edge = edge.next) {
+        const a = edge.joint.getAnchorA();
+        if (Math.abs(a.x) < Math.abs(anchorX)) anchorX = a.x;
+      }
+    });
+    expect(joints).toBeGreaterThanOrEqual(1);
+    expect(Math.abs(anchorX)).toBeLessThan(0.08);
   });
 
   it('destructible / ice stay static with host friction after spawnMissing', () => {

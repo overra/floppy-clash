@@ -36,7 +36,10 @@ const TRAIT = {
   Loose: 23,
   Held: 24,
   HazardPath: 25,
+  BodyShape: 26,
 } as const;
+
+const LAST_TRAIT_ID = TRAIT.BodyShape;
 
 const TRAIT_NAME = Object.fromEntries(Object.entries(TRAIT).map(([k, v]) => [v, k])) as Record<
   number,
@@ -305,6 +308,12 @@ function writeTrait(w: Writer, name: string, rec: Record<string, number | boolea
       w.u8w(num(rec, 'bite'));
       w.i16q(num(rec, 'speed'));
       return;
+    case 'BodyShape':
+      w.u8w(flag(rec, 'circle') ? 1 : 0);
+      w.i16q(num(rec, 'hx'));
+      w.i16q(num(rec, 'hy'));
+      w.i16q(num(rec, 'radius'));
+      return;
     case 'HazardPath': {
       const points = String(rec.points ?? '')
         .split(';')
@@ -430,6 +439,8 @@ function readTrait(r: Reader, id: number): Record<string, number | boolean | str
     case TRAIT.Loose:
     case TRAIT.Held:
       return { on: 1 };
+    case TRAIT.BodyShape:
+      return { circle: r.u8r(), hx: r.i16q(), hy: r.i16q(), radius: r.i16q() };
     case TRAIT.HazardPath: {
       const index = r.u8r();
       const mode = r.u8r();
@@ -489,7 +500,7 @@ export function encodeSnapshotBinary(snap: WorldSnapshot): Uint8Array {
     }
     w.u16(e.netId);
     w.u32(mask >>> 0);
-    for (let id = 0; id <= TRAIT.HazardPath; id++) {
+    for (let id = 0; id <= LAST_TRAIT_ID; id++) {
       if ((mask & (1 << id)) === 0) continue;
       const name = TRAIT_NAME[id]!;
       writeTrait(w, name, e.traits[name] ?? {});
@@ -542,7 +553,7 @@ export function decodeSnapshotBinary(buf: Uint8Array): WorldSnapshot {
     const netId = r.u16();
     const mask = r.u32();
     const traits: TraitSnapshot['traits'] = {};
-    for (let id = 0; id <= TRAIT.HazardPath; id++) {
+    for (let id = 0; id <= LAST_TRAIT_ID; id++) {
       if ((mask & (1 << id)) === 0) continue;
       const name = TRAIT_NAME[id]!;
       traits[name] = readTrait(r, id);

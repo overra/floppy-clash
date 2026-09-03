@@ -329,6 +329,9 @@ describe('M8 snapshot', () => {
     );
     expect(snap.entities.some((e) => e.traits.Static && e.traits.Solid)).toBe(true);
     expect(snap.entities.some((e) => e.traits.Kinematic && e.traits.HazardPath)).toBe(true);
+    expect(snap.entities.some((e) => e.traits.BodyShape && Number(e.traits.BodyShape.hx) > 0)).toBe(
+      true,
+    );
 
     const view = createClientView(snap, 120, getLevel('test-platform.moving'));
     expect(playerOf(view.sim, 0).get(Combat)?.blockStartTick).toBe(42);

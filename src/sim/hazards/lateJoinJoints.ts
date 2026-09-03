@@ -56,8 +56,9 @@ function attachSpikeballHang(world: World, entity: Entity, netId: number, hz: { 
   const body = ctx.bodies.get(entity);
   const t = entity.get(Transform);
   if (!body || !t) return;
-  const hangX = hz.param1 || t.x;
-  const hangY = hz.param3 || t.y + 2.4;
+  // Host writes hang world point into param1/param3 (x=0 is a legal hang).
+  const hangX = hz.param1;
+  const hangY = hz.param3;
   const anchor = ctx.physics.createBody({ type: 'static', position: { x: hangX, y: hangY } });
   replaceExtras(world, netId, [anchor]);
   ctx.physics.createJoint(new RevoluteJoint({ collideConnected: false }, anchor, body, { x: hangX, y: hangY }));
@@ -68,8 +69,9 @@ function attachMomentumGraph(world: World, entity: Entity, netId: number, hz: { 
   const deck = ctx.bodies.get(entity);
   const t = entity.get(Transform);
   if (!deck || !t) return;
-  const ax = hz.param2 || t.x;
-  const ay = hz.param3 || t.y;
+  // Host writes the deck origin into param2/param3. 0 is a legal world x.
+  const ax = hz.param2;
+  const ay = hz.param3;
   const anchor = ctx.physics.createBody({ type: 'static', position: { x: ax, y: ay } });
   const slider = ctx.physics.createBody({
     type: 'dynamic',

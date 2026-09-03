@@ -59,6 +59,10 @@ describe('M8 netcode', () => {
     expect(decoded.full).toBe(true);
     expect(decoded.playerCount).toBe(2);
     expect(decoded.entities.length).toBe(snap.entities.length);
+    const shaped = snap.entities.find((e) => e.traits.BodyShape);
+    expect(shaped?.traits.BodyShape).toBeTruthy();
+    const decodedShape = decoded.entities.find((e) => e.netId === shaped?.netId)?.traits.BodyShape;
+    expect(Number(decodedShape?.hx ?? decodedShape?.radius)).toBeGreaterThan(0);
   });
 
   it('encodeWire puts snapshots on a binary payload, not JSON', () => {
