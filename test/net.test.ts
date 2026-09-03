@@ -189,7 +189,10 @@ describe('M8 netcode', () => {
       const dropped = rng.next() < 0.02;
       const delayed = q[Math.max(0, q.length - 1 - delay)] ?? raw;
       const ev = host.step(dropped ? (q[Math.max(0, q.length - 2 - delay)] ?? raw) : delayed);
-      kills += ev.filter((e) => e.type === 'kill').length;
+      const fists = ev.some((e) => e.type === 'shot' && e.weaponId === 'fists');
+      const tickKills = ev.filter((e) => e.type === 'kill').length;
+      if (tickKills > 0) expect(fists).toBe(true);
+      kills += tickKills;
       const levelChanged = host.ctx.level.id !== lastLevelId;
       if (levelChanged) lastLevelId = host.ctx.level.id;
       if (i % 3 === 0 || levelChanged) {

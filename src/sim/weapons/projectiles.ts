@@ -322,13 +322,15 @@ export function projectiles(world: World): void {
           const bodyY = pos?.y ?? pt.y;
           const predX = bodyX + (vel?.x ?? 0) * dt;
           const predY = bodyY + (vel?.y ?? 0) * dt;
+          const hw = ctx.tuning.radius + 0.05;
+          const hh = ctx.tuning.height * 0.5;
           const paths = [
             [lastX, lastY, pt.x, pt.y],
             [pt.x, pt.y, bodyX, bodyY],
             [bodyX, bodyY, predX, predY],
           ] as const;
           for (const [ax, ay, bx, by] of paths) {
-            const cross = playerCrossesBeam(ax, ay, bx, by, ot.x, ot.y, x2, y2);
+            const cross = playerCrossesBeam(ax, ay, bx, by, ot.x, ot.y, x2, y2, hw, hh);
             if (!cross) continue;
             const block = raycastClosest(world, ot.x, ot.y, cross.x, cross.y, ignore);
             if (block && block.kind !== 'player') {

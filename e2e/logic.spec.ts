@@ -45,6 +45,7 @@ test('boots, joins with keyboard, starts a local match vs bots', async ({ page }
     });
   });
   await page.goto('/');
+  await loadFlatArena(page);
   await expect(page.locator('text=Floppy Clash')).toBeVisible();
   await expect(page.locator('#brand-logo')).toBeVisible();
   await expect(page.locator('#brand-logo')).toHaveAttribute('alt', 'Floppy Clash');
@@ -72,8 +73,12 @@ test('boots, joins with keyboard, starts a local match vs bots', async ({ page }
   });
   expect(pixels).toBeGreaterThan(10);
   await page.waitForFunction(() => window.__floppy?.phase === 2, null, { timeout: 15_000 });
-  await page.evaluate(() => window.__floppy?.forceLastStand());
-  await expect(page.locator('[data-round-over]')).toBeVisible({ timeout: 15_000 });
+  await page.evaluate(() => window.__floppy?.armLiveFists());
+  await expect(page.locator('[data-round-over]')).toBeVisible({ timeout: 20_000 });
+  await expect
+    .poll(async () => page.evaluate(() => window.__floppy?.fistKills ?? 0), { timeout: 5_000 })
+    .toBeGreaterThan(0);
+  await page.evaluate(() => window.__floppy?.disarmLiveFists());
 });
 
 test('local play joins on first Space and readies on the second', async ({ page }) => {
@@ -333,6 +338,7 @@ test('Escape opens the pause overlay and Resume continues', async ({ page }) => 
 
 test('scoreboard overlay appears after last stand', async ({ page }) => {
   await page.goto('/');
+  await loadFlatArena(page);
   await page.getByRole('button', { name: 'Solo vs Bots' }).click();
   await page.keyboard.press('Enter');
   await page.waitForTimeout(800);
@@ -340,9 +346,13 @@ test('scoreboard overlay appears after last stand', async ({ page }) => {
     await page.getByRole('button', { name: 'Start' }).click();
   }
   await page.waitForFunction(() => window.__floppy?.phase === 2, null, { timeout: 15_000 });
-  await page.evaluate(() => window.__floppy?.forceLastStand());
-  await expect(page.locator('[data-round-over]')).toBeVisible({ timeout: 15_000 });
+  await page.evaluate(() => window.__floppy?.armLiveFists());
+  await expect(page.locator('[data-round-over]')).toBeVisible({ timeout: 20_000 });
   await expect(page.getByRole('heading', { name: 'Round over' })).toBeVisible();
+  await expect
+    .poll(async () => page.evaluate(() => window.__floppy?.fistKills ?? 0), { timeout: 5_000 })
+    .toBeGreaterThan(0);
+  await page.evaluate(() => window.__floppy?.disarmLiveFists());
 });
 
 test('per-pad remap persists in localStorage', async ({ page }) => {

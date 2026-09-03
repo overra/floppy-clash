@@ -178,6 +178,104 @@ describe('M4 hazards', () => {
     g.set(Transform, { x: 2, y: 3, angle: 0 });
     graze.step([hold({}), hold({}), hold({}), hold({})]);
     expect(g.has(Dead) || (g.get(Health)?.hp ?? 1) <= 0).toBe(true);
+
+    // Capsule graze: center stays 0.8 m under the line (point-radius 0.35 misses).
+    expect(playerCrossesBeam(8, 6.2, 12, 6.2, 2, 7, 16, 7, 0.35, 0.35)).toBeNull();
+    expect(playerCrossesBeam(8, 6.2, 12, 6.2, 2, 7, 16, 7)).toBeTruthy();
+    // Beam-end clip: center path never intersects; only the capsule at closest approach.
+    expect(playerCrossesBeam(16.2, 10, 16.2, 4, 2, 7, 16, 7, 0.35, 0.35)).toBeTruthy();
+    expect(playerCrossesBeam(17, 10, 17, 4, 2, 7, 16, 7)).toBeNull();
+    const cap = makeSim({ level, seed: 29, settings: { playerCount: 1 } });
+    const c = playerOf(cap);
+    pin(cap, c, 18, 6.2);
+    c.set(PrevTransform, { x: 18, y: 6.2, angle: 0 });
+    cap.step([hold({}), hold({}), hold({}), hold({})]);
+    expect(c.has(Dead) || (c.get(Health)?.hp ?? 1) <= 0).toBe(false);
+    c.set(PrevTransform, { x: 8, y: 6.2, angle: 0 });
+    cap.ctx.bodies.get(c)?.setPosition({ x: 18, y: 6.2 });
+    cap.ctx.bodies.get(c)?.setLinearVelocity({ x: 0, y: 0 });
+    c.set(Transform, { x: 18, y: 6.2, angle: 0 });
+    cap.step([hold({}), hold({}), hold({}), hold({})]);
+    expect(c.has(Dead) || (c.get(Health)?.hp ?? 1) <= 0).toBe(true);
+
+    const end = makeSim({ level, seed: 33, settings: { playerCount: 1 } });
+    const e = playerOf(end);
+    pin(end, e, 16.2, 10);
+    e.set(PrevTransform, { x: 16.2, y: 10, angle: 0 });
+    end.step([hold({}), hold({}), hold({}), hold({})]);
+    expect(e.has(Dead) || (e.get(Health)?.hp ?? 1) <= 0).toBe(false);
+    e.set(PrevTransform, { x: 16.2, y: 10, angle: 0 });
+    end.ctx.bodies.get(e)?.setPosition({ x: 16.2, y: 4 });
+    end.ctx.bodies.get(e)?.setLinearVelocity({ x: 0, y: 0 });
+    e.set(Transform, { x: 16.2, y: 4, angle: 0 });
+    end.step([hold({}), hold({}), hold({}), hold({})]);
+    expect(e.has(Dead) || (e.get(Health)?.hp ?? 1) <= 0).toBe(true);
+  });
+
+  it('holdHazards skips laser contact so a live-fist pin is not stolen', () => {
+    const level = {
+      ...getLevel('test-laser'),
+      id: 'hold-hazards-laser',
+      objects: [
+        { type: 'solid' as const, x: 12, y: 1, w: 24, h: 2 },
+        { type: 'laser' as const, x: 2, y: 7, onTicks: 80, offTicks: 1, warningTicks: 0 },
+      ],
+    };
+    const sim = makeSim({ level, seed: 32, settings: { playerCount: 1 } });
+    sim.ctx.holdHazards = true;
+    const p = playerOf(sim);
+    pin(sim, p, 8, 7);
+    p.set(PrevTransform, { x: 8, y: 7, angle: 0 });
+    sim.step([hold({}), hold({}), hold({}), hold({})]);
+    expect(p.has(Dead) || (p.get(Health)?.hp ?? 1) <= 0).toBe(false);
+  });
+
+  it('does not kill a player who skips behind a solid (laser occlusion)', () => {
+    const level = {
+      ...getLevel('test-laser'),
+      id: 'sweep-laser-wall',
+      objects: [
+        { type: 'solid' as const, x: 12, y: 1, w: 24, h: 2 },
+        { type: 'solid' as const, x: 10, y: 7, w: 1, h: 8 },
+        { type: 'laser' as const, x: 2, y: 7, onTicks: 80, offTicks: 1, warningTicks: 0 },
+      ],
+    };
+    const sim = makeSim({ level, seed: 30, settings: { playerCount: 1 } });
+    const p = playerOf(sim);
+    pin(sim, p, 14, 3);
+    p.set(PrevTransform, { x: 14, y: 3, angle: 0 });
+    sim.step([hold({}), hold({}), hold({}), hold({})]);
+    expect(p.has(Dead) || (p.get(Health)?.hp ?? 1) <= 0).toBe(false);
+    p.set(PrevTransform, { x: 14, y: 3, angle: 0 });
+    sim.ctx.bodies.get(p)?.setPosition({ x: 14, y: 11 });
+    sim.ctx.bodies.get(p)?.setLinearVelocity({ x: 0, y: 0 });
+    p.set(Transform, { x: 14, y: 11, angle: 0 });
+    sim.step([hold({}), hold({}), hold({}), hold({})]);
+    expect(p.has(Dead) || (p.get(Health)?.hp ?? 1) <= 0).toBe(false);
+  });
+
+  it('does not tunnel a player through a vertical on laser (PLAN M4 sweep)', () => {
+    const level = {
+      ...getLevel('test-laser'),
+      id: 'sweep-laser-up',
+      objects: [
+        { type: 'solid' as const, x: 12, y: 1, w: 24, h: 2 },
+        { type: 'laser' as const, x: 10, y: 2, dir: 'up', onTicks: 80, offTicks: 1, warningTicks: 0 },
+      ],
+    };
+    expect(playerCrossesBeam(6, 8, 14, 8, 10, 2, 10, 16)).toBeTruthy();
+    const sim = makeSim({ level, seed: 31, settings: { playerCount: 1 } });
+    const p = playerOf(sim);
+    pin(sim, p, 6, 8);
+    p.set(PrevTransform, { x: 6, y: 8, angle: 0 });
+    sim.step([hold({}), hold({}), hold({}), hold({})]);
+    expect(p.has(Dead) || (p.get(Health)?.hp ?? 1) <= 0).toBe(false);
+    p.set(PrevTransform, { x: 6, y: 8, angle: 0 });
+    sim.ctx.bodies.get(p)?.setPosition({ x: 14, y: 8 });
+    sim.ctx.bodies.get(p)?.setLinearVelocity({ x: 0, y: 0 });
+    p.set(Transform, { x: 14, y: 8, angle: 0 });
+    sim.step([hold({}), hold({}), hold({}), hold({})]);
+    expect(p.has(Dead) || (p.get(Health)?.hp ?? 1) <= 0).toBe(true);
   });
 
   it('does not tunnel a player through a translating saw (PLAN M4 sweep)', () => {

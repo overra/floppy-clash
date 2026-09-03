@@ -44,7 +44,10 @@ describe('fists-only match', () => {
               hold({}),
             ];
       const ev = host.step(inputs);
-      kills += ev.filter((e) => e.type === 'kill').length;
+      const fists = ev.some((e) => e.type === 'shot' && e.weaponId === 'fists');
+      const tickKills = ev.filter((e) => e.type === 'kill').length;
+      if (tickKills > 0) expect(fists).toBe(true);
+      kills += tickKills;
       if ((host.ecs.get(MatchState)?.round ?? 0) >= 10) break;
     }
     expect(disconnected).toBe(true);

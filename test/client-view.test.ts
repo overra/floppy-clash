@@ -221,7 +221,10 @@ describe('client interpolation view', () => {
         hold({}),
         hold({}),
       ]);
-      kills += ev.filter((e) => e.type === 'kill').length;
+      const fists = ev.some((e) => e.type === 'shot' && e.weaponId === 'fists');
+      const tickKills = ev.filter((e) => e.type === 'kill').length;
+      if (tickKills > 0) expect(fists).toBe(true);
+      kills += tickKills;
       if (host.ctx.level.id !== first.levelId) break;
     }
     expect(kills).toBeGreaterThan(0);

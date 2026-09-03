@@ -155,6 +155,27 @@ test('four localhost peers connect; 100ms/2% shaping still delivers chat', async
   await send(g1, 'peer-one');
   await send(g2, 'peer-two');
   await send(g3, 'peer-three');
+  await host.waitForFunction(() => Boolean(window.__floppy?.loadLevel));
+  const fistsArena = await host.evaluate((level) => window.__floppy?.loadLevel(level), {
+    id: 'e2e-flat',
+    name: 'E2E Flat',
+    theme: 'woods',
+    bounds: { x: 0, y: 0, w: 32, h: 18 },
+    killMargin: 6,
+    spawns: [
+      { x: 8, y: 4 },
+      { x: 16, y: 4 },
+      { x: 12, y: 4 },
+      { x: 20, y: 4 },
+    ],
+    drops: { enabled: false, xMin: 4, xMax: 28, intervalScale: 1 },
+    objects: [
+      { type: 'solid', x: 16, y: 1, w: 32, h: 2 },
+      { type: 'solid', x: 0.5, y: 9, w: 1, h: 18 },
+      { type: 'solid', x: 31.5, y: 9, w: 1, h: 18 },
+    ],
+  });
+  expect(fistsArena).toBe('e2e-flat');
   const seen = async (needle: string) =>
     host.evaluate((n) => document.body.innerText.includes(n), needle);
   for (const [page, text] of [
@@ -176,20 +197,25 @@ test('four localhost peers connect; 100ms/2% shaping still delivers chat', async
   await host.getByRole('button', { name: 'Start match' }).click();
   await expect(host.locator('canvas#game')).toBeVisible({ timeout: 15_000 });
   await host.waitForFunction(() => window.__floppy?.phase === 2, null, { timeout: 20_000 });
-  await host.evaluate(() => window.__floppy?.speedRounds());
+  await host.evaluate(() => {
+    window.__floppy?.speedRounds();
+    window.__floppy?.armLiveFists();
+  });
   for (let r = 0; r < 10; r++) {
     await host.waitForFunction(() => window.__floppy?.phase === 2, null, { timeout: 15_000 });
-    await host.evaluate(() => window.__floppy?.forceLastStand());
     await host.waitForFunction(
       (n) => (window.__floppy?.matchRound ?? 0) > n,
       r,
-      { timeout: 15_000 },
+      { timeout: 20_000 },
     );
   }
   const rounds = await host.evaluate(() => window.__floppy?.matchRound ?? 0);
+  const fists = await host.evaluate(() => window.__floppy?.fistKills ?? 0);
   expect(rounds).toBeGreaterThanOrEqual(10);
+  expect(fists).toBeGreaterThanOrEqual(10);
+  await host.evaluate(() => window.__floppy?.disarmLiveFists());
   const hostLevel = await host.evaluate(() => window.__floppy?.lastLevelId ?? '');
-  expect(hostLevel.length).toBeGreaterThan(0);
+  expect(hostLevel).toBe('e2e-flat');
   for (const guest of [g1, g2, g3]) {
     await expect
       .poll(async () => guest.evaluate(() => window.__floppy?.lastSnapBinary ?? false), {

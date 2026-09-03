@@ -105,6 +105,10 @@ type FloppyDebug = {
   gpuMs: number;
   phase: number;
   forceLastStand: () => void;
+  armLiveFists: () => void;
+  disarmLiveFists: () => void;
+  fistKills: number;
+  liveFists: boolean;
   speedRounds: () => void;
   matchRound: number;
   debugDraw: boolean;
@@ -213,6 +217,8 @@ export function createGame(root: HTMLElement): Game {
   let lastInputBundleLen = 0;
   let inputSeq = 0;
   let heldNetInput: PlayerInput | null = null;
+  let liveFists = false;
+  let fistKills = 0;
   let rendererSwitches = 0;
   let netName = 'guest';
   let netSlot = 0;
@@ -816,6 +822,45 @@ export function createGame(root: HTMLElement): Game {
     return lastSampled;
   }
 
+  function applyLiveFists(sampled: PlayerInput[]): PlayerInput[] {
+    if (!liveFists || !sim || menus.netRole === 'client') return sampled;
+    sim.ctx.holdBots = true;
+    sim.ctx.holdHazards = true;
+    sim.ctx.settings.enabledWeapons = [];
+    sim.ctx.settings.enabledLevels = [sim.ctx.level.id];
+    const ms = sim.ecs.get(MatchState);
+    if (ms) {
+      ms.firstTo = 0;
+      sim.ecs.set(MatchState, ms);
+    }
+    const phase = sim.ecs.get(RoundState)?.phase;
+    if (phase !== RoundPhase.Fighting) return sampled;
+    const next = sampled.map((s) => ({ ...s }));
+    const spawn = sim.ctx.level.spawns[0] ?? { x: 10, y: 4 };
+    const x0 = spawn.x;
+    const y = spawn.y + 1;
+    sim.ecs.query(Player, Transform).updateEach(([p], entity) => {
+      if (entity.has(Dead)) return;
+      const x = p.slot === 0 ? x0 : x0 + 0.55;
+      sim!.ctx.bodies.get(entity)?.setPosition({ x, y });
+      sim!.ctx.bodies.get(entity)?.setLinearVelocity({ x: 0, y: 0 });
+      entity.set(Transform, { x, y, angle: 0 });
+      if (p.slot !== 0) {
+        const h = entity.get(Health);
+        if (h && h.hp > 1) entity.set(Health, { hp: 1, maxHp: h.maxHp });
+      }
+    });
+    next[0] = {
+      ...(next[0] ?? EMPTY_INPUT),
+      attack: sim.ctx.tick % 8 === 0,
+      aimX: 1,
+      aimY: 0,
+      moveX: 0.2,
+    };
+    for (let s = 1; s < 4; s++) next[s] = { ...EMPTY_INPUT };
+    return next;
+  }
+
   function applyPauseHotkey(): void {
     if (!keys.takePause()) return;
     if (menus.screen === 'play') requestPause('keyboard');
@@ -899,6 +944,7 @@ export function createGame(root: HTMLElement): Game {
       const steps = loop.consume(dt, scale);
       let sampled = sampleInputs();
       if (menus.netRole === 'host') sampled = applyRemoteInboxes(sampled, remoteInboxes);
+      sampled = applyLiveFists(sampled);
       for (let i = 0; i < steps; i++) {
         if (hitStop > 0) {
           hitStop -= 1;
@@ -906,6 +952,8 @@ export function createGame(root: HTMLElement): Game {
         }
         recorder.push(sampled);
         const events = viewSim.step(sampled);
+        const fists = events.some((e) => e.type === 'shot' && e.weaponId === 'fists');
+        if (fists) fistKills += events.filter((e) => e.type === 'kill').length;
         mixer.handle(events);
         emitIntoWorld(events, fx);
         stampFxDecals(fx, decalLayer, (d) => !settings.reduceBlood || d.kind === 'scorch');
@@ -1058,13 +1106,29 @@ export function createGame(root: HTMLElement): Game {
         const log = matchChatEl?.querySelector('#matchchat-log');
         if (log) log.textContent = menus.chat.slice(-6).join('\n');
       },
-          forceLastStand: () => {
+      forceLastStand: () => {
         if (!sim) return;
         sim.players().forEach((p) => {
           const slot = p.get(Player)?.slot ?? 0;
           if (slot !== 0) p.set(Health, { hp: 0, maxHp: p.get(Health)?.maxHp ?? 100 });
         });
       },
+      armLiveFists: () => {
+        liveFists = true;
+        if (sim) {
+          sim.ctx.holdBots = true;
+          sim.ctx.holdHazards = true;
+        }
+      },
+      disarmLiveFists: () => {
+        liveFists = false;
+        if (sim) {
+          sim.ctx.holdBots = false;
+          sim.ctx.holdHazards = false;
+        }
+      },
+      fistKills,
+      liveFists,
       speedRounds: () => {
         if (!sim) return;
         sim.ctx.tuning.countdownTicks = 3;

@@ -34,6 +34,10 @@ export type SimContext = {
   contactHits: Set<number>;
   lastPhysicsMs: number;
   extraLevels: LevelDef[];
+  /** Debug stand-in: thinkBots leaves scripted inputs alone. */
+  holdBots: boolean;
+  /** Debug stand-in: hazard contacts/steps do not kill (live-fist proofs). */
+  holdHazards: boolean;
 };
 
 const contexts = new WeakMap<World, SimContext>();
@@ -82,5 +86,7 @@ export function makeContext(
     contactHits: new Set(),
     lastPhysicsMs: 0,
     extraLevels: [],
+    holdBots: false,
+    holdHazards: false,
   };
 }

@@ -292,6 +292,19 @@ describe('M9 bots', () => {
     expect(wallJumps).toBeGreaterThanOrEqual(2);
   });
 
+  it('holdBots leaves scripted victim inputs in place', () => {
+    const sim = makeSim({ seed: 103, settings: { playerCount: 1, bots: 1 } });
+    const human = playerOf(sim, 0);
+    const bot = playerOf(sim, 1);
+    pin(sim, human, 10, 4);
+    pin(sim, bot, 10.55, 4);
+    sim.ctx.holdBots = true;
+    sim.step([hold({ attack: true, aimX: 1, aimY: 0 }), hold({}), hold({}), hold({})]);
+    const slot = bot.get(Bot)?.slot ?? 1;
+    expect(sim.ctx.inputs[slot]?.attack).toBe(false);
+    expect(sim.ctx.inputs[slot]?.moveX ?? 0).toBe(0);
+  });
+
   it('a bot actually blocks a live incoming bullet (PLAN 4.14)', () => {
     const sim = makeSim({ seed: 102, settings: { playerCount: 1, bots: 1 } });
     const human = playerOf(sim, 0);

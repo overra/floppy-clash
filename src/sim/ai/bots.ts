@@ -123,6 +123,7 @@ export function attachBots(world: World, slots: number[]): void {
 
 export function thinkBots(world: World): void {
   const ctx = getContext(world);
+  if (ctx.holdBots) return;
   world.query(bots).updateEach(([player, ctrl, tr, _aim], entity) => {
     if (!entity.has(Bot) || entity.has(Dead)) return;
     const bot = entity.get(Bot);

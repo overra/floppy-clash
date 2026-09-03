@@ -30,29 +30,86 @@ export function segmentsIntersect(
   return { x: ax + t * (bx - ax), y: ay + t * (by - ay) };
 }
 
-function closestPointOnSegment(
-  px: number,
-  py: number,
+/**
+ * Closest points on two finite segments (Ericson). `ax/ay` is on
+ * segment AB; `bx/by` is on CD.
+ */
+export function closestPointsOnSegments(
   ax: number,
   ay: number,
   bx: number,
   by: number,
-): { x: number; y: number } {
-  const dx = bx - ax;
-  const dy = by - ay;
-  const len2 = dx * dx + dy * dy;
+  cx: number,
+  cy: number,
+  dx: number,
+  dy: number,
+): { ax: number; ay: number; bx: number; by: number; dist: number } {
+  const d1x = bx - ax;
+  const d1y = by - ay;
+  const d2x = dx - cx;
+  const d2y = dy - cy;
+  const rx = ax - cx;
+  const ry = ay - cy;
+  const a = d1x * d1x + d1y * d1y;
+  const e = d2x * d2x + d2y * d2y;
+  const f = d2x * rx + d2y * ry;
+  const eps = 1e-10;
+  let s = 0;
   let t = 0;
-  if (len2 > 1e-8) {
-    t = Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / len2));
+  if (a > eps || e > eps) {
+    if (a <= eps) {
+      t = Math.max(0, Math.min(1, f / e));
+    } else {
+      const c = d1x * rx + d1y * ry;
+      if (e <= eps) {
+        s = Math.max(0, Math.min(1, -c / a));
+      } else {
+        const b = d1x * d2x + d1y * d2y;
+        const denom = a * e - b * b;
+        s = denom !== 0 ? Math.max(0, Math.min(1, (b * f - c * e) / denom)) : 0;
+        t = (b * s + f) / e;
+        if (t < 0) {
+          t = 0;
+          s = Math.max(0, Math.min(1, -c / a));
+        } else if (t > 1) {
+          t = 1;
+          s = Math.max(0, Math.min(1, (b - c) / a));
+        }
+      }
+    }
   }
-  return { x: ax + dx * t, y: ay + dy * t };
+  const px = ax + s * d1x;
+  const py = ay + s * d1y;
+  const qx = cx + t * d2x;
+  const qy = cy + t * d2y;
+  return { ax: px, ay: py, bx: qx, by: qy, dist: Math.hypot(px - qx, py - qy) };
+}
+
+/** Upright stadium (axis ±(halfH−radius), radius) vs a beam segment. */
+function capsuleHitsBeam(
+  px: number,
+  py: number,
+  lx0: number,
+  ly0: number,
+  lx1: number,
+  ly1: number,
+  radius: number,
+  halfH: number,
+): { x: number; y: number } | null {
+  const axis = Math.max(0, halfH - radius);
+  const hit = closestPointsOnSegments(px, py - axis, px, py + axis, lx0, ly0, lx1, ly1);
+  if (hit.dist <= radius + 1e-6) return { x: hit.bx, y: hit.by };
+  return null;
 }
 
 /**
  * PLAN M4: a player who crosses the beam between samples still dies.
- * Appendix D keeps the on-tick ray; this is true segment–segment distance
- * so 60 Hz cannot skip the kill line the way a fast body tunnels a saw.
- * Closest-point-to-emitter alone misses a far-end graze.
+ * Appendix D keeps the on-tick ray; this is a capsule-vs-segment test
+ * (half-width `radius`, half-height `halfH`) so a 60 Hz skip cannot
+ * tunnel the 1.8 m body the way a point-radius miss would. Closest-
+ * point-to-emitter alone also misses a far-end graze. Mid-path uses
+ * the closest approach of the center segment, then a capsule there,
+ * so a skip that only clips the beam end still counts.
  */
 export function playerCrossesBeam(
   px0: number,
@@ -64,28 +121,16 @@ export function playerCrossesBeam(
   lx1: number,
   ly1: number,
   radius = 0.35,
+  halfH = 0.9,
 ): { x: number; y: number } | null {
   const hit = segmentsIntersect(px0, py0, px1, py1, lx0, ly0, lx1, ly1);
   if (hit) return hit;
-  let bestD = Infinity;
-  let best = { x: lx0, y: ly0 };
-  const consider = (qx: number, qy: number, bx: number, by: number) => {
-    const d = Math.hypot(qx - bx, qy - by);
-    if (d < bestD) {
-      bestD = d;
-      best = { x: bx, y: by };
-    }
-  };
-  const a = closestPointOnSegment(px0, py0, lx0, ly0, lx1, ly1);
-  consider(px0, py0, a.x, a.y);
-  const b = closestPointOnSegment(px1, py1, lx0, ly0, lx1, ly1);
-  consider(px1, py1, b.x, b.y);
-  const c = closestPointOnSegment(lx0, ly0, px0, py0, px1, py1);
-  consider(c.x, c.y, lx0, ly0);
-  const d = closestPointOnSegment(lx1, ly1, px0, py0, px1, py1);
-  consider(d.x, d.y, lx1, ly1);
-  if (bestD < radius) return best;
-  return null;
+  const at0 = capsuleHitsBeam(px0, py0, lx0, ly0, lx1, ly1, radius, halfH);
+  if (at0) return at0;
+  const at1 = capsuleHitsBeam(px1, py1, lx0, ly0, lx1, ly1, radius, halfH);
+  if (at1) return at1;
+  const mid = closestPointsOnSegments(px0, py0, px1, py1, lx0, ly0, lx1, ly1);
+  return capsuleHitsBeam(mid.ax, mid.ay, lx0, ly0, lx1, ly1, radius, halfH);
 }
 
 /** Appendix D: raycast each tick while on; warning then beam. */
@@ -142,13 +187,15 @@ export const laser: HazardModule = {
       const bodyY = pos?.y ?? pt.y;
       const predX = bodyX + (vel?.x ?? 0) * dt;
       const predY = bodyY + (vel?.y ?? 0) * dt;
+      const hw = ctx.tuning.radius + 0.05;
+      const hh = ctx.tuning.height * 0.5;
       const paths = [
         [lastX, lastY, pt.x, pt.y],
         [pt.x, pt.y, bodyX, bodyY],
         [bodyX, bodyY, predX, predY],
       ] as const;
       for (const [ax, ay, bx, by] of paths) {
-        const cross = playerCrossesBeam(ax, ay, bx, by, tr.x, tr.y, x2, y2);
+        const cross = playerCrossesBeam(ax, ay, bx, by, tr.x, tr.y, x2, y2, hw, hh);
         if (!cross) continue;
         const block = raycastClosest(world, tr.x, tr.y, cross.x, cross.y, ignore);
         if (block && block.kind !== 'player') {

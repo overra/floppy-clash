@@ -193,5 +193,62 @@ describe('M3 weapons', () => {
     sim.step([hold({ attack: true, aimX: 1, aimY: 0 }), hold({}), hold({}), hold({})]);
     expect(b.has(Dead) || (b.get(Health)?.hp ?? 100) < 100).toBe(true);
   });
+
+  it('lava-beam warning skip is safe; after warning a one-tick skip hits', () => {
+    const sim = makeSim({ level: woodsClearing, seed: 22, settings: { playerCount: 2 } });
+    const a = playerOf(sim, 0);
+    const b = playerOf(sim, 1);
+    const gun = spawnWeapon(sim.ecs, 'lava-beam', 10, 5);
+    gun.add(Held(), HeldBy(a));
+    gun.remove(Loose);
+    pin(sim, a, 10, 4);
+    pin(sim, b, 14, 1);
+    b.set(PrevTransform, { x: 14, y: 1, angle: 0 });
+    sim.step([hold({ attack: true, aimX: 1, aimY: 0 }), hold({}), hold({}), hold({})]);
+    pin(sim, a, 10, 4);
+    pin(sim, b, 14, 8);
+    b.set(PrevTransform, { x: 14, y: 1, angle: 0 });
+    sim.step([hold({ aimX: 1, aimY: 0 }), hold({}), hold({}), hold({})]);
+    expect(b.has(Dead) || (b.get(Health)?.hp ?? 100) < 100).toBe(false);
+
+    pin(sim, a, 10, 4);
+    pin(sim, b, 14, 1);
+    b.set(PrevTransform, { x: 14, y: 1, angle: 0 });
+    for (let i = 0; i < 24; i++) {
+      sim.step([hold({ aimX: 1, aimY: 0 }), hold({}), hold({}), hold({})]);
+    }
+    expect(b.has(Dead) || (b.get(Health)?.hp ?? 100) < 100).toBe(false);
+    pin(sim, a, 10, 4);
+    pin(sim, b, 14, 8);
+    b.set(PrevTransform, { x: 14, y: 1, angle: 0 });
+    sim.step([hold({ aimX: 1, aimY: 0 }), hold({}), hold({}), hold({})]);
+    expect(b.has(Dead) || (b.get(Health)?.hp ?? 100) < 100).toBe(true);
+  });
+
+  it('lava-beam capsule graze hits after warning (point-radius 0.35 misses)', () => {
+    expect(playerCrossesBeam(14, 3.2, 14, 3.2, 10, 4, 50, 4, 0.35, 0.35)).toBeNull();
+    expect(playerCrossesBeam(14, 3.2, 14, 3.2, 10, 4, 50, 4)).toBeTruthy();
+    const sim = makeSim({ level: woodsClearing, seed: 23, settings: { playerCount: 2 } });
+    const a = playerOf(sim, 0);
+    const b = playerOf(sim, 1);
+    const gun = spawnWeapon(sim.ecs, 'lava-beam', 10, 5);
+    gun.add(Held(), HeldBy(a));
+    gun.remove(Loose);
+    pin(sim, a, 10, 4);
+    pin(sim, b, 14, 1);
+    b.set(PrevTransform, { x: 14, y: 1, angle: 0 });
+    sim.step([hold({ attack: true, aimX: 1, aimY: 0 }), hold({}), hold({}), hold({})]);
+    for (let i = 0; i < 24; i++) {
+      pin(sim, a, 10, 4);
+      pin(sim, b, 14, 1);
+      sim.step([hold({ aimX: 1, aimY: 0 }), hold({}), hold({}), hold({})]);
+    }
+    expect(b.has(Dead) || (b.get(Health)?.hp ?? 100) < 100).toBe(false);
+    pin(sim, a, 10, 4);
+    pin(sim, b, 14, 3.2);
+    b.set(PrevTransform, { x: 14, y: 3.2, angle: 0 });
+    sim.step([hold({ aimX: 1, aimY: 0 }), hold({}), hold({}), hold({})]);
+    expect(b.has(Dead) || (b.get(Health)?.hp ?? 100) < 100).toBe(true);
+  });
 });
 
