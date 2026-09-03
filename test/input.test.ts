@@ -30,7 +30,6 @@ import {
 import { joinStartIndex } from '../src/input/remap';
 import { Health, Player } from '../src/sim/traits';
 import { hold, makeSim, playerOf } from './helpers';
-import { joinStartIndex } from '../src/input/remap';
 import { EMPTY_INPUT, type PlayerInput } from '../src/sim/input';
 
 describe('input', () => {
