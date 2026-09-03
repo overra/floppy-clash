@@ -972,7 +972,8 @@ test('solo vs bots: a pad claims the keyboard seat instead of becoming P2', asyn
   });
   await page.goto('/');
   await page.getByRole('button', { name: 'Solo vs Bots' }).click();
-  await expect(page.locator('[data-seat="0"]')).toContainText(/keyboard|You/i);
+  await expect(page.locator('[data-seat="0"]')).toContainText(/e2e-solo-pad/);
+  await expect(page.locator('[data-seat="1"]')).toContainText(/empty/i);
   await page.evaluate(() => {
     const pad = (window as unknown as { __e2ePad: Gamepad }).__e2ePad;
     window.dispatchEvent(Object.assign(new Event('gamepadconnected'), { gamepad: pad }));
