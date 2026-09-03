@@ -101,13 +101,23 @@ fn fs(input: VSOut) -> @location(0) vec4f {
 }
 `;
 
+async function withTimeout<T>(p: Promise<T>, ms: number): Promise<T | null> {
+  return Promise.race([
+    p,
+    new Promise<null>((resolve) => {
+      setTimeout(() => resolve(null), ms);
+    }),
+  ]);
+}
+
 export async function tryCreateGpuRenderer(canvas: HTMLCanvasElement): Promise<Renderer | null> {
   if (!('gpu' in navigator) || !navigator.gpu) return null;
-  const adapter = await navigator.gpu.requestAdapter();
+  const adapter = await withTimeout(navigator.gpu.requestAdapter(), 2500);
   if (!adapter) return null;
   let root;
   try {
-    root = await tgpu.init();
+    root = await withTimeout(tgpu.init(), 2500);
+    if (!root) return null;
   } catch {
     return null;
   }

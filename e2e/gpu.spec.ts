@@ -2,10 +2,12 @@ import { expect, test } from '@playwright/test';
 
 test('GPU renderer initialises or the fallback notice is shown', async ({ page }) => {
   await page.goto('/');
+  await expect(page.getByRole('heading', { name: 'Floppy Clash' })).toBeVisible();
   await page.getByRole('button', { name: 'Solo vs Bots' }).click();
+  await expect(page.getByRole('heading', { name: 'Join' })).toBeVisible();
   await page.keyboard.press('Enter');
   await page.waitForTimeout(2000);
-  const notice = await page.locator('.notice').first().textContent();
+  const notice = await page.locator('.notice').first().textContent({ timeout: 10_000 });
   expect(notice === 'SDF renderer' || notice === 'Canvas fallback').toBeTruthy();
   const sample = await page.evaluate(async () => {
     const canvas = document.querySelector('canvas#game') as HTMLCanvasElement;
