@@ -252,6 +252,7 @@ export function stepHazardPath(world: World, entity: Entity, dt: number): void {
 }
 
 export function kill(world: World, player: Entity, x: number, y: number): void {
+  if (getContext(world).holdHazards) return;
   takeDamage(world, player, 9999, 'body', -1, x, y, true);
 }
 

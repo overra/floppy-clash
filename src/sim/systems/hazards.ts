@@ -22,7 +22,6 @@ const hazards = createQuery(Hazard, Transform);
 
 export function hazardsStep(world: World): void {
   const ctx = getContext(world);
-  if (ctx.holdHazards) return;
   const dt = 1 / ctx.tuning.tickRate;
 
   world.query(hazards).updateEach(([hz, tr], entity) => {

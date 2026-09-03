@@ -36,7 +36,7 @@ export type SimContext = {
   extraLevels: LevelDef[];
   /** Debug stand-in: thinkBots leaves scripted inputs alone. */
   holdBots: boolean;
-  /** Debug stand-in: hazard contacts/steps do not kill (live-fist proofs). */
+  /** Debug stand-in: hazard kills no-op; kinematics still run. */
   holdHazards: boolean;
 };
 
