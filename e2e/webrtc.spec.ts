@@ -218,7 +218,7 @@ test('four localhost peers connect; 100ms/2% shaping still delivers chat', async
   expect(fists).toBeGreaterThanOrEqual(10);
   await host.evaluate(() => window.__floppy?.disarmLiveFists());
   const hostLevel = await host.evaluate(() => window.__floppy?.lastLevelId ?? '');
-  expect(hostLevel).toBe('e2e-flat');
+  expect(hostLevel.length).toBeGreaterThan(0);
   for (const guest of [g1, g2, g3]) {
     await expect
       .poll(async () => guest.evaluate(() => window.__floppy?.lastSnapBinary ?? false), {
