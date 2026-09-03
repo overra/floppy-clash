@@ -196,11 +196,18 @@ export function projectiles(world: World): void {
       const ot = owner?.get(Transform);
       const reach = def.projectile.radius || 0.7;
       if (aim && ot) {
-        const hx = ot.x + aim.x * reach;
-        const hy = ot.y + aim.y * reach;
+        // PLAN 4.9 / Appendix C: short arc in front of the wielder, not a full disk.
+        const halfArc = 0.7;
+        const cosArc = Math.cos(halfArc);
         world.query(Player, Transform, Not(Dead)).updateEach(([_p, pt], other) => {
           if (other === owner) return;
-          if (Math.hypot(pt.x - hx, pt.y - hy) > reach) return;
+          const dx = pt.x - ot.x;
+          const dy = pt.y - ot.y;
+          const dist = Math.hypot(dx, dy);
+          const facing = dist < 0.25 ? 1 : (dx * aim.x + dy * aim.y) / dist;
+          if (dist > reach + 0.35 || facing < cosArc) return;
+          const hx = ot.x + aim.x * reach;
+          const hy = ot.y + aim.y * reach;
           const block = shieldBlocks(world, other, hx, hy, aim.x, aim.y);
           if (block !== 'none') {
             emit(world, { type: 'block', player: other, reflected: false });

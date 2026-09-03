@@ -324,6 +324,36 @@ describe('PLAN gaps closed this audit', () => {
     expect(wt.x).toBeGreaterThan(14);
   });
 
+  it('melee hits a short forward arc and misses behind the wielder', () => {
+    const hit = makeSim({ seed: 407, settings: { playerCount: 2 } });
+    const ha = playerOf(hit, 0);
+    const hb = playerOf(hit, 1);
+    hit.ctx.bodies.get(ha)?.setPosition({ x: 10, y: 4 });
+    hit.ctx.bodies.get(hb)?.setPosition({ x: 10.55, y: 4.45 });
+    ha.set(Transform, { x: 10, y: 4, angle: 0 });
+    hb.set(Transform, { x: 10.55, y: 4.45, angle: 0 });
+    const sword = spawnWeapon(hit.ecs, 'sword', 10, 5);
+    sword.add(Held(), HeldBy(ha));
+    sword.remove(Loose);
+    const hpHit = hb.get(Health)?.hp ?? 100;
+    hit.step([hold({ attack: true, aimX: 1, aimY: 0 }), hold({}), hold({}), hold({})]);
+    expect((hb.get(Health)?.hp ?? 100)).toBeLessThan(hpHit);
+
+    const miss = makeSim({ seed: 408, settings: { playerCount: 2 } });
+    const ma = playerOf(miss, 0);
+    const mb = playerOf(miss, 1);
+    miss.ctx.bodies.get(ma)?.setPosition({ x: 10, y: 4 });
+    miss.ctx.bodies.get(mb)?.setPosition({ x: 9.1, y: 4 });
+    ma.set(Transform, { x: 10, y: 4, angle: 0 });
+    mb.set(Transform, { x: 9.1, y: 4, angle: 0 });
+    const blade = spawnWeapon(miss.ecs, 'sword', 10, 5);
+    blade.add(Held(), HeldBy(ma));
+    blade.remove(Loose);
+    const hpMiss = mb.get(Health)?.hp ?? 100;
+    miss.step([hold({ attack: true, aimX: 1, aimY: 0 }), hold({}), hold({}), hold({})]);
+    expect(mb.get(Health)?.hp ?? 100).toBe(hpMiss);
+  });
+
   it('sword lunge applies forward impulse along aim Y', () => {
     const sim = makeSim({ seed: 402, settings: { playerCount: 1 } });
     const p = playerOf(sim);
