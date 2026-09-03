@@ -1,0 +1,95 @@
+import { createQuery, Not, type Entity, type World } from 'koota';
+import { Vec2 } from 'planck';
+import { getContext } from '../context';
+import { rising } from '../input';
+import { takeDamage } from './health';
+import { raycastClosest } from '../physics/queries';
+import { Aim, Combat, Controller, Dead, Held, HeldBy, Loose, Player, Transform, Weapon } from '../traits';
+
+const fighters = createQuery(Player, Combat, Aim, Controller, Transform);
+
+function disarm(world: World, victim: Entity): void {
+  const held = victim.targetFor(HeldBy);
+  if (held === undefined) {
+    // HeldBy is on the weapon pointing at the player
+  }
+  const ctx = getContext(world);
+  for (const weapon of world.query(Weapon, Held)) {
+    if (weapon.targetFor(HeldBy) === victim) {
+      weapon.remove(Held);
+      weapon.add(Loose());
+      weapon.remove(HeldBy('*'));
+      const w = weapon.get(Weapon);
+      if (w) weapon.set(Weapon, { ...w, pickupCooldown: ctx.tuning.pickupCooldownTicks, thrown: false });
+      const t = victim.get(Transform);
+      const body = ctx.bodies.get(weapon);
+      if (body && t) {
+        body.setActive(true);
+        body.setPosition(new Vec2(t.x, t.y + 0.4));
+        body.setLinearVelocity(new Vec2((ctx.rng.next() - 0.5) * 4, 4));
+      }
+    }
+  }
+}
+
+export function combat(world: World): void {
+  const ctx = getContext(world);
+  const t = ctx.tuning;
+
+  world.query(fighters).updateEach(([player, combat, aim, ctrl, transform], entity) => {
+    if (entity.has(Dead)) return;
+    const input = ctx.inputs[player.inputIndex] ?? ctx.inputs[player.slot];
+    const prev = ctx.prevInputs[player.inputIndex] ?? ctx.prevInputs[player.slot];
+    if (!input) return;
+    const body = ctx.bodies.get(entity);
+    if (!body) return;
+
+    if (combat.punchCooldown > 0) combat.punchCooldown -= 1;
+    if (combat.punchActive > 0) combat.punchActive -= 1;
+
+    const armed = [...world.query(Weapon, Held)].some((w) => w.targetFor(HeldBy) === entity);
+
+    if (input.block && combat.blockMeter > 0) {
+      if (!combat.blocking) combat.blockStartTick = ctx.tick;
+      combat.blocking = true;
+      combat.blockMeter = Math.max(0, combat.blockMeter - 1 / t.blockMeterDrainTicks);
+      combat.refillDelay = t.blockMeterRefillDelayTicks;
+    } else {
+      combat.blocking = false;
+      if (combat.refillDelay > 0) combat.refillDelay -= 1;
+      else combat.blockMeter = Math.min(1, combat.blockMeter + 1 / t.blockMeterRefillTicks);
+    }
+
+    const wantsPunch = rising(prev?.attack ?? false, input.attack) && !armed && combat.punchCooldown <= 0;
+    if (wantsPunch) {
+      combat.punchCooldown = t.punchCooldownTicks;
+      combat.punchActive = t.punchActiveTicks;
+      const bonus = combat.blocking ? t.blockPunchBonus : 0;
+      const impulse = t.punchSelfImpulse + bonus;
+      const vel = body.getLinearVelocity();
+      body.setLinearVelocity(new Vec2(vel.x + aim.x * impulse, vel.y + aim.y * impulse));
+      const hx = transform.x + aim.x * t.punchRange;
+      const hy = transform.y + aim.y * t.punchRange;
+      world.query(Player, Transform, Not(Dead)).updateEach(([_p, otherT], other) => {
+        if (other === entity) return;
+        const dx = otherT.x - hx;
+        const dy = otherT.y - hy;
+        if (dx * dx + dy * dy <= t.punchRadius * t.punchRadius) {
+          takeDamage(world, other, t.punchDamage, 'body', entity, otherT.x, otherT.y);
+          const otherBody = ctx.bodies.get(other);
+          if (otherBody) {
+            const ov = otherBody.getLinearVelocity();
+            otherBody.setLinearVelocity(
+              new Vec2(ov.x + aim.x * t.punchKnockback, ov.y + aim.y * t.punchKnockback + t.punchKnockbackUp),
+            );
+          }
+          disarm(world, other);
+        }
+      });
+    }
+    void raycastClosest;
+    void ctrl;
+  });
+}
+
+export { disarm };

@@ -25,7 +25,8 @@ import type { LightEmitter } from './gpu/lighting';
 import { weaponByIndex } from '../sim/weapons/defs';
 import type { SimHandle } from '../sim/world';
 import { updateCamera, type CameraState } from './camera';
-import type { Decal, Particle } from './fx/particles';
+import type { PersistentDecalLayer } from './fx/decals';
+import type { Particle } from './fx/particles';
 import { groupBounds, type RenderFrame, type ShapeGroup } from './frame';
 import { poseToPrimitives, secondaryFromVelocity, type LimbState } from './figure';
 import { PRIM_CAPSULE, PRIM_DISK, PRIM_ROUNDED_BOX } from './sdf/primitives';
@@ -38,7 +39,7 @@ export type BuildFrameOpts = {
   debug?: boolean;
   freezeCamera?: boolean;
   colorblind?: boolean;
-  decals?: Decal[];
+  decalLayer?: PersistentDecalLayer;
   flash?: number;
 };
 
@@ -251,20 +252,6 @@ export function buildFrame(
     });
   }
 
-  for (const decal of opts.decals ?? []) {
-    groups.push({
-      minX: decal.x - decal.r,
-      minY: decal.y - decal.r,
-      maxX: decal.x + decal.r,
-      maxY: decal.y + decal.r,
-      color: decal.color,
-      blend: 'union',
-      smoothK: 0,
-      layer: 2,
-      primitives: [{ kind: PRIM_DISK, ax: decal.x, ay: decal.y, bx: decal.x, by: decal.y, r: decal.r }],
-    });
-  }
-
   for (const part of particles) {
     if (part.color === '#fff4c2' || part.color.includes('ff')) {
       lights.push({ x: part.x, y: part.y, radius: 1.8, r: 1, g: 0.7, b: 0.3, intensity: 0.45 });
@@ -300,6 +287,7 @@ export function buildFrame(
     theme: { top: theme.backgroundTop, bottom: theme.backgroundBottom, solid: theme.solid },
     lights,
     debug,
+    decalLayer: opts.decalLayer,
     hud: {
       slowmo: rs?.phase === RoundPhase.LastKill,
       countdown: rs?.phase === RoundPhase.Countdown ? Math.ceil((ctx.tuning.countdownTicks - (rs.ticks ?? 0)) / 60) : 0,

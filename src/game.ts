@@ -20,6 +20,7 @@ import { addShake, createCamera } from './render/camera';
 import { buildFrame } from './render/buildFrame';
 import { createCanvasRenderer, type Renderer } from './render/canvas/renderer';
 import { tryCreateGpuRenderer } from './render/gpu/renderer';
+import { createDecalLayer, type PersistentDecalLayer } from './render/fx/decals';
 import { emitFromEvents, stepParticles, type Decal, type Particle } from './render/fx/particles';
 import { blankInputs, type PlayerInput } from './sim/input';
 import { Dead, Health, MatchState, Player, RoundPhase, RoundState, Transform } from './sim/traits';
@@ -85,6 +86,7 @@ export function createGame(root: HTMLElement): Game {
   let cam = createCamera(gymLevel.bounds);
   let particles: Particle[] = [];
   const decals: Decal[] = [];
+  let decalLayer: PersistentDecalLayer = createDecalLayer(gymLevel.bounds);
   let raf = 0;
   let last = performance.now();
   let paused = false;
@@ -258,6 +260,7 @@ export function createGame(root: HTMLElement): Game {
     cam = createCamera(level.bounds);
     particles = [];
     decals.length = 0;
+    decalLayer = createDecalLayer(level.bounds);
     menus.screen = 'play';
     show();
     net.send(lateJoinSnapshotMessage(sim.snapshot()));
@@ -359,6 +362,7 @@ export function createGame(root: HTMLElement): Game {
         const events = sim.step(sampled);
         mixer.handle(events);
         emitFromEvents(events, particles, decals);
+        decalLayer.stampNew(decals, (d) => !settings.reduceBlood || d.kind === 'scorch');
         if (events.some((e) => e.type === 'kill')) {
           hitStop = 3;
           recordKos(events.filter((e) => e.type === 'kill').length);
@@ -387,7 +391,7 @@ export function createGame(root: HTMLElement): Game {
           debug: debugDraw,
           freezeCamera: freezeCam,
           colorblind: settings.colorblind,
-          decals: settings.reduceBlood ? [] : decals,
+          decalLayer,
           flash: hitStop,
         },
       );

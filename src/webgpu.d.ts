@@ -6,9 +6,15 @@ interface GPUDevice {
   createRenderPipeline(desc: unknown): GPURenderPipeline;
   createBuffer(desc: { size: number; usage: number }): GPUBuffer;
   createBindGroup(desc: unknown): GPUBindGroup;
+  createSampler(desc?: unknown): GPUSampler;
+  createTexture(desc: unknown): GPUTexture;
   createQuerySet?: (desc: unknown) => unknown;
   createCommandEncoder(): GPUCommandEncoder;
-  queue: { writeBuffer(buf: GPUBuffer, off: number, data: BufferSource): void; submit(c: unknown[]): void };
+  queue: {
+    writeBuffer(buf: GPUBuffer, off: number, data: BufferSource): void;
+    writeTexture(dest: unknown, data: BufferSource | Uint8ClampedArray, layout: unknown, size: unknown): void;
+    submit(c: unknown[]): void;
+  };
 }
 interface GPUShaderModule {
   dummy?: true;
@@ -21,6 +27,13 @@ interface GPUBuffer {
 }
 interface GPUBindGroup {
   dummy?: true;
+}
+interface GPUSampler {
+  dummy?: true;
+}
+interface GPUTexture {
+  destroy(): void;
+  createView(): unknown;
 }
 interface GPUCommandEncoder {
   beginRenderPass(desc: unknown): GPURenderPass;
@@ -52,5 +65,10 @@ declare const GPUBufferUsage: {
   UNIFORM: number;
   COPY_DST: number;
   STORAGE: number;
+};
+declare const GPUTextureUsage: {
+  TEXTURE_BINDING: number;
+  COPY_DST: number;
+  RENDER_ATTACHMENT: number;
 };
 type GPUColorDict = { r: number; g: number; b: number; a: number };

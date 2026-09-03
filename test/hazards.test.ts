@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { getLevel } from '../src/levels/catalog';
+import { APPENDIX_D_TYPE_IDS, HAZARDS_BY_TYPE, HAZARD_MODULES } from '../src/sim/hazards';
 import { Dead, Health, Transform } from '../src/sim/traits';
 import { hold, makeSim, playerOf } from './helpers';
 
@@ -70,6 +71,13 @@ describe('M4 hazards', () => {
       expect(() => {
         for (let i = 0; i < 60; i++) sim.step();
       }).not.toThrow();
+    }
+  });
+
+  it('registers one module file per Appendix D type id', () => {
+    expect(HAZARD_MODULES.map((m) => m.typeId).sort()).toEqual([...APPENDIX_D_TYPE_IDS].sort());
+    for (const id of APPENDIX_D_TYPE_IDS) {
+      expect(HAZARDS_BY_TYPE.get(id)?.typeId).toBe(id);
     }
   });
 

@@ -11,17 +11,17 @@ import type { FixtureUserData } from './physics/categories';
 import { cloneTuning } from './tuning';
 import { mergeSettings, type MatchSettings } from './rules/settings';
 import { hashWorld, serializeWorld } from './snapshot';
+import { combat } from './player/combat';
+import { controller } from './player/controller';
+import { rules } from './rules/rounds';
+import { spawner } from './rules/spawner';
 import { applyInputs } from './systems/applyInputs';
 import { cleanup } from './systems/cleanup';
-import { combat } from './systems/combat';
-import { controller } from './systems/controller';
 import { damageDeath } from './systems/damage';
 import { hazardsStep } from './systems/hazards';
-import { projectiles } from './systems/projectiles';
-import { rules } from './systems/rules';
-import { spawner } from './systems/spawner';
 import { physicsStep, syncTransforms } from './systems/syncTransforms';
-import { weapons } from './systems/weapons';
+import { projectiles } from './weapons/projectiles';
+import { weapons } from './weapons/systems';
 import { DropState, MatchState, PrevTransform, RoundPhase, RoundState, SimClock, Transform } from './traits';
 
 export type CreateSimOptions = {

@@ -1,3 +1,4 @@
+import type { PersistentDecalLayer } from './fx/decals';
 import type { LightEmitter } from './gpu/lighting';
 import type { Primitive } from './sdf/primitives';
 
@@ -25,6 +26,8 @@ export type RenderFrame = {
     rays: { x1: number; y1: number; x2: number; y2: number }[];
   };
   lights?: LightEmitter[];
+  /** Persistent world-space decal texture; sampled, never rebuilt as groups. */
+  decalLayer?: PersistentDecalLayer;
   hud: {
     slowmo: boolean;
     countdown: number;

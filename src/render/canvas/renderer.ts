@@ -8,6 +8,8 @@ export type Renderer = {
   resize(w: number, h: number): void;
   canvas: HTMLCanvasElement;
   lastGpuMs: number;
+  /** Increments only when a dirty persistent decal texture is uploaded/blitted as a new stamp batch. */
+  decalUploads: number;
 };
 
 export function createCanvasRenderer(canvas: HTMLCanvasElement): Renderer {
@@ -19,10 +21,11 @@ export function createCanvasRenderer(canvas: HTMLCanvasElement): Renderer {
   };
   window.addEventListener('keydown', onKey);
 
-  return {
+  const renderer: Renderer = {
     kind: 'canvas',
     canvas,
     lastGpuMs: 0,
+    decalUploads: 0,
     resize(w: number, h: number) {
       const dpr = window.devicePixelRatio || 1;
       canvas.width = Math.floor(w * dpr);
@@ -47,6 +50,7 @@ export function createCanvasRenderer(canvas: HTMLCanvasElement): Renderer {
         shakeY: frame.camera.shakeY,
         shake: 0,
       };
+      blitDecals(ctx, frame, cam, w, h, renderer);
       const layers = [...frame.groups].sort((a, b) => a.layer - b.layer);
       for (const g of layers) {
         ctx.save();
@@ -104,6 +108,40 @@ export function createCanvasRenderer(canvas: HTMLCanvasElement): Renderer {
       void primitiveSdf;
     },
   };
+  return renderer;
+}
+
+function blitDecals(
+  ctx: CanvasRenderingContext2D,
+  frame: RenderFrame,
+  cam: CameraState,
+  w: number,
+  h: number,
+  renderer: Renderer,
+): void {
+  const layer = frame.decalLayer;
+  if (!layer || layer.stamped === 0) return;
+  const src = layer.canvas ?? layer.imageData();
+  if (!src) return;
+  const b = layer.bounds;
+  const tl = worldToScreen(cam, b.x, b.y + b.h, w, h);
+  const br = worldToScreen(cam, b.x + b.w, b.y, w, h);
+  if (layer.dirty) {
+    renderer.decalUploads += 1;
+    layer.dirty = false;
+  }
+  ctx.save();
+  ctx.imageSmoothingEnabled = true;
+  if ('data' in src) {
+    const tmp = document.createElement('canvas');
+    tmp.width = layer.width;
+    tmp.height = layer.height;
+    tmp.getContext('2d')?.putImageData(src, 0, 0);
+    ctx.drawImage(tmp, tl.x, tl.y, br.x - tl.x, br.y - tl.y);
+  } else {
+    ctx.drawImage(src as CanvasImageSource, tl.x, tl.y, br.x - tl.x, br.y - tl.y);
+  }
+  ctx.restore();
 }
 
 function roundRect(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number): void {

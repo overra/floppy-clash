@@ -10,7 +10,7 @@ export type Particle = {
   color: string;
 };
 
-export type Decal = { x: number; y: number; r: number; color: string };
+export type Decal = { x: number; y: number; r: number; color: string; kind?: 'blood' | 'scorch' };
 
 export function stepParticles(parts: Particle[], dt: number): Particle[] {
   const next: Particle[] = [];
@@ -39,9 +39,22 @@ export function emitFromEvents(events: SimEvents, particles: Particle[], decals:
           color: '#8b1e1e',
         });
       }
-      decals.push({ x: ev.x, y: ev.y, r: 0.15 + ev.amount * 0.01, color: '#5a1010' });
+      decals.push({
+        x: ev.x,
+        y: ev.y,
+        r: 0.15 + ev.amount * 0.01,
+        color: '#5a1010',
+        kind: 'blood',
+      });
     }
     if (ev.type === 'explosion') {
+      decals.push({
+        x: ev.x,
+        y: ev.y,
+        r: Math.max(0.35, ev.radius * 0.28),
+        color: '#2a1a10',
+        kind: 'scorch',
+      });
       for (let i = 0; i < 28; i++) {
         const a = Math.random() * Math.PI * 2;
         particles.push({

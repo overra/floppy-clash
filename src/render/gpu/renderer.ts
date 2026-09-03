@@ -5,6 +5,7 @@ import type { RenderFrame } from '../frame';
 import { primitiveSdf } from '../sdf/primitives';
 import { createLightingPass, type LightingPass } from './lighting';
 import { packGroups, parseHex } from './pack';
+import type { PersistentDecalLayer } from '../fx/decals';
 
 const WGSL = /* wgsl */ `
 struct Camera {
@@ -117,6 +118,56 @@ fn fs(input: VSOut) -> @location(0) vec4f {
 }
 `;
 
+const DECAL_WGSL = /* wgsl */ `
+struct Camera {
+  x: f32,
+  y: f32,
+  zoom: f32,
+  pad: f32,
+  view: vec2f,
+  shake: vec2f,
+}
+struct Bounds {
+  minx: f32,
+  miny: f32,
+  maxx: f32,
+  maxy: f32,
+}
+@group(0) @binding(0) var<uniform> camera: Camera;
+@group(0) @binding(1) var decalTex: texture_2d<f32>;
+@group(0) @binding(2) var decalSamp: sampler;
+@group(0) @binding(3) var<uniform> bounds: Bounds;
+struct VSOut {
+  @builtin(position) pos: vec4f,
+  @location(0) uv: vec2f,
+}
+@vertex
+fn vs(@builtin(vertex_index) vid: u32) -> VSOut {
+  var o: VSOut;
+  let corners = array<vec2f, 6>(
+    vec2f(bounds.minx, bounds.maxy), vec2f(bounds.maxx, bounds.maxy), vec2f(bounds.maxx, bounds.miny),
+    vec2f(bounds.minx, bounds.maxy), vec2f(bounds.maxx, bounds.miny), vec2f(bounds.minx, bounds.miny),
+  );
+  let uvs = array<vec2f, 6>(
+    vec2f(0.0, 0.0), vec2f(1.0, 0.0), vec2f(1.0, 1.0),
+    vec2f(0.0, 0.0), vec2f(1.0, 1.0), vec2f(0.0, 1.0),
+  );
+  let w = corners[vid];
+  let ppm = camera.zoom;
+  let sx = (w.x - camera.x) * ppm + camera.view.x * 0.5 + camera.shake.x;
+  let sy = camera.view.y * 0.5 - (w.y - camera.y) * ppm + camera.shake.y;
+  o.pos = vec4f((sx / camera.view.x) * 2.0 - 1.0, 1.0 - (sy / camera.view.y) * 2.0, 0.0, 1.0);
+  o.uv = uvs[vid];
+  return o;
+}
+@fragment
+fn fs(input: VSOut) -> @location(0) vec4f {
+  let c = textureSample(decalTex, decalSamp, input.uv);
+  if (c.a < 0.01) { discard; }
+  return c;
+}
+`;
+
 async function withTimeout<T>(p: Promise<T>, ms: number): Promise<T | null> {
   return Promise.race([
     p,
@@ -174,6 +225,30 @@ async function createGpuRenderer(canvas: HTMLCanvasElement, opts: GpuRendererOpt
       lighting = null;
     }
   }
+  const decalModule = device.createShaderModule({ code: DECAL_WGSL });
+  const decalPipeline = device.createRenderPipeline({
+    layout: 'auto',
+    vertex: { module: decalModule, entryPoint: 'vs' },
+    fragment: {
+      module: decalModule,
+      entryPoint: 'fs',
+      targets: [{
+        format,
+        blend: {
+          color: { srcFactor: 'src-alpha', dstFactor: 'one-minus-src-alpha', operation: 'add' },
+          alpha: { srcFactor: 'one', dstFactor: 'one-minus-src-alpha', operation: 'add' },
+        },
+      }],
+    },
+    primitive: { topology: 'triangle-list' },
+  });
+  const decalBoundsBuf = device.createBuffer({ size: 16, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+  const decalSampler = device.createSampler({ magFilter: 'linear', minFilter: 'linear' });
+  let decalTex: GPUTexture | null = null;
+  let decalTexW = 0;
+  let decalTexH = 0;
+  let decalBind: GPUBindGroup | null = null;
+
   const query = device.createQuerySet?.({ type: 'timestamp', count: 2 });
   void query;
   void sdDisk;
@@ -182,10 +257,42 @@ async function createGpuRenderer(canvas: HTMLCanvasElement, opts: GpuRendererOpt
   void opSmoothUnion;
   void primitiveSdf;
 
+  function uploadDecals(layer: PersistentDecalLayer): void {
+    if (!layer.dirty && decalTex && decalBind) return;
+    if (!decalTex || decalTexW !== layer.width || decalTexH !== layer.height) {
+      decalTex?.destroy();
+      decalTex = device.createTexture({
+        size: { width: layer.width, height: layer.height },
+        format: 'rgba8unorm',
+        usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
+      });
+      decalTexW = layer.width;
+      decalTexH = layer.height;
+    }
+    device.queue.writeTexture(
+      { texture: decalTex },
+      layer.pixels,
+      { bytesPerRow: layer.width * 4 },
+      { width: layer.width, height: layer.height },
+    );
+    decalBind = device.createBindGroup({
+      layout: decalPipeline.getBindGroupLayout(0),
+      entries: [
+        { binding: 0, resource: { buffer: cameraBuf } },
+        { binding: 1, resource: decalTex.createView() },
+        { binding: 2, resource: decalSampler },
+        { binding: 3, resource: { buffer: decalBoundsBuf } },
+      ],
+    });
+    layer.dirty = false;
+    renderer.decalUploads += 1;
+  }
+
   const renderer: Renderer = {
     kind: 'gpu',
     canvas,
     lastGpuMs: 0,
+    decalUploads: 0,
     resize(w: number, h: number) {
       const dpr = window.devicePixelRatio || 1;
       canvas.width = Math.floor(w * dpr);
@@ -213,6 +320,16 @@ async function createGpuRenderer(canvas: HTMLCanvasElement, opts: GpuRendererOpt
           },
         ],
       });
+      if (frame.decalLayer && frame.decalLayer.stamped > 0) {
+        const b = frame.decalLayer.bounds;
+        device.queue.writeBuffer(decalBoundsBuf, 0, new Float32Array([b.x, b.y, b.x + b.w, b.y + b.h]));
+        uploadDecals(frame.decalLayer);
+        if (decalBind) {
+          pass.setPipeline(decalPipeline);
+          pass.setBindGroup(0, decalBind);
+          pass.draw(6, 1);
+        }
+      }
       pass.setPipeline(pipeline);
       pass.setBindGroup(0, bind);
       if (frame.groups.length) pass.draw(6, frame.groups.length);
