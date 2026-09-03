@@ -248,11 +248,12 @@ describe('honest PLAN stand-ins (no pin/pred OR, no scoreboard shrink)', () => {
     });
     sim.ctx.holdHazards = true;
     sim.step([hold({}), hold({}), hold({}), hold({})]);
-    const span = { prev: 10, now: 10, ok: false };
+    const span = { prev: 10, now: 10, y: 3.2, ok: false };
     sim.ecs.query(Hazard, Transform, PrevTransform).updateEach(([hz, t, prev], e) => {
       if (hz.kind !== HazardKind.Spikeball) return;
       span.prev = prev.x;
       span.now = t.x;
+      span.y = t.y;
       span.ok = true;
       sim.ctx.bodies.get(e)?.setLinearVelocity({ x: 0, y: 0 });
     });
@@ -260,7 +261,7 @@ describe('honest PLAN stand-ins (no pin/pred OR, no scoreboard shrink)', () => {
     expect(Math.abs(span.now - span.prev)).toBeGreaterThan(0.4);
     const mid = (span.prev + span.now) / 2;
     sim.ctx.holdHazards = false;
-    place(sim, p, mid, span.now);
+    place(sim, p, mid, span.y);
     sim.step([hold({}), hold({}), hold({}), hold({})]);
     expect(p.has(Dead)).toBe(true);
     expect(p.get(Health)?.hp ?? 1).toBeLessThanOrEqual(0);
