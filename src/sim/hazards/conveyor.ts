@@ -17,7 +17,8 @@ export const conveyor: HazardModule = {
       const body = getContext(world).bodies.get(player);
       if (body) {
         const v = body.getLinearVelocity();
-        body.setLinearVelocity(new Vec2(v.x + (hz.param1 || 4) * dt * 8, v.y));
+        // param1 is authored belt speed (default 4 in paramsFromObject). 0 means frozen.
+        body.setLinearVelocity(new Vec2(v.x + hz.param1 * dt * 8, v.y));
       }
     }
   },

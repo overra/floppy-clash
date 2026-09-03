@@ -61,7 +61,9 @@ export function freezeHazardKinematics(sim: SimHandle, kind: number): void {
   sim.ecs.query(Hazard).updateEach(([hz], e) => {
     if (hz.kind !== kind) return;
     if (e.has(HazardPath)) e.remove(HazardPath);
+    if (kind === HazardKind.Saw || kind === HazardKind.RotatingPlatform) hz.param0 = 0;
     if (kind === HazardKind.Saw || kind === HazardKind.Crusher) hz.param1 = 0;
+    if (kind === HazardKind.Conveyor || kind === HazardKind.Bounce) hz.param1 = 0;
     const body = sim.ctx.bodies.get(e);
     body?.setLinearVelocity({ x: 0, y: 0 });
     body?.setAngularVelocity(0);

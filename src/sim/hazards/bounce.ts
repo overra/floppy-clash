@@ -15,9 +15,10 @@ export const bounce: HazardModule = {
     const dy = Math.abs(pt.y - ht.y);
     if (dx < (hz.param0 || 1.2) && dy < 1) {
       const body = getContext(world).bodies.get(player);
-      if (body) {
+      if (body && hz.param1 !== 0) {
         const v = body.getLinearVelocity();
-        body.setLinearVelocity(new Vec2(v.x, hz.param1 || 16));
+        // param1 is authored launch speed (default 16). 0 means the pad is frozen.
+        body.setLinearVelocity(new Vec2(v.x, hz.param1));
       }
     }
   },

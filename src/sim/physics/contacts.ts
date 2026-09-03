@@ -34,7 +34,8 @@ function conveyorSpeed(entity: ReturnType<SimContext['entityOf']['get']>): numbe
   if (!entity) return undefined;
   const hz = entity.get(Hazard);
   if (hz?.kind !== HazardKind.Conveyor) return undefined;
-  return hz.param1 || 4;
+  // param1 is authored belt speed. 0 means frozen — do not `|| 4`.
+  return hz.param1;
 }
 
 function playerCtrl(entity: ReturnType<SimContext['entityOf']['get']>) {

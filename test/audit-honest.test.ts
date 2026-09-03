@@ -408,6 +408,86 @@ describe('honest PLAN stand-ins (no pin/pred OR, no scoreboard shrink)', () => {
     expect(Math.abs(x1 - x0.n)).toBeLessThan(0.02);
   });
 
+  it('a saw with param0 = 0 does not spin this tick', () => {
+    const sim = makeSim({
+      level: getLevel('test-saw'),
+      seed: 149,
+      settings: { playerCount: 1 },
+    });
+    sim.ecs.query(Hazard).updateEach(([hz], e) => {
+      if (hz.kind !== HazardKind.Saw) return;
+      hz.param0 = 0;
+      hz.param1 = 0;
+      sim.ctx.bodies.get(e)?.setAngularVelocity(0);
+    });
+    for (let i = 0; i < 8; i++) sim.step([hold({}), hold({}), hold({}), hold({})]);
+    let omega = 99;
+    sim.ecs.query(Hazard).updateEach(([hz], e) => {
+      if (hz.kind === HazardKind.Saw) omega = sim.ctx.bodies.get(e)?.getAngularVelocity() ?? 99;
+    });
+    expect(Math.abs(omega)).toBeLessThan(0.02);
+  });
+
+  it('a conveyor with param1 = 0 does not carry a standing player', () => {
+    const sim = makeSim({
+      level: getLevel('test-conveyor'),
+      seed: 150,
+      settings: { playerCount: 1 },
+    });
+    const p = playerOf(sim);
+    const belt = getLevel('test-conveyor').objects.find((o) => o.type === 'conveyor');
+    sim.ctx.bodies.get(p)?.setPosition({ x: belt?.x ?? 16, y: (belt?.y ?? 2.2) + 1.1 });
+    for (let i = 0; i < 6; i++) sim.step([hold({}), hold({}), hold({}), hold({})]);
+    sim.ecs.query(Hazard).updateEach(([hz]) => {
+      if (hz.kind === HazardKind.Conveyor) hz.param1 = 0;
+    });
+    const x0 = p.get(Transform)?.x ?? 0;
+    for (let i = 0; i < 16; i++) sim.step([hold({}), hold({}), hold({}), hold({})]);
+    // Residual settle only. A `|| 4` belt drive would carry well past 1 m in 16 ticks.
+    expect(Math.abs((p.get(Transform)?.x ?? 0) - x0)).toBeLessThan(0.25);
+  });
+
+  it('a rotating platform with param0 = 0 does not spin this tick', () => {
+    const sim = makeSim({
+      level: getLevel('test-platform.rotating'),
+      seed: 151,
+      settings: { playerCount: 1 },
+    });
+    sim.ecs.query(Hazard).updateEach(([hz], e) => {
+      if (hz.kind !== HazardKind.RotatingPlatform) return;
+      hz.param0 = 0;
+      sim.ctx.bodies.get(e)?.setAngularVelocity(0);
+    });
+    for (let i = 0; i < 8; i++) sim.step([hold({}), hold({}), hold({}), hold({})]);
+    let omega = 99;
+    sim.ecs.query(Hazard).updateEach(([hz], e) => {
+      if (hz.kind === HazardKind.RotatingPlatform) {
+        omega = sim.ctx.bodies.get(e)?.getAngularVelocity() ?? 99;
+      }
+    });
+    expect(Math.abs(omega)).toBeLessThan(0.02);
+  });
+
+  it('a bounce pad with param1 = 0 does not launch', () => {
+    const sim = makeSim({
+      level: getLevel('test-bounce'),
+      seed: 152,
+      settings: { playerCount: 1 },
+    });
+    const p = playerOf(sim);
+    const pad = getLevel('test-bounce').objects.find((o) => o.type === 'bounce');
+    sim.ecs.query(Hazard).updateEach(([hz]) => {
+      if (hz.kind === HazardKind.Bounce) hz.param1 = 0;
+    });
+    sim.ctx.bodies.get(p)?.setPosition({ x: pad?.x ?? 13, y: (pad?.y ?? 2.3) + 0.9 });
+    let launched = false;
+    for (let i = 0; i < 20; i++) {
+      sim.step([hold({}), hold({}), hold({}), hold({})]);
+      if ((sim.ctx.bodies.get(p)?.getLinearVelocity().y ?? 0) > 4) launched = true;
+    }
+    expect(launched).toBe(false);
+  });
+
   it('spikeball last-tick PrevTransform kills after live motion with velocity zeroed', () => {
     const sim = makeSim({
       level: getLevel('test-spikeball-roll'),

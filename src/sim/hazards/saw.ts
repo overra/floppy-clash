@@ -40,7 +40,9 @@ export const saw: HazardModule = {
     const ctx = getContext(world);
     const body = ctx.bodies.get(entity);
     if (!body) return;
-    body.setAngularVelocity(hz.param0 || 6);
+    // param0 is authored omega (default 6 in paramsFromObject). 0 means frozen —
+    // do not `|| 6` or a last-tick freeze becomes a 6 rad/s this-tick drive.
+    body.setAngularVelocity(hz.param0);
     const dt = 1 / ctx.tuning.tickRate;
     if (entity.has(HazardPath)) {
       stepHazardPath(world, entity, dt);
