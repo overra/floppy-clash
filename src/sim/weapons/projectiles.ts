@@ -645,14 +645,19 @@ export function projectiles(world: World): void {
       Math.abs(sx - n.x) <= extHx + ctx.tuning.radius + 0.08 &&
       Math.abs(sy - n.y) <= extHy + ctx.tuning.height / 2 + 0.08;
     const needHop = !snake.flying && !touching && (n.d > 1.5 || n.y - sy > 0.45) && v.y < 1.2;
-    body.setLinearVelocity(
-      new Vec2((dirx / len) * speed, snake.flying ? (diry / len) * speed : needHop ? 6 : v.y),
-    );
+    if (touching) {
+      body.setLinearVelocity(new Vec2(0, snake.flying ? 0 : Math.min(v.y, 0)));
+    } else {
+      body.setLinearVelocity(
+        new Vec2((dirx / len) * speed, snake.flying ? (diry / len) * speed : needHop ? 6 : v.y),
+      );
+    }
     if (touching && snake.biteCooldown <= 0) {
       const aim = n.e.get(Aim);
-      // Flatten incoming to the snake's x-side so a grounded bite at the feet
-      // is still blockable when the shield faces the snake (PLAN M3).
-      const side = Math.sign(n.x - sx);
+      // Threat comes from the shooter (or the snake's x-side). Overshooting
+      // under the capsule must not count as a behind-the-shield bite.
+      const threatX = snakeOwner?.get(Transform)?.x ?? sx;
+      const side = Math.sign(n.x - threatX);
       const vx = side !== 0 ? side : -(aim?.x ?? 1);
       const block = shieldBlocks(world, n.e, sx, sy, vx, 0);
       if (block !== 'none') {
