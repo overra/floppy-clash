@@ -305,15 +305,22 @@ describe('M9 bots', () => {
     const mx0 = sim.ctx.inputs[0]?.moveX ?? 0;
     const mx1 = sim.ctx.inputs[1]?.moveX ?? 0;
     expect(mx0 * mx1).toBeLessThan(0);
+    const dx0 = Math.abs((a.get(Transform)?.x ?? 0) - (b.get(Transform)?.x ?? 0));
     let kills = 0;
+    let maxDx = dx0;
     for (let i = 0; i < 720; i++) {
       const ev = sim.step();
+      maxDx = Math.max(
+        maxDx,
+        Math.abs((a.get(Transform)?.x ?? 0) - (b.get(Transform)?.x ?? 0)),
+      );
       const fists = ev.some((e) => e.type === 'shot' && e.weaponId === 'fists');
       const tickKills = ev.filter((e) => e.type === 'kill').length;
       if (tickKills > 0) expect(fists).toBe(true);
       kills += tickKills;
       if (kills > 0) break;
     }
+    expect(maxDx).toBeGreaterThan(dx0 + 0.25);
     expect(kills).toBeGreaterThan(0);
   });
 

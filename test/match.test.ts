@@ -40,6 +40,7 @@ describe('fists-only match', () => {
       },
     });
     speedRounds(host);
+    expect(host.ctx.tuning.scoreboardTicks).toBe(90);
     let disconnected = false;
     let reconnected = false;
     let kills = 0;

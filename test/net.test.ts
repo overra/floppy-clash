@@ -155,6 +155,7 @@ describe('M8 netcode', () => {
       },
     });
     speedRounds(host);
+    expect(host.ctx.tuning.scoreboardTicks).toBe(90);
     const delay = 6;
     const q: ReturnType<typeof blankInputs>[] = [];
     let bytes = 0;

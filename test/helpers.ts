@@ -39,10 +39,17 @@ export function pin(sim: SimHandle, entity: ReturnType<typeof playerOf>, x: numb
   entity.set(PrevTransform, { x, y, angle: 0 });
 }
 
+/** Body + Transform only — leaves PrevTransform so last-tick sweeps stay honest. */
+export function place(sim: SimHandle, entity: ReturnType<typeof playerOf>, x: number, y: number): void {
+  sim.ctx.bodies.get(entity)?.setPosition({ x, y });
+  sim.ctx.bodies.get(entity)?.setLinearVelocity({ x: 0, y: 0 });
+  entity.set(Transform, { x, y, angle: 0 });
+}
+
 export function speedRounds(sim: SimHandle): void {
   sim.ctx.tuning.countdownTicks = 3;
   sim.ctx.tuning.slowmoTicks = 2;
-  sim.ctx.tuning.scoreboardTicks = 2;
+  // Appendix A scoreboard window (90). Do not shrink it — 10-round proofs must pay it.
 }
 
 export function pos(sim: SimHandle, slot = 0) {

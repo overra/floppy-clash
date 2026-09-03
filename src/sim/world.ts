@@ -26,6 +26,8 @@ import { projectiles } from './weapons/projectiles';
 import { syncHeldWeapons, weapons } from './weapons/systems';
 import {
   DropState,
+  Hazard,
+  HazardKind,
   MatchState,
   Player,
   PrevTransform,
@@ -184,7 +186,19 @@ function spawnTestBoxes(world: World, count: number): void {
   for (let i = 0; i < count; i++) {
     const x = 8 + (i % 6) * 1.2;
     const y = 10 + Math.floor(i / 6) * 1.2;
-    const e = world.spawn(Transform({ x, y, angle: 0 }), PrevTransform({ x, y, angle: 0 }));
+    const e = world.spawn(
+      Transform({ x, y, angle: 0 }),
+      PrevTransform({ x, y, angle: 0 }),
+      Hazard({
+        kind: HazardKind.Crate,
+        param0: 0.8,
+        param1: 0.8,
+        param2: 0,
+        param3: 0,
+        hp: 0,
+        armed: 1,
+      }),
+    );
     assignNetId(world, e);
     const body = createBoxBody(ctx.physics, e, 'prop', x, y, 0.4, 0.4, 'dynamic', {
       density: 1,

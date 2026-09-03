@@ -341,6 +341,62 @@ test('Escape opens the pause overlay and Resume continues', async ({ page }) => 
   await expect(page.getByRole('heading', { name: 'Paused' })).toHaveCount(0);
 });
 
+test('local 10-round fists-only match (PLAN M2 stand-in)', async ({ page }) => {
+  test.setTimeout(120_000);
+  await page.addInitScript(() => {
+    const mk = (id: string, index: number) => {
+      const buttons = Array.from({ length: 17 }, () => ({ pressed: false, touched: false, value: 0 }));
+      return {
+        id,
+        index,
+        connected: true,
+        mapping: 'standard' as const,
+        axes: [0, 0, 0, 0],
+        buttons,
+        timestamp: 1,
+        hapticActuators: [],
+        vibrationActuator: null,
+      };
+    };
+    const pads = [mk('e2e-fist-0', 0), mk('e2e-fist-1', 1), mk('e2e-fist-2', 2), mk('e2e-fist-3', 3)];
+    Object.defineProperty(navigator, 'getGamepads', { value: () => pads, configurable: true });
+    (window as unknown as { __e2ePads: typeof pads }).__e2ePads = pads;
+  });
+  await page.goto('/');
+  await loadFlatArena(page);
+  await page.getByRole('button', { name: 'Local Play' }).click();
+  await page.evaluate(() => {
+    const pads = (window as unknown as { __e2ePads: Gamepad[] }).__e2ePads;
+    for (const pad of pads) {
+      window.dispatchEvent(Object.assign(new Event('gamepadconnected'), { gamepad: pad }));
+    }
+  });
+  await page.evaluate(() => {
+    const pads = (window as unknown as { __e2ePads: { buttons: { pressed: boolean }[] }[] }).__e2ePads;
+    for (const pad of pads) pad.buttons[0]!.pressed = true;
+  });
+  await page.waitForTimeout(80);
+  await page.evaluate(() => {
+    const pads = (window as unknown as { __e2ePads: { buttons: { pressed: boolean }[] }[] }).__e2ePads;
+    for (const pad of pads) pad.buttons[0]!.pressed = false;
+  });
+  await expect(page.locator('[data-seat="3"]')).toHaveAttribute('data-ready', '1');
+  await page.getByRole('button', { name: 'Start' }).click();
+  await page.waitForFunction(() => Boolean(window.__floppy?.configureMatch), null, { timeout: 15_000 });
+  await page.evaluate(() => {
+    window.__floppy?.configureMatch?.({ maxHp: 1, enabledWeapons: [] });
+    window.__floppy?.speedRounds();
+    window.__floppy?.armLiveFists();
+  });
+  await expect
+    .poll(async () => page.evaluate(() => window.__floppy?.matchRound ?? 0), { timeout: 90_000 })
+    .toBeGreaterThanOrEqual(10);
+  await expect
+    .poll(async () => page.evaluate(() => window.__floppy?.fistKills ?? 0), { timeout: 10_000 })
+    .toBeGreaterThanOrEqual(10);
+  await page.evaluate(() => window.__floppy?.disarmLiveFists());
+});
+
 test('scoreboard overlay appears after last stand', async ({ page }) => {
   await page.goto('/');
   await loadFlatArena(page);
@@ -357,6 +413,9 @@ test('scoreboard overlay appears after last stand', async ({ page }) => {
   });
   await expect(page.locator('[data-round-over]')).toBeVisible({ timeout: 30_000 });
   await expect(page.getByRole('heading', { name: /Round over|Last standing/ })).toBeVisible();
+  // Appendix A scoreboard is 90 ticks (~1.5s). A 2-tick cheat would already be gone.
+  await page.waitForTimeout(400);
+  await expect(page.locator('[data-round-over]')).toBeVisible();
   await expect
     .poll(async () => page.evaluate(() => window.__floppy?.fistKills ?? 0), { timeout: 5_000 })
     .toBeGreaterThan(0);

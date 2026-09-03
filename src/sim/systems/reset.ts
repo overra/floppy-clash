@@ -11,6 +11,7 @@ import {
   Hazard,
   Health,
   MatchState,
+  PhysArm,
   Player,
   Projectile,
   RagdollPart,
@@ -52,6 +53,12 @@ export function reloadLevel(world: World, level: LevelDef): void {
   world.query(Weapon).updateEach((_, e) => doomed.push(e));
   world.query(Player, Dead).updateEach((_, e) => {
     if (!ctx.players.includes(e)) doomed.push(e);
+  });
+  // M0 falling boxes (and any other leftover props) have PhysBody but used to
+  // lack Hazard, so they survived reload and pinned live fighters.
+  world.query(PhysBody).updateEach((_, e) => {
+    if (e.has(Player) || e.has(PhysArm) || ctx.players.includes(e)) return;
+    doomed.push(e);
   });
   const seen = new Set<Entity>();
   for (const entity of doomed) {
