@@ -302,23 +302,23 @@ export function createGame(root: HTMLElement): Game {
           show();
         }
       });
-      if (settings.renderer !== 'canvas') {
-        try {
-          const gpu = await tryCreateGpuRenderer(canvas);
-          if (gpu) {
-            renderer = gpu;
-            rendererKind = 'gpu';
-          }
-        } catch {
-          renderer = null;
-        }
-      }
-      if (!renderer) renderer = createCanvasRenderer(canvas);
-      menus.notice = rendererKind === 'gpu' ? 'SDF renderer' : 'Canvas fallback';
+      renderer = createCanvasRenderer(canvas);
+      menus.notice = 'Canvas fallback';
       if (menus.screen !== 'play') show();
       bindDebug();
       if ('serviceWorker' in navigator) void navigator.serviceWorker.register('/sw.js');
       raf = requestAnimationFrame(tick);
+      if (settings.renderer !== 'canvas') {
+        void tryCreateGpuRenderer(canvas)
+          .then((gpu) => {
+            if (!gpu) return;
+            renderer = gpu;
+            rendererKind = 'gpu';
+            menus.notice = 'SDF renderer';
+            if (menus.screen !== 'play') show();
+          })
+          .catch(() => undefined);
+      }
       void net;
     },
     stop() {
