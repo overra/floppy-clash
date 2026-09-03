@@ -663,7 +663,7 @@ export function createGame(root: HTMLElement): Game {
         showWins: settings.showWins,
         physicsArms: settings.physicsArms,
       },
-      boxes: 8,
+      boxes: 0,
     });
     cam = createCamera(level.bounds);
     clearFx(fx);
