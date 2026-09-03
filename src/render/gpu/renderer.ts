@@ -141,6 +141,7 @@ async function createGpuRenderer(
   const cropH = READBACK_H;
   const bytesPerRow = alignBytesPerRow(cropW * PIXEL_BYTES);
   const stagingSize = bytesPerRow * cropH;
+  const mapRead = typeof GPUMapMode !== 'undefined' ? GPUMapMode.READ : 0x0001;
   let staging: GPUBuffer | null = null;
   if (readbackEnabled) {
     try {
@@ -155,34 +156,64 @@ async function createGpuRenderer(
   }
 
   let copyThisFrame = false;
+  let readbackLock = false;
   let pendingRead: ((value: FramebufferReadback) => void) | null = null;
   let inflightRead: Promise<FramebufferReadback> | null = null;
+  void root;
 
   function failRead(reason: string): FramebufferReadback {
     const out = emptyReadback('unavailable', reason);
     pendingRead?.(out);
     pendingRead = null;
     inflightRead = null;
+    readbackLock = false;
     return out;
+  }
+
+  async function probeMapAsync(): Promise<string> {
+    try {
+      const src = device.createBuffer({
+        size: 256,
+        usage: GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST,
+      });
+      const dst = device.createBuffer({
+        size: 256,
+        usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST,
+      });
+      device.queue.writeBuffer(src, 0, new Uint8Array([9, 8, 7, 6]));
+      const probeEnc = device.createCommandEncoder();
+      probeEnc.copyBufferToBuffer(src, 0, dst, 0, 256);
+      device.queue.submit([probeEnc.finish()]);
+      await dst.mapAsync(mapRead);
+      const probeBytes = new Uint8Array(dst.getMappedRange());
+      const ok = probeBytes[0] === 9;
+      dst.unmap();
+      return ok ? 'probe-map:ok' : `probe-map:mismatch:${probeBytes[0] ?? -1}`;
+    } catch (err) {
+      return `probe-map:${errMsg(err)}`;
+    }
   }
 
   async function finishRead(): Promise<FramebufferReadback> {
     if (!staging) return failRead(readbackError || 'no-staging');
     try {
-      await device.queue.onSubmittedWorkDone();
-      await staging.mapAsync(GPUMapMode.READ);
+      if (device.queue.onSubmittedWorkDone) {
+        await device.queue.onSubmittedWorkDone();
+      }
+      await staging.mapAsync(mapRead);
       const mapped = new Uint8Array(staging.getMappedRange().slice(0));
       staging.unmap();
       const out = inspectMappedRgba(mapped, cropW, cropH, bytesPerRow, 'webgpu-copy');
       pendingRead?.(out);
       pendingRead = null;
       inflightRead = null;
+      readbackLock = false;
       return out;
     } catch (err) {
-      return failRead(`map: ${errMsg(err)}`);
+      const probe = await probeMapAsync();
+      return failRead(`map: ${errMsg(err)}; ${probe}`);
     }
   }
-
   function uploadDecals(layer: PersistentDecalLayer): void {
     if (!decalTex || !decalBind || layer.dirty) {
       if (!decalTex || decalTexW !== layer.width || decalTexH !== layer.height) {
@@ -242,6 +273,10 @@ async function createGpuRenderer(
       const t0 = performance.now();
       const w = canvas.width;
       const h = canvas.height;
+      if (readbackLock) {
+        renderer.lastGpuMs = performance.now() - t0;
+        return;
+      }
       cameraBuf.write({
         x: frame.camera.x,
         y: frame.camera.y,
@@ -297,8 +332,11 @@ async function createGpuRenderer(
             { width: rw, height: rh },
           );
           copyThisFrame = false;
+          readbackLock = true;
           device.queue.submit([encoder.finish()]);
           void finishRead();
+          renderer.lastGpuMs = performance.now() - t0;
+          return;
         } catch (err) {
           readbackEnabled = false;
           readbackError = `copyTextureToBuffer: ${errMsg(err)}`;

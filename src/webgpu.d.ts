@@ -45,6 +45,13 @@ interface GPUTexture {
 }
 interface GPUCommandEncoder {
   beginRenderPass(desc: unknown): GPURenderPass;
+  copyBufferToBuffer(
+    source: GPUBuffer,
+    sourceOffset: number,
+    destination: GPUBuffer,
+    destinationOffset: number,
+    size: number,
+  ): void;
   copyTextureToBuffer(
     source: { texture: GPUTexture; origin?: { x: number; y: number; z?: number } },
     destination: { buffer: GPUBuffer; bytesPerRow: number; rowsPerImage?: number },
