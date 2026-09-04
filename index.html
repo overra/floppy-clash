@@ -681,6 +681,57 @@
         transition: transform 0.12s linear;
         will-change: transform;
       }
+      /* Launch mode: the health bar gives way to a percent readout and a pip per stock. */
+      .hud-p[data-mode="launch"] .hud-hp {
+        height: 0;
+        opacity: 0;
+      }
+      .hud-pct {
+        font-size: 17px;
+        font-weight: 900;
+        line-height: 1;
+        letter-spacing: 0.02em;
+        font-variant-numeric: tabular-nums;
+        color: #f4f1ea;
+        text-shadow: 0 1px 0 rgba(0, 0, 0, 0.6);
+        transition: font-size 0.45s var(--ease), color 0.2s ease;
+      }
+      .hud-top[data-card="1"] .hud-pct {
+        font-size: 21px;
+      }
+      .hud-pct.pop {
+        animation: hud-pop 0.3s cubic-bezier(0.2, 1.6, 0.4, 1);
+      }
+      .hud-stocks {
+        display: flex;
+        gap: 4px;
+        height: 8px;
+      }
+      .hud-stocks i {
+        width: 8px;
+        height: 8px;
+        border-radius: 2px;
+        transform: rotate(45deg) scale(0.8);
+        background: rgba(255, 255, 255, 0.14);
+        box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.18);
+        transition: background-color 0.2s ease, opacity 0.3s ease;
+      }
+      .hud-stocks i.on {
+        background: var(--c);
+        box-shadow: 0 0 6px color-mix(in srgb, var(--c) 70%, transparent);
+      }
+      .hud-stocks i.lost {
+        animation: hud-stock-lost 0.5s ease-out;
+      }
+      @keyframes hud-stock-lost {
+        0% {
+          transform: rotate(45deg) scale(1.7);
+          background: #fff;
+        }
+        100% {
+          transform: rotate(45deg) scale(0.8);
+        }
+      }
       .hud-name {
         font-size: 11px;
         font-weight: 700;

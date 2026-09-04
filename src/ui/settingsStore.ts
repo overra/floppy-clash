@@ -1,8 +1,15 @@
+import type { ItemRate, MatchMode } from '../sim/rules/settings';
+
 export type UserSettings = {
+  mode: MatchMode;
   maxHp: number;
+  stocks: number;
   firstTo: number;
   showWins: boolean;
   rotation: 'random' | 'ordered';
+  items: ItemRate;
+  hazards: boolean;
+  fixedSpawns: boolean;
   enabledWeapons: string[] | 'all';
   enabledLevels: string[] | 'all';
   haptics: boolean;
@@ -19,10 +26,15 @@ export type UserSettings = {
 const KEY = 'floppy-clash.settings';
 
 export const DEFAULT_USER_SETTINGS: UserSettings = {
+  mode: 'standing',
   maxHp: 100,
+  stocks: 3,
   firstTo: 0,
   showWins: true,
   rotation: 'random',
+  items: 'normal',
+  hazards: true,
+  fixedSpawns: false,
   enabledWeapons: 'all',
   enabledLevels: 'all',
   haptics: true,

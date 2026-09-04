@@ -29,6 +29,7 @@ import {
   ShapeKind,
   Snake,
   Status,
+  Stocks,
   Transform,
   Weapon,
 } from '../sim/traits';
@@ -147,11 +148,16 @@ export function buildFrame(
     const sec = secondaryFromVelocity(limbs.get(e) ?? emptyLimbState(), ctrl.vx, ctrl.vy, ctrl.grounded, opts.dt ?? 1 / 60);
     limbs.set(e, sec);
     const hp = e.get(Health);
-    const hurtState = hurt.get(e) ?? { hp: hp?.hp ?? 0, until: -1 };
-    if (hp && hp.hp < hurtState.hp) hurtState.until = tick + 8;
-    hurtState.hp = hp?.hp ?? hurtState.hp;
+    // Damage shows as hp going down or (launch mode) percent going up; one falling number covers both.
+    const wound = hp ? hp.hp - hp.percent : 0;
+    const hurtState = hurt.get(e) ?? { hp: wound, until: -1 };
+    if (hp && wound < hurtState.hp) hurtState.until = tick + 8;
+    hurtState.hp = hp ? wound : hurtState.hp;
     hurt.set(e, hurtState);
     const hurtTicks = hurtState.until > tick ? hurtState.until - tick : 0;
+    const status = e.get(Status);
+    // Respawn / ledge immunity reads as a steady blink.
+    const ghosted = (status?.invuln ?? 0) > 0 && (tick >> 2) % 2 === 0;
 
     const wep = heldWeapons.get(e as unknown as number);
     const held = wep ? weaponByIndex(wep.defId) : null;
@@ -178,9 +184,9 @@ export function buildFrame(
       },
       sec,
     );
-    const bodyColor = hurtTicks > 5 ? shade(color, 0.45) : color;
+    const bodyColor = hurtTicks > 5 ? shade(color, 0.45) : ghosted ? withAlpha(color, 0.45) : color;
     groups.push(group(fig.body, bodyColor, Layer.Players, { blend: 'smoothUnion', smoothK: FIGURE.smoothK, style: 'shaded', pad: 0.4 }));
-    groups.push(group(fig.eyes, INK, Layer.Players, { style: 'flat', pad: 0.1 }));
+    groups.push(group(fig.eyes, ghosted ? withAlpha(INK, 0.45) : INK, Layer.Players, { style: 'flat', pad: 0.1 }));
     anchors.set(e, fig.weaponAnchor);
 
     if (combat.stun > 0 && !dead) {
@@ -195,7 +201,6 @@ export function buildFrame(
       groups.push(group(stars, withAlpha('#fff4aa', 0.9), Layer.Overlay, { style: 'flat', fx: 'glow', glow: 0.2 }));
     }
 
-    const status = e.get(Status);
     if (status && status.burning > 0 && !dead) {
       // On fire: tongues of flame licking up the torso, guttering as the burn runs out.
       const strength = Math.min(1, status.burning / 30);
@@ -265,6 +270,8 @@ export function buildFrame(
       crown: e.has(Crown),
       hp: hp?.hp ?? 0,
       maxHp: hp?.maxHp ?? 100,
+      percent: hp?.percent ?? 0,
+      stocks: e.get(Stocks)?.left ?? 0,
     });
   }
   hudPlayers.sort((a, b) => a.slot - b.slot);
@@ -547,6 +554,8 @@ export function buildFrame(
       wins: winsArr,
       firstTo: ms?.firstTo ?? 0,
       showWins: (ms?.showWins ?? 1) === 1,
+      mode: ms?.mode ?? 0,
+      stockLimit: ms?.stocks ?? 0,
       phase: rs?.phase ?? 0,
       tick: ctx.tick,
       physicsMs: ctx.lastPhysicsMs,

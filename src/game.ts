@@ -43,7 +43,8 @@ import { gpuFailureReason, tryCreateGpuRenderer } from './render/gpu/renderer';
 import { createDecalLayerPool, snapDecalToSurface, type PersistentDecalLayer } from './render/fx/decals';
 import { createParticles, emitFromEvents, stepParticles, type Decal } from './render/fx/particles';
 import { blankInputs, type PlayerInput } from './sim/input';
-import { Bot, Combat, Dead, Health, Held, HeldBy, Loose, MatchState, Player, Projectile, RoundPhase, RoundState, Transform, Weapon } from './sim/traits';
+import { Bot, Combat, Dead, Health, Held, HeldBy, Loose, MatchModeIndex, MatchState, Player, Projectile, RoundPhase, RoundState, Transform, Weapon } from './sim/traits';
+import type { MatchMode } from './sim/rules/settings';
 import { WEAPON_BY_ID, weaponByIndex } from './sim/weapons/defs';
 import { createSimWorld, type SimHandle } from './sim/world';
 import { spawnWeapon } from './sim/systems/weapons';
@@ -193,6 +194,8 @@ export function createGame(root: HTMLElement): Game {
   const menus = createMenuState();
   menus.maxHp = settings.maxHp;
   menus.firstTo = settings.firstTo;
+  menus.mode = settings.mode;
+  menus.stocks = settings.stocks;
   const keys = createKeyboardFallback();
   const mixer = createMixer();
   mixer.sfx = settings.sfx;
@@ -367,6 +370,8 @@ export function createGame(root: HTMLElement): Game {
           saveSettings(settings);
           menus.maxHp = settings.maxHp;
           menus.firstTo = settings.firstTo;
+          menus.mode = settings.mode;
+          menus.stocks = settings.stocks;
           mixer.sfx = settings.sfx;
           mixer.music = settings.music;
           menus.screen = 'menu';
@@ -385,10 +390,21 @@ export function createGame(root: HTMLElement): Game {
           if (!menus.roomCode) menus.roomCode = Math.random().toString(36).slice(2, 8).toUpperCase();
           settings.maxHp = menus.maxHp;
           settings.firstTo = menus.firstTo;
+          settings.mode = menus.mode;
+          settings.stocks = menus.stocks;
           saveSettings(settings);
-          menus.chat.push(`* hosted room ${menus.roomCode} (HP ${menus.maxHp}, first-to ${menus.firstTo || 'endless'})`);
+          const rules = settings.mode === 'launch' ? `launch, ${settings.stocks} stocks` : `HP ${menus.maxHp}`;
+          menus.chat.push(`* hosted room ${menus.roomCode} (${rules}, first-to ${menus.firstTo || 'endless'})`);
           for (const msg of hostContentMessages(
-            JSON.stringify({ maxHp: settings.maxHp, firstTo: settings.firstTo }),
+            JSON.stringify({
+              mode: settings.mode,
+              maxHp: settings.maxHp,
+              stocks: settings.stocks,
+              firstTo: settings.firstTo,
+              items: settings.items,
+              hazards: settings.hazards,
+              fixedSpawns: settings.fixedSpawns,
+            }),
             JSON.stringify({ id: 'host-level' }),
           )) {
             net.send(msg);
@@ -449,7 +465,7 @@ export function createGame(root: HTMLElement): Game {
       const humans = Math.max(1, taken.length);
       const bots = Math.min(menus.bots, maxBots(menus.seats));
       extraLevels = settings.includeUserLevels ? await loadLibrary().catch(() => []) : [];
-      const pool = matchLevelPool(settings.enabledLevels, extraLevels);
+      const pool = matchLevelPool(settings.enabledLevels, extraLevels, settings.mode);
       const level =
         settings.rotation === 'ordered'
           ? (pool[0] ?? gymLevel)
@@ -492,9 +508,19 @@ export function createGame(root: HTMLElement): Game {
     const bots = sim.players().filter((p) => p.has(Bot)).length;
     const ms = sim.ecs.get(MatchState);
     const colors = sim.players().map((p) => p.get(Player)?.color ?? 0);
-    const pool = matchLevelPool(settings.enabledLevels, extraLevels);
+    const mode: MatchMode = ms ? (ms.mode === MatchModeIndex.launch ? 'launch' : 'standing') : settings.mode;
+    const pool = matchLevelPool(settings.enabledLevels, extraLevels, mode);
     const level = settings.rotation === 'ordered' ? (pool[0] ?? gymLevel) : (pool[Math.floor(Math.random() * pool.length)] ?? gymLevel);
-    startSim(level, { playerCount: humanCount, bots, maxHp: ms?.maxHp, firstTo: ms?.firstTo, devices: slotDevices, colors });
+    startSim(level, {
+      playerCount: humanCount,
+      bots,
+      maxHp: ms?.maxHp,
+      firstTo: ms?.firstTo,
+      mode,
+      stocks: ms?.stocks,
+      devices: slotDevices,
+      colors,
+    });
   }
 
   type StartOpts = {
@@ -502,6 +528,8 @@ export function createGame(root: HTMLElement): Game {
     bots: number;
     maxHp?: number;
     firstTo?: number;
+    mode?: MatchMode;
+    stocks?: number;
     seed?: number;
     /** Input device per human slot; omitted for editor / debug launches (slot k <- pad k, or the keyboard). */
     devices?: string[];
@@ -524,8 +552,13 @@ export function createGame(root: HTMLElement): Game {
       settings: {
         playerCount: opts.playerCount,
         bots: opts.bots,
+        mode: opts.mode ?? settings.mode,
         maxHp: opts.maxHp ?? settings.maxHp,
+        stocks: opts.stocks ?? settings.stocks,
         firstTo: opts.firstTo ?? settings.firstTo,
+        items: settings.items,
+        hazards: settings.hazards,
+        fixedSpawns: settings.fixedSpawns,
         enabledWeapons: settings.enabledWeapons,
         enabledLevels: settings.enabledLevels,
         rotation: settings.rotation,
@@ -1087,11 +1120,15 @@ export function createGame(root: HTMLElement): Game {
           tally: HTMLElement;
           wins: HTMLElement;
           hp: HTMLElement;
+          pct: HTMLElement;
+          stocks: HTMLElement;
           crown: HTMLElement | null;
           /** Last values written to the DOM, so unchanged frames write nothing. */
           alive: string;
           winner: string;
           hpPct: number;
+          percent: number;
+          stocksLeft: number;
         }
       >(),
       lastCardKey: '',
@@ -1169,9 +1206,11 @@ export function createGame(root: HTMLElement): Game {
     const plist = h.players ?? [];
     const wins = h.wins ?? [0, 0, 0, 0];
     const firstTo = h.firstTo ?? 0;
+    const launch = h.mode === MatchModeIndex.launch;
+    const stockLimit = Math.min(Math.max(h.stockLimit ?? 0, 1), 10);
     const over = h.phase === RoundPhase.LastKill || h.phase === RoundPhase.Scoreboard || h.phase === RoundPhase.MatchOver;
     const winnerSlot = !over ? -1 : h.phase === RoundPhase.MatchOver ? (h.matchWinner ?? -1) : (h.roundWinner ?? -1);
-    const roster = plist.map((p) => `${p.slot}:${p.color}`).join('|') + (h.showWins ? 'w' : '');
+    const roster = plist.map((p) => `${p.slot}:${p.color}`).join('|') + (h.showWins ? 'w' : '') + (launch ? `L${stockLimit}` : '');
     if (roster !== hud.lastRoster) {
       hud.lastRoster = roster;
       hud.players.innerHTML = '';
@@ -1181,6 +1220,7 @@ export function createGame(root: HTMLElement): Game {
         card.className = 'hud-p';
         card.style.setProperty('--c', p.color);
         card.dataset.slot = String(p.slot);
+        if (launch) card.dataset.mode = 'launch';
         const face = document.createElement('div');
         face.className = 'hud-face';
         card.append(face);
@@ -1193,12 +1233,35 @@ export function createGame(root: HTMLElement): Game {
         hp.className = 'hud-hp';
         hp.append(document.createElement('i'));
         card.append(hp);
+        // Launch mode: the percent readout and a pip per stock stand in for the health bar.
+        const pct = document.createElement('div');
+        pct.className = 'hud-pct';
+        const stocks = document.createElement('div');
+        stocks.className = 'hud-stocks';
+        if (launch) {
+          for (let i = 0; i < stockLimit; i++) stocks.append(document.createElement('i'));
+          card.append(pct, stocks);
+        }
         const name = document.createElement('div');
         name.className = 'hud-name';
         name.textContent = slotName(p.slot).toUpperCase();
         card.append(name);
         hud.players.append(card);
-        hud.cards.set(p.slot, { card, face, tally, wins: winsEl, hp: hp.firstElementChild as HTMLElement, crown: null, alive: '', winner: '', hpPct: -1 });
+        hud.cards.set(p.slot, {
+          card,
+          face,
+          tally,
+          wins: winsEl,
+          hp: hp.firstElementChild as HTMLElement,
+          pct,
+          stocks,
+          crown: null,
+          alive: '',
+          winner: '',
+          hpPct: -1,
+          percent: -1,
+          stocksLeft: -1,
+        });
       }
     }
     // Every write below is guarded by the value it last wrote: the DOM is only touched when a value
@@ -1223,6 +1286,29 @@ export function createGame(root: HTMLElement): Game {
       if (c.hpPct !== hpPct) {
         c.hpPct = hpPct;
         c.hp.style.setProperty('--hp', HP_SCALE[hpPct]!);
+      }
+      if (launch) {
+        const percent = Math.round(p.percent);
+        if (c.percent !== percent) {
+          const climbed = percent > c.percent && c.percent >= 0;
+          c.percent = percent;
+          c.pct.textContent = `${percent}%`;
+          // Hotter with damage: white through yellow to red, the way a platform fighter reads danger.
+          c.pct.style.color = percent < 50 ? '#f4f1ea' : percent < 100 ? '#ffd447' : percent < 150 ? '#ff8a3d' : '#ff4a4a';
+          if (climbed) {
+            c.pct.classList.remove('pop');
+            void c.pct.offsetWidth;
+            c.pct.classList.add('pop');
+          }
+        }
+        if (c.stocksLeft !== p.stocks) {
+          const lost = c.stocksLeft > p.stocks && c.stocksLeft >= 0;
+          c.stocksLeft = p.stocks;
+          Array.from(c.stocks.children).forEach((dot, i) => {
+            dot.classList.toggle('on', i < p.stocks);
+            dot.classList.toggle('lost', lost && i === p.stocks);
+          });
+        }
       }
       if (h.showWins) {
         const w = wins[p.slot] ?? 0;
