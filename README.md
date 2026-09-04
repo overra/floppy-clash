@@ -43,6 +43,10 @@ Pads only appear after you press a button. Keyboard/mouse is a development fallb
 
 Rules also cover **Items** (normal / low / off), **Hazards** (off strips arenas to ground and moving platforms) and **Fixed spawns**; items off plus hazards off is a neutral stage.
 
+### Items
+
+Alongside the guns, the sky drops pickups: the **Slugger** (hold to wind up, let go to swing; a full charge swings on its own), the **Walker Mine** (a mine on legs that hunts the nearest fighter), the **Mallet** (swings itself, no guard or wall-kick while you carry it), the **Repulsor Puck** (plants a bumper that bats fighters away) and four consumables taken on touch: **Mend Kit** (heals, or wipes percent in launch mode), **Lead Coat** (heavy: shoves land soft, jumps low), **Sprint Charm** (quick) and **Mirror Pin** (bullets and shells bounce back). Now and then a **Surge Orb** drifts in; break it and you are handed the Surge Cannon, one sweeping beam that hits everyone in its line.
+
 ### Static hosting / PWA
 
 `npm run build` emits `dist/`. Deploy that folder to any static host (GitHub Pages, Netlify, nginx). The [pages workflow](.github/workflows/pages.yml) publishes `dist/` when this branch is merged to `main`. Install from the browser as a PWA (`public/manifest.webmanifest` + `sw.js`) for offline couch play.

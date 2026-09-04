@@ -397,9 +397,11 @@ export function buildFrame(
           const ey = sy + aim.y * 40;
           const isLava = def.category === 'lava';
           const core = isLava ? '#fff1c0' : '#e8fdff';
-          const glow = isLava ? '#ff7a1a' : '#39f2ff';
-          groups.push(group([cap(sx, sy, ex, ey, 0.16 + 0.03 * Math.sin(time * 50))], withAlpha(glow, 0.7), Layer.Projectiles, { style: 'flat', fx: 'glow', glow: 0.7 }));
-          groups.push(group([cap(sx, sy, ex, ey, 0.05)], core, Layer.Projectiles, { style: 'flat', pad: 0.2 }));
+          const glow = def.oneShot ? '#ffffff' : isLava ? '#ff7a1a' : '#39f2ff';
+          // A super's beam is a wall of light, not a line.
+          const girth = def.oneShot ? def.projectile.radius : 0.16;
+          groups.push(group([cap(sx, sy, ex, ey, girth + 0.03 * Math.sin(time * 50))], withAlpha(glow, 0.7), Layer.Projectiles, { style: 'flat', fx: 'glow', glow: def.oneShot ? 1.2 : 0.7 }));
+          groups.push(group([cap(sx, sy, ex, ey, def.oneShot ? girth * 0.4 : 0.05)], core, Layer.Projectiles, { style: 'flat', pad: 0.2 }));
         }
         break;
       }

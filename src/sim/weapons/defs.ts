@@ -824,6 +824,26 @@ const raw = [
     sound: 'pickup',
     milestone: 'm6',
   },
+  {
+    // The super a broken Surge Orb hands out: one sweeping beam that hits everyone in its line, then it is gone.
+    id: 'surge-cannon',
+    category: 'other',
+    ammo: 1,
+    fireMode: 'semi',
+    fireIntervalTicks: 30,
+    oneShot: true,
+    projectile: { kind: 'beam', speed: 0, damage: 10, count: 1, gravity: 0, bounce: 0, fuse: 0, radius: 0.6, explodeDamage: 0, explodeImpulse: 0, status: 'none', warningTicks: 0, beamTicks: 12, rare: true },
+    recoil: { back: 4, up: 1, forward: 0 },
+    knockback: 3,
+    thrownDamage: 20,
+    dropWeight: 0,
+    twoHanded: true,
+    laserSight: true,
+    infiniteAmmo: false,
+    shape: { kind: 'surge-cannon', length: 1.0 },
+    sound: 'shot.beam',
+    milestone: 'm6',
+  },
 ];
 
 /** Distinctive public names (PLAN §9). Ids stay stable for data/toggles. */
@@ -873,6 +893,7 @@ const DISPLAY_NAMES: Record<string, string> = {
   'lead-coat': 'Lead Coat',
   'sprint-charm': 'Sprint Charm',
   'mirror-pin': 'Mirror Pin',
+  'surge-cannon': 'Surge Cannon',
 };
 
 export const WEAPON_DEFS: WeaponDef[] = raw.map((def) =>

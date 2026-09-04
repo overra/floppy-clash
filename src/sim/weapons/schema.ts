@@ -16,6 +16,8 @@ export const WeaponDefSchema = z.object({
   burstCount: z.number().optional(),
   /** Holding this weapon keeps the guard down and the wall-kick off (forced swingers). */
   lockGuard: z.boolean().default(false),
+  /** A super: gone the moment it fires (never refilled or passed on), and its beam sweeps everyone in line. */
+  oneShot: z.boolean().default(false),
   /** What a shell leaves behind instead of a blast when it settles: `repulsor` plants a bumper. */
   deploy: z.enum(['none', 'repulsor']).default('none'),
   projectile: z.object({

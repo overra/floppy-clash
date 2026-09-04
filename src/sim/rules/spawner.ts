@@ -1,7 +1,8 @@
 import { type World } from 'koota';
 import { getContext } from '../context';
 import { raycastClosest } from '../physics/queries';
-import { DropState, Loose, RoundPhase, RoundState, Weapon } from '../traits';
+import { DropState, Hazard, HazardKind, Loose, RoundPhase, RoundState, Weapon } from '../traits';
+import { spawnSurgeOrb } from '../hazards';
 import { droppableWeapons } from '../weapons/resolve';
 import { spawnWeapon } from '../weapons/systems';
 
@@ -15,6 +16,9 @@ const WAVE_GAP_TICKS = 8;
  */
 /** `low` items: no opening volley, and every wait between drops is this many times longer. */
 const LOW_ITEMS_SLOWDOWN = 3;
+/** A drop has this chance of being a Surge Orb, and orbs come no closer together than this. */
+const SURGE_ORB_CHANCE = 0.12;
+const SURGE_ORB_SPACING_TICKS = 1500;
 
 export function openDrops(world: World): void {
   const ctx = getContext(world);
@@ -80,7 +84,18 @@ export function spawner(world: World): void {
       break;
     }
   }
-  spawnWeapon(world, def.id, x, y);
+  // Now and then the sky sends a Surge Orb instead of a gun: one at a time, well spaced, never in the opening volley.
+  let orbs = 0;
+  world.query(Hazard).updateEach(([hz]) => {
+    if (hz.kind === HazardKind.SurgeOrb) orbs += 1;
+  });
+  const orbDue = !inWave && orbs === 0 && ctx.tick - drop.lastOrb >= SURGE_ORB_SPACING_TICKS && ctx.rng.next() < SURGE_ORB_CHANCE;
+  if (orbDue) {
+    spawnSurgeOrb(world, x, bounds.y + bounds.h * 0.7);
+    drop.lastOrb = ctx.tick;
+  } else {
+    spawnWeapon(world, def.id, x, y);
+  }
   if (inWave) {
     drop.wave -= 1;
   }

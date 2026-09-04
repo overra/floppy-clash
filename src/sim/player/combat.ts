@@ -7,7 +7,8 @@ import { launchHit } from './knockback';
 import { chooseStrike, isKick, PUNCH_WINDUP_TICKS, strikeDef, type StrikeDef } from './strikes';
 import { combatAllowed } from '../rules/rounds';
 import { weaponDef } from '../weapons/resolve';
-import { Aim, Combat, Controller, Dead, Held, HeldBy, Loose, Player, StrikeKind, Transform, Weapon } from '../traits';
+import { woundDestructible } from '../hazards/common';
+import { Aim, Combat, Controller, Dead, Destructible, Held, HeldBy, Loose, Player, Shape, StrikeKind, Transform, Weapon } from '../traits';
 
 const fighters = createQuery(Player, Combat, Aim, Controller, Transform);
 const targets = createQuery(Player, Combat, Transform, Not(Dead));
@@ -168,6 +169,16 @@ function resolveStrike(world: World, attacker: Entity, def: StrikeDef): void {
     takeDamage(world, other, def.damage, 'body', attacker, otherT.x, otherT.y);
     launchHit(world, other, aim.x, aim.y, def.knockback, def.lift);
     disarm(world, other);
+  }
+
+  // Breakable props in reach take the blow too (crates, barrels, a drifting orb).
+  for (const prop of [...world.query(Destructible, Transform)]) {
+    const pt = prop.get(Transform);
+    const shape = prop.get(Shape);
+    if (!pt) continue;
+    const size = shape ? Math.max(shape.hx, shape.hy, shape.r) : 0.4;
+    if (!strikeTouches(at, hit, def.radius + size, pt.x, pt.y)) continue;
+    woundDestructible(prop, def.damage, attacker);
   }
 }
 

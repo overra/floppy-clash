@@ -5,6 +5,7 @@ import { applyExplosion, queryBodiesInRadius, raycastClosest } from '../physics/
 import { takeDamage, hitZoneAt } from '../player/health';
 import { launchHit } from '../player/knockback';
 import { shieldBlocks } from '../player/combat';
+import { woundDestructible } from '../hazards/common';
 import { plantRepulsor } from '../hazards/repulsor';
 import { isLaunch } from '../rules/mode';
 import { reflects } from './consumables';
@@ -113,13 +114,7 @@ export function detonate(world: World, x: number, y: number, radius: number, dam
         const h = target.get(Health);
         if (h) target.set(Health, { hp: h.hp - damage * falloff, maxHp: h.maxHp });
       }
-      if (target.has(Destructible)) {
-        const d = target.get(Destructible);
-        if (d) {
-          const hp = d.hp - damage * falloff;
-          target.set(Destructible, { hp, maxHp: d.maxHp });
-        }
-      }
+      if (target.has(Destructible)) woundDestructible(target, damage * falloff, owner);
     },
     { skipPlayers: launch },
   );
@@ -268,9 +263,7 @@ function stepSwing(world: World, ctx: SimContext, entity: Entity, proj: Projecti
     const hit = raycastClosest(world, ot.x, ot.y, tipX, tipY, (h) => h.entity === owner || h.kind === 'player' || h.kind === 'projectile' || h.kind === 'sensor' || h.kind === 'weapon');
     if (hit && world.has(hit.entity as Entity) && (hit.entity as Entity).has(Destructible)) {
       proj.hitMask |= 1 << 31;
-      const target = hit.entity as Entity;
-      const d = target.get(Destructible);
-      if (d) target.set(Destructible, { hp: d.hp - proj.damage, maxHp: d.maxHp });
+      woundDestructible(hit.entity as Entity, proj.damage, owner);
     }
   }
 
@@ -343,8 +336,7 @@ function stepBullet(
       if (h) target.set(Health, { hp: h.hp - proj.damage, maxHp: h.maxHp });
       emit(world, { type: 'blood', x: hit.x, y: hit.y, amount: 6 });
     } else if (world.has(target) && target.has(Destructible)) {
-      const d = target.get(Destructible);
-      if (d) target.set(Destructible, { hp: d.hp - proj.damage, maxHp: d.maxHp });
+      woundDestructible(target, proj.damage, owner);
     }
     if (proj.bounces > 0) {
       proj.bounces -= 1;
@@ -571,7 +563,21 @@ function deploy(world: World, ctx: SimContext, entity: Entity, proj: ProjectileS
 function stepBeam(world: World, ctx: SimContext, entity: Entity, proj: ProjectileState, def: WeaponDef, owner: Entity | undefined): void {
   const aim = owner ? owner.get(Aim) : undefined;
   const ot = owner ? owner.get(Transform) : undefined;
-  if (aim && ot) {
+  if (aim && ot && def.oneShot) {
+    // A super sweeps: everyone along the line to the first wall is hurt and shoved down the beam.
+    const wall = raycastClosest(world, ot.x, ot.y, ot.x + aim.x * 40, ot.y + aim.y * 40, (h) => h.kind !== 'solid' && h.kind !== 'prop');
+    const reach = wall ? wall.fraction * 40 : 40;
+    const ex = ot.x + aim.x * reach;
+    const ey = ot.y + aim.y * reach;
+    world.query(livePlayers).updateEach(([, pt], other) => {
+      if (other === owner) return;
+      const c = playerCentre(ctx, other, pt);
+      if (segmentDistance(ot.x, ot.y, ex, ey, c.x, c.y) > def.projectile.radius + 0.35) return;
+      takeDamage(world, other, proj.damage, 'body', owner ?? -1, c.x, c.y);
+      shove(ctx, other, aim.x, aim.y, def.knockback, 0.4);
+    });
+    if (wall && world.has(wall.entity as Entity) && (wall.entity as Entity).has(Destructible)) woundDestructible(wall.entity as Entity, proj.damage, owner);
+  } else if (aim && ot) {
     const hit = raycastClosest(world, ot.x, ot.y, ot.x + aim.x * 40, ot.y + aim.y * 40, (h) => h.entity === owner || h.kind === 'projectile' || h.kind === 'sensor');
     if (hit && world.has(hit.entity as Entity) && (hit.entity as Entity).has(Player)) {
       takeDamage(world, hit.entity as Entity, proj.damage, 'body', owner ?? -1, hit.x, hit.y);

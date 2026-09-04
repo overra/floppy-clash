@@ -1,10 +1,10 @@
 import type { Entity } from 'koota';
 import { describe, expect, it } from 'vitest';
-import { REPULSOR_TICKS } from '../src/sim/hazards';
+import { REPULSOR_TICKS, SURGE_ORB_HP, spawnSurgeOrb } from '../src/sim/hazards';
 import { spawnWeapon } from '../src/sim/systems/weapons';
-import { Combat, Hazard, HazardKind, Health, Held, HeldBy, Lifetime, Loose, Modifiers, Snake, Status, Transform, Weapon } from '../src/sim/traits';
+import { Combat, Destructible, EffectKind, Hazard, HazardKind, Health, Held, HeldBy, Lifetime, Loose, Modifiers, Snake, Status, Transform, Weapon } from '../src/sim/traits';
 import { CHARGE_MAX_TICKS } from '../src/sim/weapons/systems';
-import { hold, makeSim, playerOf, runTrack, stepMany } from './helpers';
+import { hold, makeSim, playerOf, runTrack, stepMany, woodsClearing } from './helpers';
 
 /** Two fighters on the flat run track, `gap` metres apart, A armed with `weaponId`. */
 function duel(weaponId: string, gap: number, settings: Record<string, unknown> = {}) {
@@ -253,6 +253,105 @@ describe('consumables', () => {
     expect(shooterHits).toBe(1);
     expect(a.get(Health)?.hp ?? 100).toBeLessThan(100);
   });
+});
+
+describe('Surge Orb', () => {
+  function orbDuel() {
+    const { sim, a, b } = duel('pistol', 8);
+    const orb = spawnSurgeOrb(sim.ecs, 20.6, 3.4)!;
+    // Hold the orb still beside A so strikes land where the test expects.
+    orb.set(Hazard, { param1: 0 });
+    return { sim, a, b, orb };
+  }
+
+  it('drifts about the upper arena', () => {
+    const sim = makeSim({ level: runTrack, seed: 4, settings: { playerCount: 1, items: 'off' } });
+    const orb = spawnSurgeOrb(sim.ecs, 30, 8)!;
+    const start = { ...orb.get(Transform)! };
+    let moved = 0;
+    for (let i = 0; i < 240; i++) {
+      sim.step();
+      const t = orb.get(Transform)!;
+      moved = Math.max(moved, Math.hypot(t.x - start.x, t.y - start.y));
+      expect(t.y).toBeGreaterThan(runTrack.bounds.h * 0.4);
+      expect(t.x).toBeGreaterThan(runTrack.bounds.x);
+      expect(t.x).toBeLessThan(runTrack.bounds.x + runTrack.bounds.w);
+    }
+    expect(moved).toBeGreaterThan(1);
+    expect(orb.get(Destructible)?.hp).toBe(SURGE_ORB_HP);
+  });
+
+  it('bare fists break it, and the breaker gets the cannon in place of what they held', () => {
+    const { sim, a, orb } = orbDuel();
+    const pistol = sim.ecs.query(Weapon, Held).find((w) => w.targetFor(HeldBy) === a)!;
+    // Drop the pistol so A punches; then pick it up again to show the swap.
+    let punches = 0;
+    let broke = false;
+    for (let i = 0; i < 90 && !broke; i++) {
+      const drop = i === 0;
+      const ev = sim.step([hold({ throw: drop, attack: i % 25 === 5, aimX: 1, aimY: 0.35 }), idle, hold({}), hold({})]);
+      punches += ev.filter((e) => e.type === 'punch').length;
+      broke = !sim.ecs.has(orb);
+      if (!broke && (orb.get(Destructible)?.hp ?? SURGE_ORB_HP) < SURGE_ORB_HP) {
+        expect(orb.get(Destructible)?.lastHit).toBe(a as unknown as number);
+      }
+    }
+    expect(punches).toBeGreaterThanOrEqual(2);
+    expect(broke).toBe(true);
+    const cannon = sim.ecs.query(Weapon, Held).find((w) => w.targetFor(HeldBy) === a);
+    expect(cannon).toBeDefined();
+    expect(sim.ctx.weapons[cannon!.get(Weapon)!.defId]!.id).toBe('surge-cannon');
+    expect(a.get(Modifiers)?.kind).toBe(EffectKind.Surge);
+    expect(pistol.has(Held)).toBe(false);
+  });
+
+  it('a shooter is credited too, and the cannon sweeps everyone in line once, then is gone', () => {
+    const { sim, a, b, orb } = orbDuel();
+    // Shoot the orb: it hangs at head height just ahead of A.
+    let broke = false;
+    for (let i = 0; i < 120 && !broke; i++) {
+      sim.step([hold({ attack: i % 10 === 0, aimX: 0.9, aimY: 0.5 }), idle, hold({}), hold({})]);
+      broke = !sim.ecs.has(orb);
+    }
+    expect(broke).toBe(true);
+    const cannon = sim.ecs.query(Weapon, Held).find((w) => w.targetFor(HeldBy) === a)!;
+    expect(sim.ctx.weapons[cannon.get(Weapon)!.defId]!.id).toBe('surge-cannon');
+
+    // Line a second fighter up behind B and fire: both are hit and shoved down the beam.
+    const c = playerOf(sim, 2);
+    void c;
+    sim.ctx.bodies.get(b)?.setPosition({ x: 25, y: 2.81 });
+    b.set(Transform, { x: 25, y: 2.81, angle: 0 });
+    let hitsB = 0;
+    let vB = 0;
+    for (let i = 0; i < 40; i++) {
+      // The pistol's fire cooldown from breaking the orb has to lapse before the cannon's trigger counts.
+      const ev = sim.step([hold({ attack: i === 10, aimX: 1, aimY: 0 }), idle, hold({}), hold({})]);
+      for (const e of ev) if (e.type === 'hit' && e.target === b) hitsB += 1;
+      if (hitsB > 0 && vB === 0) vB = sim.ctx.bodies.get(b)!.getLinearVelocity().x;
+    }
+    expect(hitsB).toBeGreaterThan(3);
+    expect(vB).toBeGreaterThan(2);
+    expect(b.get(Health)?.hp ?? 100).toBeLessThan(100);
+    expect(sim.ecs.has(cannon)).toBe(false);
+    expect(sim.ecs.query(Weapon, Held).find((w) => w.targetFor(HeldBy) === a)).toBeUndefined();
+    expect(a.get(Modifiers)?.kind).toBe(EffectKind.None);
+  });
+
+  it('the sky sends an orb now and then when items rain', () => {
+    const sim = makeSim({ level: woodsClearing, seed: 8, settings: { playerCount: 2, items: 'normal' } });
+    let orbs = 0;
+    for (let i = 0; i < 60 * 150 && orbs === 0; i++) {
+      // Nobody is picking anything up, so clear the sky's leavings the way fighters would.
+      if (i % 120 === 0) sim.ecs.query(Weapon, Loose).updateEach((_, e) => sim.ctx.pendingDestroy.push(e));
+      sim.step([hold({}), hold({}), hold({}), hold({})]);
+      orbs = sim.ecs.query(Hazard).filter((e) => e.get(Hazard)?.kind === HazardKind.SurgeOrb).length;
+    }
+    expect(orbs).toBe(1);
+    const off = makeSim({ level: woodsClearing, seed: 8, settings: { playerCount: 2, items: 'off' } });
+    stepMany(off, 60 * 30);
+    expect(off.ecs.query(Hazard).filter((e) => e.get(Hazard)?.kind === HazardKind.SurgeOrb).length).toBe(0);
+  }, 30_000);
 });
 
 describe('Repulsor Puck', () => {

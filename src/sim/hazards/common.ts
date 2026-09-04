@@ -68,6 +68,9 @@ export function paramsFromObject(obj: LevelObject): HazardParams {
     case 'repulsor':
       // radius, shove speed, tick of the last shove
       return { param0: obj.r ?? 0.45, param1: obj.speed ?? 12, param2: -999, param3: 0 };
+    case 'surge.orb':
+      // drift phase (ticks), drift speed
+      return { param0: obj.delay ?? 0, param1: obj.speed ?? 0.5, param2: 0, param3: 0 };
     default:
       return {
         param0: obj.speed ?? obj.period ?? w,
@@ -191,6 +194,14 @@ export function anchorOf(entity: Entity, fallback: { x: number; y: number }): { 
 
 export function kill(world: World, player: Entity, x: number, y: number): void {
   takeDamage(world, player, 9999, 'body', -1, x, y, true);
+}
+
+/** Hurt a breakable prop and remember whose blow it was (a broken Surge Orb goes to them). */
+export function woundDestructible(target: Entity, amount: number, by: Entity | number | undefined): void {
+  const d = target.get(Destructible);
+  if (!d) return;
+  const lastHit = typeof by === 'number' && by >= 0 ? by : d.lastHit;
+  target.set(Destructible, { hp: d.hp - amount, maxHp: d.maxHp, lastHit });
 }
 
 export function nearKill(

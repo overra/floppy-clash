@@ -181,7 +181,8 @@ export const Static = trait();
 export const Kinematic = trait();
 export const Solid = trait();
 export const Sensor = trait();
-export const Destructible = trait({ hp: 60, maxHp: 60 });
+/** lastHit: the fighter (entity id) whose blow last landed, or -1; a broken Surge Orb goes to them. */
+export const Destructible = trait({ hp: 60, maxHp: 60, lastHit: -1 });
 export const SpawnPoint = trait({ index: 0 });
 
 export const HeldBy = relation({ exclusive: true });
@@ -228,8 +229,8 @@ export const StrikeKind = {
 } as const;
 
 export const SimClock = trait({ tick: 0, stepScale: 1 });
-/** Weapon rain: `wave` counts the opening volley still to fall (one per fighter, see spawner.ts). */
-export const DropState = trait({ nextDrop: 0, looseCount: 0, wave: 0, waveSize: 0 });
+/** Weapon rain: `wave` counts the opening volley still to fall (one per fighter, see spawner.ts); lastOrb: tick the last Surge Orb fell. */
+export const DropState = trait({ nextDrop: 0, looseCount: 0, wave: 0, waveSize: 0, lastOrb: -100000 });
 
 export const RoundPhase = {
   Loading: 0,
@@ -263,6 +264,8 @@ export const HazardKind = {
   TriggerDrop: 19,
   /** A planted bumper (Repulsor Puck): shoves whoever touches it away, then fades. */
   Repulsor: 20,
+  /** A drifting Surge Orb: break it and the super is yours. */
+  SurgeOrb: 21,
 } as const;
 
 export const ProjectileKind = {

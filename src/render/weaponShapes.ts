@@ -212,6 +212,8 @@ export function weaponLook(kind: string, length: number): WeaponLook {
       return token([disk(0, 0, 0.17)], [cap(-0.1, -0.03, 0.1, 0.05, 0.03), cap(-0.06, -0.09, 0.06, -0.05, 0.02)], GOLD, true);
     case 'mirror-pin':
       return token([disk(0, 0, 0.17)], [disk(0, 0, 0.1)], ICE, true);
+    case 'surge-cannon':
+      return { ...rifle(length, '#ffffff', { scope: true }), glow: true };
     default:
       return pistol(length, STEEL);
   }

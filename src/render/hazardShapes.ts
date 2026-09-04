@@ -311,6 +311,24 @@ export function hazardGroups(v: HazardVisual, theme: ThemePalette): ShapeGroup[]
       ];
     }
 
+    case HazardKind.SurgeOrb: {
+      // A drifting super: a white-hot core, a slow gold ring, and motes orbiting it; it dims as it is worn down.
+      const r = v.shape.r || 0.4;
+      const pulse = 0.5 + 0.5 * Math.sin(v.time * 5);
+      const vigour = 0.4 + 0.6 * v.health;
+      const motes: Primitive[] = [];
+      for (let i = 0; i < 4; i++) {
+        const a = v.time * 2.4 + (i * Math.PI) / 2;
+        motes.push(disk(v.x + Math.cos(a) * r * 1.6, v.y + Math.sin(a) * r * 1.1, 0.06));
+      }
+      return [
+        group([disk(v.x, v.y, r * (1.25 + 0.1 * pulse))], withAlpha('#ffd447', (0.25 + 0.25 * pulse) * vigour), Layer.Hazards, { style: 'outline', fx: 'glow', glow: 0.6 }),
+        group([disk(v.x, v.y, r * 0.8)], withAlpha('#ffffff', 0.85 * vigour), Layer.Hazards, { style: 'flat', fx: 'glow', glow: 0.5 }),
+        group([disk(v.x, v.y, r * 0.45)], '#fff7d6', Layer.Hazards, { style: 'flat' }),
+        group(motes, withAlpha('#ffe9a8', 0.8 * vigour), Layer.Hazards, { style: 'flat', fx: 'glow', glow: 0.3 }),
+      ];
+    }
+
     default:
       return solidGroups(v, theme);
   }

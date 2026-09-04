@@ -3,9 +3,9 @@ import { Vec2 } from 'planck';
 import { emit, getContext } from '../context';
 import { rising } from '../input';
 import { createBoxBody, registerBody, assignNetId } from '../physics/bodies';
-import { Aim, Combat, Controller, Dead, Held, HeldBy, Loose, OwnedBy, Player, Projectile, ProjectileKind, Status, Transform, Weapon } from '../traits';
+import { Aim, Combat, Controller, Dead, EffectKind, Held, HeldBy, Loose, Modifiers, OwnedBy, Player, Projectile, ProjectileKind, Status, Transform, Weapon } from '../traits';
 import type { WeaponDef } from './schema';
-import { consume } from './consumables';
+import { consume, NO_EFFECT } from './consumables';
 import { weaponIndex } from './defs';
 import { weaponDef } from './resolve';
 import { SWING_TICKS } from './projectiles';
@@ -301,6 +301,11 @@ export function weapons(world: World): void {
     if (!def.infiniteAmmo) {
       const now = held.get(Weapon) ?? wep;
       held.set(Weapon, { ...now, ammo: now.ammo - 1 });
+    }
+    if (def.oneShot) {
+      // Spent the moment it fires: nothing to refill, nothing to pass on. The aura goes with it.
+      ctx.pendingDestroy.push(held);
+      if (entity.get(Modifiers)?.kind === EffectKind.Surge) entity.set(Modifiers, NO_EFFECT);
     }
     const vel = body.getLinearVelocity();
     // A charged swing lunges with its power; guns recoil as authored.
