@@ -181,6 +181,8 @@ export function buildFrame(
         kicking: combat.strikeActive > 0 && isKick(combat.strike),
         strikeRear: isRear(combat.strike),
         strikeWindup: combat.strikePending > 0 && combat.strike !== StrikeKind.Jab,
+        hanging: ctrl.hangDir !== 0,
+        hangDir: ctrl.hangDir,
         blocking: combat.blocking,
         dead,
         phase: tick / 60,

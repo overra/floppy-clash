@@ -161,6 +161,7 @@ function reviveFighter(world: World, player: Entity, x: number, y: number, invul
     body.setAwake(true);
   }
   player.set(Transform, { x, y, angle: 0 });
+  body.setGravityScale(1);
   const ctrl = player.get(Controller);
   if (ctrl) {
     player.set(Controller, {
@@ -174,6 +175,9 @@ function reviveFighter(world: World, player: Entity, x: number, y: number, invul
       wallSliding: false,
       vx: 0,
       vy: 0,
+      hangDir: 0,
+      hangTicks: 0,
+      regrabLock: 0,
     });
   }
 }

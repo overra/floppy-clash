@@ -28,6 +28,20 @@ export const tuning = {
   mantleReach: 0.9,
   mantleProbe: 0.25,
   mantleSpeed: 2.5,
+  // Ledge grab: falling past a lip that sits between ledgeGrabLow and ledgeGrabHigh above the body
+  // centre (hands' reach above the head) catches it. The fighter hangs with the capsule top level
+  // with the lip for at most maxHangTicks, then lets go; another grab needs regrabLockTicks. Jump
+  // hops off with ledgeJumpX toward the stage. Launch mode grants ledgeInvulnTicks on the grab.
+  ledgeGrabLow: 0.3,
+  ledgeGrabHigh: 1.3,
+  ledgeGrabMaxRise: 3,
+  // Without the stick toward the lip, a grab only happens when no floor lies this far below the feet.
+  ledgeAutoGrabDrop: 2.5,
+  hangGraceTicks: 4,
+  maxHangTicks: 150,
+  regrabLockTicks: 40,
+  ledgeJumpX: 2.5,
+  ledgeInvulnTicks: 30,
   maxFallSpeed: 28,
   maxHorizontalSpeed: 40,
 

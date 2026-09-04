@@ -3,6 +3,7 @@ import { Vec2 } from 'planck';
 import { getContext } from '../context';
 import { rising } from '../input';
 import { raycastClosest, type RayHit } from '../physics/queries';
+import { findLedge, grabLedge, stepHang } from './ledge';
 import { Aim, Combat, Controller, Dead, Player, Status } from '../traits';
 
 const movers = createQuery(Player, Controller, Aim);
@@ -37,15 +38,40 @@ export function controller(world: World): void {
     // In a void well's grip the floor gives no purchase: air accel only, and no skidding to a stop.
     const pulled = (status?.pulled ?? 0) > 0;
     if (bubbled) return;
+    const skip = (h: RayHit) => ignoreMover(entity as unknown as number, h);
+
+    if (ctrl.regrabLock > 0) ctrl.regrabLock -= 1;
+    // Holding a ledge replaces ordinary movement until an exit lets go.
+    if (ctrl.hangDir !== 0) {
+      stepHang(world, entity, ctrl, body, input, prev, skip);
+      return;
+    }
 
     const vel = body.getLinearVelocity();
     let vx = vel.x;
     let vy = vel.y;
     const pos = body.getPosition();
-    const skip = (h: RayHit) => ignoreMover(entity as unknown as number, h);
 
     const foot = raycastClosest(world, pos.x, pos.y, pos.x, pos.y - t.height * 0.52 - 0.1, skip);
     ctrl.grounded = !!foot && foot.ny > 0.55;
+
+    // Ledge grab: falling (or cresting) past a lip within the hands' reach, the fighter catches it
+    // when pushing toward it, or with any input but down/away when there is no floor to land on
+    // (the recovery case). Wall-sliding and the mantle assist cover lips lower down; hitstun, glue
+    // and a void well's pull all deny the grab.
+    if (!ctrl.grounded && ctrl.regrabLock === 0 && vy <= 3 && !stunned && !glued && !pulled && !input.down) {
+      const first = input.moveX > 0.2 ? 1 : input.moveX < -0.2 ? -1 : ctrl.facing;
+      const landing = raycastClosest(world, pos.x, pos.y, pos.x, pos.y - t.height / 2 - t.ledgeAutoGrabDrop, skip);
+      for (const dir of [first, -first]) {
+        const pushing = input.moveX * dir > 0.2;
+        if (!pushing && (landing || input.moveX * dir < -0.2)) continue;
+        const ledge = findLedge(world, pos, dir, t, skip);
+        if (ledge) {
+          grabLedge(world, entity, ctrl, body, ledge, dir);
+          return;
+        }
+      }
+    }
 
     // Riding a moving surface: run/decay relative to it, then add its velocity back.
     let carryX = 0;

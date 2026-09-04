@@ -17,6 +17,8 @@ export type SimEvent =
   /** Launch mode: a fighter lost a life (`left` remain) or dropped back in from the top. */
   | { type: 'stock'; slot: number; left: number }
   | { type: 'respawn'; player: number; x: number; y: number }
+  /** A fighter caught a ledge (hands at x, y). */
+  | { type: 'ledge'; player: number; x: number; y: number }
   | { type: 'spawn'; kind: string; netId: number }
   | { type: 'despawn'; netId: number }
   | { type: 'score'; slot: number; wins: number };

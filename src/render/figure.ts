@@ -24,6 +24,9 @@ export type FigurePose = {
   strikeRear?: boolean;
   /** Still winding up: the limb is cocked, not yet extended. */
   strikeWindup?: boolean;
+  /** Hanging from a ledge on side `hangDir`: arms up to the lip, legs dangling. */
+  hanging?: boolean;
+  hangDir?: number;
   blocking: boolean;
   dead: boolean;
   phase: number;
@@ -209,7 +212,7 @@ export function buildFigure(pose: FigurePose, sec: LimbState = emptyLimbState())
   // Vertical stack, compressed when ducking and squashed on landing (scaled about the feet).
   const duck = pose.ducking ? 0.6 : 1;
   const squashY = 1 - sec.squash * 0.16;
-  const stretchY = !pose.grounded && pose.vy > 4 ? 1.04 : 1;
+  const stretchY = pose.hanging ? 1.06 : !pose.grounded && pose.vy > 4 ? 1.04 : 1;
   const scaleY = duck * squashY * stretchY;
   const lift = (h: number) => feetY + h * scaleY;
   // Leg reach is 0.68, so a 0.64 hip keeps idle knees nearly straight instead of half-squatting.
@@ -242,7 +245,14 @@ export function buildFigure(pose: FigurePose, sec: LimbState = emptyLimbState())
   let footR: Vec2;
   let kneeDirL = facing;
   let kneeDirR = facing;
-  if (pose.kicking) {
+  if (pose.hanging) {
+    // Dangling from the lip: legs hang a little away from the wall, one bent, knees toward it.
+    const wall = pose.hangDir ?? facing;
+    footL = { x: pose.x - wall * 0.12, y: feetY + 0.14 };
+    footR = { x: pose.x - wall * 0.02, y: feetY + 0.04 };
+    kneeDirL = wall;
+    kneeDirR = wall;
+  } else if (pose.kicking) {
     // The striking foot chambers at the hip through the wind-up, then snaps out along the aim. A
     // front kick uses the leading foot; a roundhouse swings the trailing one through. The other foot
     // plants a touch behind the hips (or trails when airborne).
@@ -314,6 +324,14 @@ export function buildFigure(pose: FigurePose, sec: LimbState = emptyLimbState())
   if (pose.dead) {
     handMain = { x: shoulder.x + 0.2, y: shoulder.y - 0.5 };
     handOff = { x: shoulder.x - 0.2, y: shoulder.y - 0.5 };
+  } else if (pose.hanging) {
+    // Both hands up on the lip (the capsule top sits level with it), elbows out from the wall.
+    const wall = pose.hangDir ?? facing;
+    const lipY = pose.y + F.height / 2;
+    handMain = { x: pose.x + wall * (F.torsoR + 0.24), y: lipY + 0.04 };
+    handOff = { x: pose.x + wall * (F.torsoR + 0.1), y: lipY - 0.02 };
+    elbowDirMain = -wall;
+    elbowDirOff = -wall;
   } else if (pose.blocking) {
     const perp = { x: -aim.y, y: aim.x };
     handMain = { x: shoulder.x + aim.x * 0.42 + perp.x * 0.14, y: shoulder.y + aim.y * 0.42 + perp.y * 0.14 };
@@ -373,13 +391,17 @@ export function buildFigure(pose: FigurePose, sec: LimbState = emptyLimbState())
   }
   // Arms hang off the torso's edges, main arm on the aim side.
   const striking = pose.punching || !!pose.kicking;
-  const armSide = pose.dead || pose.wallSliding || (!pose.grounded && !holding && !striking && !pose.blocking) ? facing : aimSide;
+  const armSide = pose.hanging
+    ? pose.hangDir ?? facing
+    : pose.dead || pose.wallSliding || (!pose.grounded && !holding && !striking && !pose.blocking)
+      ? facing
+      : aimSide;
   const shoulderMain = { x: shoulder.x + armSide * F.torsoR * 0.7, y: shoulder.y + 0.02 };
   const shoulderOff = { x: shoulder.x - armSide * F.torsoR * 0.7, y: shoulder.y + 0.02 };
   // A hand with a job (gun, fist, guard) tracks its target firmly so the weapon points where the
   // sim aims; free hands swing loose, trailing jumps and flopping on landings.
-  const busyMain = holding || striking || pose.blocking;
-  const busyOff = (holding && pose.weapon!.twoHanded) || pose.blocking || (pose.punching && !!pose.strikeRear) || !!pose.kicking;
+  const busyMain = holding || striking || pose.blocking || !!pose.hanging;
+  const busyOff = (holding && pose.weapon!.twoHanded) || pose.blocking || (pose.punching && !!pose.strikeRear) || !!pose.kicking || !!pose.hanging;
   const freeK = !pose.grounded ? LOOSE : run !== 0 ? SWINGING : LOOSE;
   handMain = clampReach(shoulderMain, loose(sec.handMain, handMain, busyMain ? FIRM : freeK), reach);
   handOff = clampReach(shoulderOff, loose(sec.handOff, handOff, busyOff ? FIRM : freeK, 1.15), reach);

@@ -47,6 +47,11 @@ export const Controller = trait({
   wallSliding: false,
   vx: 0,
   vy: 0,
+  /** Hanging from a ledge on this side (0 = not hanging), for this many ticks so far. */
+  hangDir: 0,
+  hangTicks: 0,
+  /** Ticks before another ledge can be grabbed after letting go (no stalling on the lip). */
+  regrabLock: 0,
 });
 export const Aim = trait({ x: 1, y: 0, holdTicks: 0 });
 /** percent: launch-mode damage, climbing from 0 with no ceiling; hp is untouched by ordinary hits there. */
