@@ -3,7 +3,7 @@ import { getContext, type SimContext } from '../context';
 import { cloneInput, EMPTY_INPUT, type PlayerInput } from '../input';
 import { raycastClosest, type RayHit } from '../physics/queries';
 import { combatAllowed } from '../rules/rounds';
-import { weaponByIndex } from '../weapons/defs';
+import { weaponDef } from '../weapons/resolve';
 import type { WeaponDef } from '../weapons/schema';
 import {
   Aim,
@@ -58,11 +58,12 @@ export function attachBots(world: World, slots: number[], skill = 0.75): void {
 }
 
 function heldWeapon(world: World, player: Entity): { def: WeaponDef; ammo: number } | null {
+  const weapons = getContext(world).weapons;
   for (const weapon of world.query(Weapon, Held)) {
     if (weapon.targetFor(HeldBy) !== player) continue;
     const w = weapon.get(Weapon);
     if (!w) return null;
-    return { def: weaponByIndex(w.defId), ammo: w.ammo };
+    return { def: weaponDef(weapons, w.defId), ammo: w.ammo };
   }
   return null;
 }
@@ -135,7 +136,7 @@ function collect(world: World, ctx: SimContext, nav: NavGraph) {
   const pickups: Pickup[] = [];
   world.query(looseWeapons).updateEach(([w, tr], e) => {
     if (w.pickupCooldown > 0) return;
-    pickups.push({ e, x: tr.x, y: tr.y, def: weaponByIndex(w.defId), surf: surfaceBelow(nav, tr.x, tr.y - 0.2, 2.5) });
+    pickups.push({ e, x: tr.x, y: tr.y, def: weaponDef(ctx.weapons, w.defId), surf: surfaceBelow(nav, tr.x, tr.y - 0.2, 2.5) });
   });
   const shots: Shot[] = [];
   world.query(Projectile).updateEach(([p], e) => {

@@ -24,7 +24,7 @@ import {
   Transform,
   Weapon,
 } from '../traits';
-import { weaponByIndex } from './defs';
+import { weaponDef } from './resolve';
 import type { WeaponDef } from './schema';
 import type { FixtureUserData } from '../physics/categories';
 
@@ -124,7 +124,7 @@ export function detonate(world: World, x: number, y: number, radius: number, dam
 }
 
 function explode(world: World, x: number, y: number, defId: number, owner?: Entity): void {
-  const def = weaponByIndex(defId);
+  const def = weaponDef(getContext(world).weapons, defId);
   const radius = def.projectile.radius || 2;
   const damage = def.projectile.explodeDamage || def.projectile.damage;
   detonate(world, x, y, radius, damage, def.projectile.explodeImpulse || 8, owner, def.projectile.status);
@@ -533,14 +533,14 @@ export function projectiles(world: World): void {
     const ot = owner?.get(Transform);
     const aim = owner?.get(Aim);
     if (!owner || !ot || !aim) return;
-    const reach = SWING_BASE_REACH + weaponByIndex(proj.defId).projectile.radius;
+    const reach = SWING_BASE_REACH + weaponDef(ctx.weapons, proj.defId).projectile.radius;
     swings.push({ owner, ox: ot.x, oy: ot.y, tx: ot.x + aim.x * reach, ty: ot.y + aim.y * reach });
   });
 
   world.query(bullets).updateEach(([proj], entity) => {
     if (entity.has(Snake)) return;
     const owner = ownerOf(entity);
-    const def = weaponByIndex(proj.defId);
+    const def = weaponDef(ctx.weapons, proj.defId);
     const body = ctx.bodies.get(entity);
 
     if (proj.kind === ProjectileKind.Bullet || proj.kind === ProjectileKind.Pellet) {
@@ -608,7 +608,17 @@ export function projectiles(world: World): void {
           wep.thrownHit = true;
           return;
         }
-        takeDamage(world, other, ctx.tuning.thrownDamage, 'body', thrower ?? -1, pt.x, pt.y);
+        // Launch mode: a thrown gun is a shove first (item throws finish stocks), with capped damage.
+        if (isLaunch(world)) {
+          const def = weaponDef(ctx.weapons, wep.defId);
+          takeDamage(world, other, Math.min(def.thrownDamage, ctx.tuning.thrownDamage), 'body', thrower ?? -1, pt.x, pt.y);
+          const wv = ctx.bodies.get(entity)?.getLinearVelocity();
+          const dirX = wv && Math.hypot(wv.x, wv.y) > 0.5 ? wv.x : dx;
+          const dirY = wv && Math.hypot(wv.x, wv.y) > 0.5 ? wv.y : dy;
+          shove(ctx, other, dirX, dirY, ctx.tuning.thrownKnockback, 2);
+        } else {
+          takeDamage(world, other, ctx.tuning.thrownDamage, 'body', thrower ?? -1, pt.x, pt.y);
+        }
         wep.thrownHit = true;
       }
     });

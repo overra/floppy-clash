@@ -8,6 +8,8 @@ import type { LevelDef } from './level/schema';
 // extraLevels are user-library arenas merged into rotation (M7).
 import type { MatchSettings } from './rules/settings';
 import { cloneTuning, type Tuning } from './tuning';
+import { resolveWeaponDefs } from './weapons/resolve';
+import type { WeaponDef } from './weapons/schema';
 
 export type SimContext = {
   ecs: World;
@@ -23,6 +25,8 @@ export type SimContext = {
   level: LevelDef;
   settings: MatchSettings;
   tuning: Tuning;
+  /** Weapon defs as this match plays them (the base table, or the launch overlay applied); indexed like WEAPON_DEFS. */
+  weapons: WeaponDef[];
   players: Entity[];
   pendingDestroy: Entity[];
   tick: number;
@@ -69,6 +73,7 @@ export function makeContext(
     level,
     settings,
     tuning: cloneTuning(),
+    weapons: resolveWeaponDefs(settings.mode),
     players: [],
     pendingDestroy: [],
     tick: 0,

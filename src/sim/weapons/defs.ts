@@ -744,6 +744,7 @@ export function weaponByIndex(index: number): WeaponDef {
   return def;
 }
 
+/** Base-table drop pool (the sim uses weapons/resolve.ts, which knows the match mode). */
 export function droppableWeapons(enabled: string[] | 'all'): WeaponDef[] {
   return WEAPON_DEFS.filter((d) => d.dropWeight > 0 && (enabled === 'all' || enabled.includes(d.id)));
 }

@@ -5,7 +5,8 @@ import { rising } from '../input';
 import { createBoxBody, registerBody, assignNetId } from '../physics/bodies';
 import { Aim, Combat, Controller, Dead, Held, HeldBy, Loose, OwnedBy, Player, Projectile, ProjectileKind, Transform, Weapon } from '../traits';
 import type { WeaponDef } from './schema';
-import { weaponByIndex, weaponIndex } from './defs';
+import { weaponIndex } from './defs';
+import { weaponDef } from './resolve';
 import { SWING_TICKS } from './projectiles';
 import { raycastClosest } from '../physics/queries';
 import { combatAllowed } from '../rules/rounds';
@@ -104,7 +105,7 @@ function spawnBullet(
 
 export function spawnWeapon(world: World, defId: string, x: number, y: number, loose = true): Entity {
   const ctx = getContext(world);
-  const def = weaponByIndex(weaponIndex(defId));
+  const def = weaponDef(ctx.weapons, weaponIndex(defId));
   const entity = world.spawn(
     Weapon({
       defId: weaponIndex(def.id),
@@ -159,7 +160,7 @@ export function weapons(world: World): void {
         if (dx * dx + dy * dy < 0.85 * 0.85) {
           weaponEntity.remove(Loose);
           weaponEntity.add(Held(), HeldBy(entity));
-          const def = weaponByIndex(wep.defId);
+          const def = weaponDef(ctx.weapons, wep.defId);
           // Mutate the updateEach view so Koota writeback keeps the refill.
           wep.ammo = ctx.tuning.refillOnPickup ? def.ammo : wep.ammo;
           wep.thrown = false;
@@ -176,7 +177,7 @@ export function weapons(world: World): void {
     if (!held) return;
     const wep = held.get(Weapon);
     if (!wep) return;
-    const def = weaponByIndex(wep.defId);
+    const def = weaponDef(ctx.weapons, wep.defId);
     const body = ctx.bodies.get(entity);
     if (!body) return;
 
@@ -184,6 +185,9 @@ export function weapons(world: World): void {
       held.remove(Held);
       held.add(Loose());
       held.remove(HeldBy('*'));
+      // The thrower owns the throw: it is released inside their own hit radius and must not count on them.
+      held.remove(OwnedBy('*'));
+      held.add(OwnedBy(entity));
       held.set(Weapon, {
         ...wep,
         thrown: true,

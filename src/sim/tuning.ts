@@ -91,6 +91,8 @@ export const tuning = {
 
   throwSpeed: 18,
   thrownDamage: 55,
+  // Launch mode only: a thrown weapon shoves this hard (its damage is capped by the weapon overlay).
+  thrownKnockback: 7,
   pickupCooldownTicks: 30,
   refillOnPickup: true,
   flingWhenEmpty: true,

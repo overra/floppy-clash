@@ -2,7 +2,7 @@ import { type World } from 'koota';
 import { getContext } from '../context';
 import { raycastClosest } from '../physics/queries';
 import { DropState, Loose, RoundPhase, RoundState, Weapon } from '../traits';
-import { droppableWeapons } from '../weapons/defs';
+import { droppableWeapons } from '../weapons/resolve';
 import { spawnWeapon } from '../weapons/systems';
 
 /** Ticks between the guns of the opening volley: a quick sweep across the arena, not one big clatter. */
@@ -48,7 +48,7 @@ export function spawner(world: World): void {
   }
   if (loose >= ctx.tuning.maxLooseWeapons) return;
 
-  const pool = droppableWeapons(ctx.settings.enabledWeapons);
+  const pool = droppableWeapons(ctx.weapons, ctx.settings.enabledWeapons, ctx.settings.mode);
   if (pool.length === 0) return;
   const weights = pool.map((w) => w.dropWeight);
   const total = weights.reduce((a, b) => a + b, 0);

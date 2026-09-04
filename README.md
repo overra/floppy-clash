@@ -26,6 +26,8 @@ v1 is gamepad-first. Connect 2–4 pads (Xbox / DualSense / Switch Pro, W3C `sta
 - Throw: Y / Triangle
 - Pause: Start
 
+Falling past a ledge with the stick toward it (or with nothing below to land on) catches the lip: jump hops up, toward climbs, down or away lets go, and attack is a get-up strike. A hang lasts a couple of seconds at most and a fresh grab needs a moment. In launch mode the grab comes with brief immunity.
+
 Unarmed fighting has four strikes on two buttons: punch is the quick jab, kick is slower with more reach and knockback and wears down a raised guard (a few blocked kicks break it). Step into the target while pressing either and you throw the rear-limb version, a cross or a roundhouse: more wind-up, more hurt, longer recovery. A perfect block still stops anything.
 
 Pads only appear after you press a button. Keyboard/mouse is a development fallback that can fill one seat (WASD, mouse aim, LMB punch, middle button or X/L kick, RMB block, F to throw).

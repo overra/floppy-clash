@@ -29,6 +29,8 @@ export const WeaponDefSchema = z.object({
   }),
   recoil: z.object({ back: z.number().default(0), up: z.number().default(0), forward: z.number().default(0) }),
   knockback: z.number().default(2),
+  /** Launch mode multiplier on `knockback` (resolved into the def by weapons/resolve.ts): tames rapid fire. */
+  launchScale: z.number().default(1),
   thrownDamage: z.number().default(55),
   dropWeight: z.number().default(1),
   twoHanded: z.boolean().default(false),
