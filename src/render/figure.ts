@@ -18,6 +18,12 @@ export type FigurePose = {
   aimX: number;
   aimY: number;
   punching: boolean;
+  /** A kick is out: the striking foot goes along the aim (chambered at the hip while `strikeWindup`). */
+  kicking?: boolean;
+  /** Rear-limb strike (cross / roundhouse): the trailing hand or foot does the work. */
+  strikeRear?: boolean;
+  /** Still winding up: the limb is cocked, not yet extended. */
+  strikeWindup?: boolean;
   blocking: boolean;
   dead: boolean;
   phase: number;
@@ -236,7 +242,23 @@ export function buildFigure(pose: FigurePose, sec: LimbState = emptyLimbState())
   let footR: Vec2;
   let kneeDirL = facing;
   let kneeDirR = facing;
-  if (pose.ducking) {
+  if (pose.kicking) {
+    // The striking foot chambers at the hip through the wind-up, then snaps out along the aim. A
+    // front kick uses the leading foot; a roundhouse swings the trailing one through. The other foot
+    // plants a touch behind the hips (or trails when airborne).
+    const legLen = F.thigh + F.shin;
+    const strike: Vec2 = pose.strikeWindup
+      ? { x: hip.x + aimSide * 0.1, y: hip.y - 0.22 }
+      : { x: hip.x + aim.x * legLen * 0.98, y: hip.y + aim.y * legLen * 0.98 };
+    const plant: Vec2 = pose.grounded ? { x: pose.x - aimSide * 0.14, y: feetY } : { x: pose.x - aimSide * 0.2, y: feetY + 0.06 };
+    // footL sits at -x in the idle stance, so it trails when the strike goes right.
+    const rearIsL = aimSide > 0;
+    const strikeIsL = pose.strikeRear ? rearIsL : !rearIsL;
+    footL = strikeIsL ? strike : plant;
+    footR = strikeIsL ? plant : strike;
+    kneeDirL = facing;
+    kneeDirR = facing;
+  } else if (pose.ducking) {
     footL = { x: pose.x - 0.3, y: feetY };
     footR = { x: pose.x + 0.3, y: feetY };
     kneeDirL = -1;
@@ -270,11 +292,12 @@ export function buildFigure(pose: FigurePose, sec: LimbState = emptyLimbState())
     kneeDirR = facing;
   }
   // Feet plant firmly on the ground but dangle in the air; a planted foot never sinks into the floor.
+  // A kicking foot tracks its target firmly so the kick reads as a snap, not a swing.
   const legReach = F.thigh + F.shin;
-  const footK = pose.grounded ? PLANTED : DANGLING;
+  const footK = pose.kicking ? FIRM : pose.grounded ? PLANTED : DANGLING;
   footL = clampReach(hip, loose(sec.footL, footL, footK), legReach);
   footR = clampReach(hip, loose(sec.footR, footR, footK, 0.8), legReach);
-  if (pose.grounded && !pose.wallSliding) {
+  if (pose.grounded && !pose.wallSliding && !pose.kicking) {
     footL.y = Math.max(footL.y, feetY);
     footR.y = Math.max(footR.y, feetY);
   }
@@ -297,10 +320,23 @@ export function buildFigure(pose: FigurePose, sec: LimbState = emptyLimbState())
     handOff = { x: shoulder.x + aim.x * 0.38 - perp.x * 0.14, y: shoulder.y + aim.y * 0.38 - perp.y * 0.14 };
     elbowDirMain = -aimSide;
     elbowDirOff = aimSide;
+  } else if (pose.punching && pose.strikeRear) {
+    // Cross: the trailing hand drives through while the lead hand tucks back; cocked during the wind-up.
+    const ext = pose.strikeWindup ? -0.3 : 0.62 + 0.05;
+    handOff = { x: shoulder.x + aim.x * ext, y: shoulder.y + aim.y * ext + (pose.strikeWindup ? 0.05 : 0) };
+    handMain = { x: shoulder.x + aim.x * 0.18, y: shoulder.y + 0.12 };
+    elbowDirMain = -aimSide;
+    elbowDirOff = aimSide;
   } else if (pose.punching) {
     const ext = 0.62 + 0.05;
     handMain = { x: shoulder.x + aim.x * ext, y: shoulder.y + aim.y * ext };
     handOff = { x: shoulder.x - aim.x * 0.22, y: shoulder.y - 0.28 };
+    elbowDirOff = aimSide;
+  } else if (pose.kicking) {
+    // Guard up and a counterbalancing arm back while the leg works.
+    handMain = { x: shoulder.x + aim.x * 0.26, y: shoulder.y + 0.14 };
+    handOff = { x: shoulder.x - aim.x * 0.3, y: shoulder.y - 0.1 };
+    elbowDirMain = -aimSide;
     elbowDirOff = aimSide;
   } else if (holding) {
     const w = pose.weapon!;
@@ -336,13 +372,14 @@ export function buildFigure(pose: FigurePose, sec: LimbState = emptyLimbState())
     elbowDirOff = -facing;
   }
   // Arms hang off the torso's edges, main arm on the aim side.
-  const armSide = pose.dead || pose.wallSliding || (!pose.grounded && !holding && !pose.punching && !pose.blocking) ? facing : aimSide;
+  const striking = pose.punching || !!pose.kicking;
+  const armSide = pose.dead || pose.wallSliding || (!pose.grounded && !holding && !striking && !pose.blocking) ? facing : aimSide;
   const shoulderMain = { x: shoulder.x + armSide * F.torsoR * 0.7, y: shoulder.y + 0.02 };
   const shoulderOff = { x: shoulder.x - armSide * F.torsoR * 0.7, y: shoulder.y + 0.02 };
   // A hand with a job (gun, fist, guard) tracks its target firmly so the weapon points where the
   // sim aims; free hands swing loose, trailing jumps and flopping on landings.
-  const busyMain = holding || pose.punching || pose.blocking;
-  const busyOff = (holding && pose.weapon!.twoHanded) || pose.blocking;
+  const busyMain = holding || striking || pose.blocking;
+  const busyOff = (holding && pose.weapon!.twoHanded) || pose.blocking || (pose.punching && !!pose.strikeRear) || !!pose.kicking;
   const freeK = !pose.grounded ? LOOSE : run !== 0 ? SWINGING : LOOSE;
   handMain = clampReach(shoulderMain, loose(sec.handMain, handMain, busyMain ? FIRM : freeK), reach);
   handOff = clampReach(shoulderOff, loose(sec.handOff, handOff, busyOff ? FIRM : freeK, 1.15), reach);
@@ -360,8 +397,8 @@ export function buildFigure(pose: FigurePose, sec: LimbState = emptyLimbState())
     cap(elbowOff, handOff, F.armR * 0.95),
     cap(shoulderMain, elbowMain, F.armR),
     cap(elbowMain, handMain, F.armR * 0.95),
-    disk(handMain, F.handR * (pose.punching ? 1.25 : 1)),
-    disk(handOff, F.handR * 0.9),
+    disk(handMain, F.handR * (pose.punching && !pose.strikeRear ? 1.25 : 1)),
+    disk(handOff, F.handR * (pose.punching && pose.strikeRear ? 1.2 : 0.9)),
     disk(footL, F.legR * 1.05),
     disk(footR, F.legR * 1.05),
   ];

@@ -30,9 +30,11 @@ import {
   Snake,
   Status,
   Stocks,
+  StrikeKind,
   Transform,
   Weapon,
 } from '../sim/traits';
+import { isKick, isRear } from '../sim/player/strikes';
 import type { LightEmitter } from './gpu/lighting';
 import { weaponByIndex } from '../sim/weapons/defs';
 import { SWING_TICKS } from '../sim/weapons/projectiles';
@@ -175,7 +177,10 @@ export function buildFrame(
         vy: ctrl.vy,
         aimX: aim.x,
         aimY: aim.y,
-        punching: combat.punchActive > 0,
+        punching: combat.strikeActive > 0 && !isKick(combat.strike),
+        kicking: combat.strikeActive > 0 && isKick(combat.strike),
+        strikeRear: isRear(combat.strike),
+        strikeWindup: combat.strikePending > 0 && combat.strike !== StrikeKind.Jab,
         blocking: combat.blocking,
         dead,
         phase: tick / 60,

@@ -37,8 +37,9 @@ describe('M0 scaffold', () => {
     };
     const hash = run();
     expect(hash).toBe(run());
-    // Deliberate pin — update only when a sim change is intentional (PLAN §6).
-    expect(hash).toBe('184cd5d0');
+    // Deliberate pin — update only when a sim change is intentional (PLAN §6). Last moved by the
+    // melee expansion: strikes are capsule hitboxes and stepping into a punch throws a cross.
+    expect(hash).toBe('4b5e3fd5');
   });
 
   it('golden hash with scripted spawns/destroys is stable', () => {

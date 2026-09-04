@@ -20,12 +20,15 @@ v1 is gamepad-first. Connect 2–4 pads (Xbox / DualSense / Switch Pro, W3C `sta
 - Move: left stick
 - Jump: A / Cross (also LB)
 - Aim: right stick
-- Attack: RT (also RB)
+- Attack (punch / fire): RT (also X / Square)
+- Kick: RB
 - Block: LT
 - Throw: Y / Triangle
 - Pause: Start
 
-Pads only appear after you press a button. Keyboard/mouse is a development fallback that can fill one seat (WASD, mouse aim, LMB/RMB, F to throw).
+Unarmed fighting has four strikes on two buttons: punch is the quick jab, kick is slower with more reach and knockback and wears down a raised guard (a few blocked kicks break it). Step into the target while pressing either and you throw the rear-limb version, a cross or a roundhouse: more wind-up, more hurt, longer recovery. A perfect block still stops anything.
+
+Pads only appear after you press a button. Keyboard/mouse is a development fallback that can fill one seat (WASD, mouse aim, LMB punch, middle button or X/L kick, RMB block, F to throw).
 
 ### Solo
 

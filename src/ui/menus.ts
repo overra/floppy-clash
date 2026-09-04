@@ -222,6 +222,7 @@ export function collectPadMap(card: HTMLElement): { padId: string; map: PadMap }
     map: {
       jump: n('map-jump', DEFAULT_MAP.jump),
       attack: n('map-attack', DEFAULT_MAP.attack),
+      kick: n('map-kick', DEFAULT_MAP.kick),
       block: n('map-block', DEFAULT_MAP.block),
       throw: n('map-throw', DEFAULT_MAP.throw),
       pause: n('map-pause', DEFAULT_MAP.pause),
@@ -418,6 +419,7 @@ function renderSettings(
         <label class="row wide"><span>Pad id</span><input id="padid" value="${lastId}" placeholder="Xbox / DualSense id string"></label>
         <label class="row"><span>Jump</span><input id="map-jump" type="number" value="${lastMap.jump}"></label>
         <label class="row"><span>Attack</span><input id="map-attack" type="number" value="${lastMap.attack}"></label>
+        <label class="row"><span>Kick</span><input id="map-kick" type="number" value="${lastMap.kick}"></label>
         <label class="row"><span>Block</span><input id="map-block" type="number" value="${lastMap.block}"></label>
         <label class="row"><span>Throw</span><input id="map-throw" type="number" value="${lastMap.throw}"></label>
         <label class="row"><span>Pause</span><input id="map-pause" type="number" value="${lastMap.pause}"></label>

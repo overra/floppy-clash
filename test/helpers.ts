@@ -1,6 +1,7 @@
 import { universe } from 'koota';
 import { gymLevel, runTrack } from '../src/levels/gym';
 import { woodsClearing } from '../src/levels/handauthored';
+import { skyhold } from '../src/levels/launch';
 import { getLevel } from '../src/levels/catalog';
 import { blankInputs, type PlayerInput } from '../src/sim/input';
 import { createSimWorld, type CreateSimOptions, type SimHandle } from '../src/sim/world';
@@ -62,4 +63,4 @@ export function stepMany(sim: SimHandle, n: number, input: PlayerInput | PlayerI
   }
 }
 
-export { gymLevel, runTrack, woodsClearing, getLevel };
+export { gymLevel, runTrack, woodsClearing, skyhold, getLevel };

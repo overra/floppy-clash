@@ -15,6 +15,7 @@ const B_DOWN = 2;
 const B_ATTACK = 4;
 const B_BLOCK = 8;
 const B_THROW = 16;
+const B_KICK = 32;
 
 /**
  * Records one match's input tape (downloaded with F9, replayed with {@link playReplay}). The tape
@@ -41,7 +42,8 @@ export function createRecorder(seed: number, levelId: string) {
         tape[o] = i.moveX;
         tape[o + 1] = i.aimX;
         tape[o + 2] = i.aimY;
-        tape[o + 3] = (i.jump ? B_JUMP : 0) | (i.down ? B_DOWN : 0) | (i.attack ? B_ATTACK : 0) | (i.block ? B_BLOCK : 0) | (i.throw ? B_THROW : 0);
+        tape[o + 3] =
+          (i.jump ? B_JUMP : 0) | (i.down ? B_DOWN : 0) | (i.attack ? B_ATTACK : 0) | (i.block ? B_BLOCK : 0) | (i.throw ? B_THROW : 0) | (i.kick ? B_KICK : 0);
       }
       ticks += 1;
     },
@@ -63,6 +65,7 @@ export function createRecorder(seed: number, levelId: string) {
             jump: (bits & B_JUMP) !== 0,
             down: (bits & B_DOWN) !== 0,
             attack: (bits & B_ATTACK) !== 0,
+            kick: (bits & B_KICK) !== 0,
             block: (bits & B_BLOCK) !== 0,
             throw: (bits & B_THROW) !== 0,
           });

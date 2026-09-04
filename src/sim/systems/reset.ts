@@ -137,9 +137,10 @@ function reviveFighter(world: World, player: Entity, x: number, y: number, invul
   const hp = ctx.settings.maxHp;
   player.set(Health, { hp, maxHp: hp, percent: 0 });
   const stance = {
-    punchCooldown: 0,
-    punchActive: 0,
-    punchPending: 0,
+    strikeCooldown: 0,
+    strikeActive: 0,
+    strikePending: 0,
+    strike: 0,
     stun: 0,
     blockMeter: 1,
     blockStartTick: -999,

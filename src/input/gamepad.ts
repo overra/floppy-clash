@@ -13,6 +13,7 @@ export type PadSeat = {
 export type Latch = {
   jump: boolean;
   attack: boolean;
+  kick: boolean;
   block: boolean;
   throw: boolean;
   pause: boolean;
@@ -67,9 +68,11 @@ export function readPad(pad: Gamepad, latch: Latch, lastAim: { x: number; y: num
   const jump = custom
     ? !!pad.buttons[map.jump]?.pressed
     : !!(pad.buttons[map.jump]?.pressed || pad.buttons[4]?.pressed);
+  // Standard layout: RT punches / fires, RB kicks, X doubles as punch and throw.
   const attack = custom
     ? !!pad.buttons[map.attack]?.pressed
-    : !!(pad.buttons[map.attack]?.pressed || pad.buttons[5]?.pressed || pad.buttons[2]?.pressed);
+    : !!(pad.buttons[map.attack]?.pressed || pad.buttons[2]?.pressed);
+  const kick = !!pad.buttons[map.kick ?? DEFAULT_MAP.kick]?.pressed;
   const block = custom
     ? !!pad.buttons[map.block]?.pressed
     : !!(pad.buttons[map.block]?.pressed || pad.buttons[1]?.pressed);
@@ -78,6 +81,7 @@ export function readPad(pad: Gamepad, latch: Latch, lastAim: { x: number; y: num
     : !!(pad.buttons[map.throw]?.pressed || pad.buttons[2]?.pressed);
   if (jump) latch.jump = true;
   if (attack) latch.attack = true;
+  if (kick) latch.kick = true;
   if (block) latch.block = true;
   if (thrw) latch.throw = true;
   if (pad.buttons[map.pause]?.pressed) latch.pause = true;
@@ -89,6 +93,7 @@ export function readPad(pad: Gamepad, latch: Latch, lastAim: { x: number; y: num
     jump: latch.jump,
     down: move.y > tuning.duckStickThreshold || !!dpadY,
     attack: latch.attack,
+    kick: latch.kick,
     block: latch.block,
     throw: latch.throw,
     aimX: aim.x,
@@ -99,6 +104,7 @@ export function readPad(pad: Gamepad, latch: Latch, lastAim: { x: number; y: num
 export function consumeLatch(latch: Latch): Latch {
   latch.jump = false;
   latch.attack = false;
+  latch.kick = false;
   latch.block = false;
   latch.throw = false;
   return latch;
@@ -219,7 +225,7 @@ export function createPadEdgeTracker(): PadEdgeTracker {
 }
 
 export function emptyLatch(): Latch {
-  return { jump: false, attack: false, block: false, throw: false, pause: false };
+  return { jump: false, attack: false, kick: false, block: false, throw: false, pause: false };
 }
 
 export function idleInput(): PlayerInput {

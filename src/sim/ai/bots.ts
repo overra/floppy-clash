@@ -354,9 +354,19 @@ export function thinkBots(world: World): void {
 
       if (live) {
         if (!ranged) {
-          const reach = def ? rangeBand(def).max + 0.4 : t.punchRange + 0.55;
+          const reach = def ? rangeBand(def).max + 0.4 : Math.max(t.punchRange, t.kickRange) + 0.55;
           const cadence = def ? Math.max(6, def.fireIntervalTicks) : Math.max(6, t.punchCooldownTicks);
-          if (dist < reach && bot.think % cadence < 2) attack = true;
+          if (dist < reach && bot.think % cadence < 2) {
+            if (def) {
+              attack = true;
+            } else {
+              // Bare hands: a kick when they are turtling or just past punching range, and every third swing anyway.
+              const tc = target.e.get(Combat);
+              const kick = !!tc?.blocking || dist > t.punchRange + 0.5 || bot.think % 3 === 0;
+              if (kick) input.kick = true;
+              else attack = true;
+            }
+          }
         } else if (def && !outOfAmmo && dist < band.max * 1.4 && los) {
           const semi = def.fireMode === 'semi' || def.fireMode === 'burst';
           const interval = Math.max(semi ? 6 : 1, def.fireIntervalTicks);
@@ -523,7 +533,7 @@ export function thinkBots(world: World): void {
       }
     } else if (target && !ranged && Math.hypot(target.x - px, target.y - py) < 1.6) {
       const tc = target.e.get(Combat);
-      if (tc?.punchActive && rng.next() < 0.3) bot.blockTicks = 8;
+      if (tc?.strikeActive && rng.next() < 0.3) bot.blockTicks = 8;
     }
 
     // --- Emit the frame's input. Jumps are pulsed so the controller sees rising edges; airborne

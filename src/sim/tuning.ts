@@ -42,6 +42,27 @@ export const tuning = {
   punchActiveTicks: 4,
   punchCooldownTicks: 20,
 
+  // Kicks: slower and longer than a punch, mostly sideways, and each one blocked eats a chunk of the
+  // guard meter (guardDrain) so a turtle eventually has to move. Stepping into a strike (left stick
+  // held the way the fighter faces) throws the rear-limb version: rearWindupTicks more wind-up for
+  // rearDamageScale / rearKnockbackScale more hurt and a longer recovery.
+  kickWindupTicks: 5,
+  kickActiveTicks: 5,
+  kickCooldownTicks: 30,
+  kickDamage: 26,
+  kickKnockback: 11,
+  kickKnockbackUp: 3,
+  kickRange: 1.2,
+  kickRadius: 0.5,
+  kickSelfImpulse: 3,
+  kickGuardDrain: 0.4,
+  rearWindupTicks: 2,
+  rearDamageScale: 1.35,
+  rearKnockbackScale: 1.25,
+  rearCooldownScale: 1.3,
+  rearReachBonus: 0.1,
+  guardBreakStunTicks: 24,
+
   blockArcDeg: 120,
   blockMeterDrainTicks: 72,
   blockMeterRefillTicks: 60,

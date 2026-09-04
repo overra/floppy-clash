@@ -4,14 +4,13 @@ import { emit, getContext } from '../context';
 import { rising } from '../input';
 import { takeDamage } from './health';
 import { launchHit } from './knockback';
+import { chooseStrike, isKick, PUNCH_WINDUP_TICKS, strikeDef, type StrikeDef } from './strikes';
 import { combatAllowed } from '../rules/rounds';
-import { Aim, Combat, Controller, Dead, Held, HeldBy, Loose, Player, Transform, Weapon } from '../traits';
+import { Aim, Combat, Controller, Dead, Held, HeldBy, Loose, Player, StrikeKind, Transform, Weapon } from '../traits';
 
 const fighters = createQuery(Player, Combat, Aim, Controller, Transform);
 const targets = createQuery(Player, Combat, Transform, Not(Dead));
 
-/** Ticks between throwing a punch and it landing: long enough for two swings to meet, short enough to feel instant. */
-export const PUNCH_WINDUP_TICKS = 2;
 /** Stagger handed to whoever swings into a raised guard, longer when the guard was just raised (perfect block). */
 export const BLOCKED_STUN_TICKS = 18;
 export const PERFECT_BLOCKED_STUN_TICKS = 30;
@@ -61,7 +60,7 @@ function disarm(world: World, victim: Entity): void {
 function stagger(world: World, who: Entity, ticks: number, pushX: number, pushY: number): void {
   const ctx = getContext(world);
   const c = who.get(Combat);
-  if (c) who.set(Combat, { ...c, stun: Math.max(c.stun, ticks), punchPending: 0, blocking: false });
+  if (c) who.set(Combat, { ...c, stun: Math.max(c.stun, ticks), strikePending: 0, blocking: false });
   const body = ctx.bodies.get(who);
   if (body) {
     const v = body.getLinearVelocity();
@@ -69,23 +68,37 @@ function stagger(world: World, who: Entity, ticks: number, pushX: number, pushY:
   }
 }
 
-/** The fist's contact point for a fighter mid-swing. */
-function fist(world: World, who: Entity): { x: number; y: number } | null {
+/** The contact point of a fighter's strike in flight (fist or foot), along the aim at the strike's reach. */
+function strikePoint(world: World, who: Entity, kind: number): { x: number; y: number } | null {
   const t = who.get(Transform);
   const aim = who.get(Aim);
   if (!t || !aim) return null;
-  const reach = getContext(world).tuning.punchRange;
+  const reach = strikeDef(getContext(world).tuning, kind || StrikeKind.Jab).reach;
   return { x: t.x + aim.x * reach, y: t.y + aim.y * reach };
 }
 
-function resolvePunch(world: World, attacker: Entity): void {
+/**
+ * Does a strike from `from` out to `tip` touch a fighter centred at (px, py)? The limb is a capsule
+ * of `radius` along that segment, so a target inside the reach is hit as surely as one at the tip
+ * (a lunging kick would otherwise pass its foot clean over a point-blank opponent).
+ */
+function strikeTouches(from: { x: number; y: number }, tip: { x: number; y: number }, radius: number, px: number, py: number): boolean {
+  const sx = tip.x - from.x;
+  const sy = tip.y - from.y;
+  const len2 = sx * sx + sy * sy || 1;
+  const u = Math.max(0, Math.min(1, ((px - from.x) * sx + (py - from.y) * sy) / len2));
+  const dx = px - (from.x + sx * u);
+  const dy = py - (from.y + sy * u);
+  return dx * dx + dy * dy <= radius * radius;
+}
+
+function resolveStrike(world: World, attacker: Entity, def: StrikeDef): void {
   const ctx = getContext(world);
   const t = ctx.tuning;
   const aim = attacker.get(Aim);
   const at = attacker.get(Transform);
-  const hit = fist(world, attacker);
+  const hit = strikePoint(world, attacker, def.kind);
   if (!aim || !at || !hit) return;
-  const r2 = t.punchRadius * t.punchRadius;
 
   // Plain iteration (no updateEach write-back) because the effects below rewrite other fighters' Combat.
   for (const other of [...world.query(targets)]) {
@@ -93,16 +106,13 @@ function resolvePunch(world: World, attacker: Entity): void {
     const otherT = other.get(Transform);
     const otherCombat = other.get(Combat);
     if (!otherT || !otherCombat) continue;
-    const dx = otherT.x - hit.x;
-    const dy = otherT.y - hit.y;
-    if (dx * dx + dy * dy > r2) continue;
+    if (!strikeTouches(at, hit, def.radius, otherT.x, otherT.y)) continue;
 
-    // Two swings inside the same window cancel out: a clash that knocks both back and stalls both.
-    const theirFist = otherCombat.punchPending > 0 ? fist(world, other) : null;
-    if (theirFist) {
-      const fx = at.x - theirFist.x;
-      const fy = at.y - theirFist.y;
-      if (fx * fx + fy * fy <= r2) {
+    // Two strikes inside the same window cancel out: a clash that knocks both back and stalls both.
+    const theirs = otherCombat.strikePending > 0 ? strikePoint(world, other, otherCombat.strike) : null;
+    if (theirs) {
+      const theirR = strikeDef(t, otherCombat.strike || StrikeKind.Jab).radius;
+      if (strikeTouches(otherT, theirs, theirR, at.x, at.y)) {
         const mx = (at.x + otherT.x) / 2;
         const my = (at.y + otherT.y) / 2 + 0.3;
         const dir = Math.sign(at.x - otherT.x) || 1;
@@ -113,13 +123,39 @@ function resolvePunch(world: World, attacker: Entity): void {
       }
     }
 
-    // A raised guard facing the attacker takes the punch and leaves the attacker wide open.
+    // A raised guard facing the attacker takes the strike. A perfect block stops anything and leaves
+    // the attacker wide open. Against a settled guard a punch bounces off and staggers the puncher,
+    // while a kick leans on the guard: it drains the meter, breaks it when it runs dry, and only
+    // briefly stalls the kicker.
     const guard = shieldBlocks(world, other, at.x, at.y);
     if (guard !== 'none') {
       const perfect = guard === 'reflect';
-      emit(world, { type: 'block', player: other, reflected: perfect, x: hit.x, y: hit.y });
-      stagger(world, attacker, perfect ? PERFECT_BLOCKED_STUN_TICKS : BLOCKED_STUN_TICKS, -aim.x * 3, 1);
-      if (perfect) other.set(Combat, { ...otherCombat, blockMeter: Math.min(1, otherCombat.blockMeter + 0.25) });
+      if (perfect) {
+        emit(world, { type: 'block', player: other, reflected: true, x: hit.x, y: hit.y });
+        stagger(world, attacker, PERFECT_BLOCKED_STUN_TICKS, -aim.x * 3, 1);
+        other.set(Combat, { ...otherCombat, blockMeter: Math.min(1, otherCombat.blockMeter + 0.25) });
+        continue;
+      }
+      if (def.kick) {
+        const meter = otherCombat.blockMeter - def.guardDrain;
+        if (meter <= 0) {
+          // Guard break: the blocker is knocked open and staggered, though spared the damage.
+          emit(world, { type: 'block', player: other, reflected: false, x: hit.x, y: hit.y });
+          emit(world, { type: 'clash', x: hit.x, y: hit.y });
+          stagger(world, other, t.guardBreakStunTicks, aim.x * 2, 1);
+          const broken = other.get(Combat);
+          if (broken) other.set(Combat, { ...broken, blockMeter: 0, refillDelay: t.blockMeterRefillDelayTicks * 2 });
+          launchHit(world, other, aim.x, aim.y, def.knockback * 0.5, def.lift * 0.5);
+        } else {
+          emit(world, { type: 'block', player: other, reflected: false, x: hit.x, y: hit.y });
+          other.set(Combat, { ...otherCombat, blockMeter: meter });
+          stagger(world, attacker, Math.round(BLOCKED_STUN_TICKS / 2), -aim.x * 2, 0.5);
+          launchHit(world, other, aim.x, aim.y, def.knockback * 0.5);
+        }
+        continue;
+      }
+      emit(world, { type: 'block', player: other, reflected: false, x: hit.x, y: hit.y });
+      stagger(world, attacker, BLOCKED_STUN_TICKS, -aim.x * 3, 1);
       const ob = ctx.bodies.get(other);
       if (ob) {
         const ov = ob.getLinearVelocity();
@@ -128,8 +164,8 @@ function resolvePunch(world: World, attacker: Entity): void {
       continue;
     }
 
-    takeDamage(world, other, t.punchDamage, 'body', attacker, otherT.x, otherT.y);
-    launchHit(world, other, aim.x, aim.y, t.punchKnockback, t.punchKnockbackUp);
+    takeDamage(world, other, def.damage, 'body', attacker, otherT.x, otherT.y);
+    launchHit(world, other, aim.x, aim.y, def.knockback, def.lift);
     disarm(world, other);
   }
 }
@@ -139,7 +175,7 @@ export function combat(world: World): void {
   const t = ctx.tuning;
   const live = combatAllowed(world);
 
-  world.query(fighters).updateEach(([player, combat, aim, , transform], entity) => {
+  world.query(fighters).updateEach(([player, combat, aim, ctrl, transform], entity) => {
     if (entity.has(Dead)) return;
     const input = ctx.inputs[player.inputIndex] ?? ctx.inputs[player.slot];
     const prev = ctx.prevInputs[player.inputIndex] ?? ctx.prevInputs[player.slot];
@@ -147,21 +183,22 @@ export function combat(world: World): void {
     const body = ctx.bodies.get(entity);
     if (!body) return;
 
-    if (combat.punchCooldown > 0) combat.punchCooldown -= 1;
-    if (combat.punchActive > 0) combat.punchActive -= 1;
+    if (combat.strikeCooldown > 0) combat.strikeCooldown -= 1;
+    if (combat.strikeActive > 0) combat.strikeActive -= 1;
     if (combat.stun > 0) combat.stun -= 1;
 
-    // A swing thrown earlier lands now (unless a clash or stagger cancelled it in the meantime).
-    if (combat.punchPending > 0) {
-      combat.punchPending -= 1;
-      if (combat.punchPending === 0) {
+    // A strike thrown earlier lands now (unless a clash or stagger cancelled it in the meantime).
+    if (combat.strikePending > 0) {
+      combat.strikePending -= 1;
+      if (combat.strikePending === 0) {
         // Write back first so the target sees this fighter as mid-swing when checking for a clash.
         entity.set(Combat, { ...combat });
-        resolvePunch(world, entity);
+        resolveStrike(world, entity, strikeDef(t, combat.strike || StrikeKind.Jab));
         const after = entity.get(Combat);
         if (after) Object.assign(combat, after);
       }
     }
+    if (combat.strikeActive === 0 && combat.strikePending === 0) combat.strike = StrikeKind.None;
 
     const stunned = combat.stun > 0;
     const armed = [...world.query(Weapon, Held)].some((w) => w.targetFor(HeldBy) === entity);
@@ -177,16 +214,31 @@ export function combat(world: World): void {
       else combat.blockMeter = Math.min(1, combat.blockMeter + 1 / t.blockMeterRefillTicks);
     }
 
-    const wantsPunch = live && !stunned && rising(prev?.attack ?? false, input.attack) && !armed && combat.punchCooldown <= 0;
-    if (wantsPunch) {
-      combat.punchCooldown = t.punchCooldownTicks;
-      combat.punchActive = t.punchActiveTicks;
-      combat.punchPending = PUNCH_WINDUP_TICKS;
-      const bonus = combat.blocking ? t.blockPunchBonus : 0;
-      const impulse = t.punchSelfImpulse + bonus;
+    const ready = live && !stunned && !armed && combat.strikeCooldown <= 0;
+    const wantsKick = ready && rising(prev?.kick ?? false, input.kick);
+    const wantsPunch = ready && !wantsKick && rising(prev?.attack ?? false, input.attack);
+    if (wantsKick || wantsPunch) {
+      const def = strikeDef(t, chooseStrike(wantsKick, input.moveX, aim.x, ctrl.facing));
+      combat.strike = def.kind;
+      combat.strikeCooldown = def.cooldown;
+      // The jab is shown for punchActiveTicks from the press (its wind-up included), exactly as the
+      // original punch was; longer strikes add their extra wind-up on top.
+      combat.strikeActive = def.windup - PUNCH_WINDUP_TICKS + def.active;
+      combat.strikePending = def.windup;
+      // The block-punch bonus is the punch-jump movement tech; kicks lunge on their own number.
+      const bonus = combat.blocking && !def.kick ? t.blockPunchBonus : 0;
+      const impulse = def.selfImpulse + bonus;
       const vel = body.getLinearVelocity();
       body.setLinearVelocity(new Vec2(vel.x + aim.x * impulse, vel.y + aim.y * impulse));
-      emit(world, { type: 'punch', player: entity, x: transform.x + aim.x * 0.4, y: transform.y + aim.y * 0.4 + 0.2, aimX: aim.x, aimY: aim.y });
+      emit(world, {
+        type: 'punch',
+        player: entity,
+        kick: isKick(def.kind),
+        x: transform.x + aim.x * 0.4,
+        y: transform.y + aim.y * 0.4 + 0.2,
+        aimX: aim.x,
+        aimY: aim.y,
+      });
     }
   });
 }

@@ -54,10 +54,13 @@ export const Health = trait({ hp: 100, maxHp: 100, percent: 0 });
 /** Launch mode: lives left this round, and the ticks until a fallen fighter drops back in (0 = not waiting). */
 export const Stocks = trait({ left: 0, respawnIn: 0 });
 export const Combat = trait({
-  punchCooldown: 0,
-  punchActive: 0,
-  /** Ticks until a thrown punch actually lands; two fighters swinging inside this window clash instead. */
-  punchPending: 0,
+  strikeCooldown: 0,
+  /** Ticks the current strike is shown for (wind-up plus the swing). */
+  strikeActive: 0,
+  /** Ticks until a thrown strike actually lands; two fighters swinging inside this window clash instead. */
+  strikePending: 0,
+  /** StrikeKind of the strike in flight (0 when idle). */
+  strike: 0,
   /** Staggered (blocked or clashed): no attacks, no guard, no steering until it runs out. */
   stun: 0,
   blockMeter: 1,
@@ -190,6 +193,15 @@ export const MatchState = trait({
 });
 
 export const MatchModeIndex = { standing: 0, launch: 1 } as const;
+
+/** Unarmed strikes. Lead limbs (jab, front kick) are quick; rear limbs (cross, roundhouse) are the committed versions. */
+export const StrikeKind = {
+  None: 0,
+  Jab: 1,
+  Cross: 2,
+  FrontKick: 3,
+  Roundhouse: 4,
+} as const;
 
 export const SimClock = trait({ tick: 0, stepScale: 1 });
 /** Weapon rain: `wave` counts the opening volley still to fall (one per fighter, see spawner.ts). */

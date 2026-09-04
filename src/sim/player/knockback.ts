@@ -58,7 +58,7 @@ export function launchHit(world: World, target: Entity, ux: number, uy: number, 
     const combat = target.get(Combat);
     if (combat) {
       const stun = Math.min(t.hitstunMaxTicks, Math.round(speed * t.hitstunPerSpeed));
-      if (stun > combat.stun) target.set(Combat, { stun, punchPending: 0, blocking: false });
+      if (stun > combat.stun) target.set(Combat, { stun, strikePending: 0, blocking: false });
     }
   }
   body.setLinearVelocity(new Vec2(v.x + kx, v.y + ky));
