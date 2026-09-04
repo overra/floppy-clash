@@ -1,0 +1,20 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "floppy-clash",
+  "main": "worker/index.ts",
+  "compatibility_date": "2026-08-28",
+  "observability": { "enabled": true },
+  "vars": { "ENVIRONMENT": "production" },
+  // The Vite build is served as static assets; only the relay and API paths reach the Worker.
+  "assets": {
+    "directory": "./dist",
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": ["/ws/*", "/api/*"],
+  },
+  // One RoomDO per room code: the WebSocket relay every online match runs through.
+  "durable_objects": {
+    "bindings": [{ "name": "ROOM", "class_name": "RoomDO" }],
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["RoomDO"] }],
+}

@@ -1,0 +1,17 @@
+{
+  // The Worker runs in workerd, not a browser: no DOM lib, runtime types come from `wrangler types`.
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022"],
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "strict": true,
+    "noImplicitOverride": true,
+    "noUncheckedIndexedAccess": true,
+    "skipLibCheck": true,
+    "isolatedModules": true,
+    "noEmit": true,
+    "types": []
+  },
+  "include": ["./**/*.ts", "../worker-configuration.d.ts", "../src/net/relay.ts"]
+}

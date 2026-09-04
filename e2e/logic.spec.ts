@@ -179,14 +179,20 @@ test('settings persist toggles and editor property panel opens', async ({ page }
   await expect(page.locator('#edfields')).toBeVisible();
 });
 
-test('online lobby has room code and chat', async ({ page }) => {
+test('online lobby takes a name and a room code, and an invite link fills the code in', async ({ page }) => {
   await page.goto('/');
   await page.getByRole('button', { name: 'Online' }).click();
-  await expect(page.getByRole('heading', { name: 'Online lobby' })).toBeVisible();
-  await page.locator('#room').fill('TEST01');
-  await page.locator('#chat').fill('hello couch');
-  await page.getByRole('button', { name: 'Send' }).click();
-  await expect(page.locator('text=hello couch')).toBeVisible();
-  await page.getByRole('button', { name: 'Host' }).click();
-  await expect(page.locator('#room')).toHaveValue(/TEST01/i);
+  await expect(page.getByRole('heading', { name: 'Online' })).toBeVisible();
+  await page.locator('#name').fill('Tester');
+  await page.locator('#room').fill('test-01');
+  // Codes are upper-cased letters and digits only, as they are typed.
+  await expect(page.locator('#room')).toHaveValue('TEST01');
+  await page.getByRole('button', { name: 'Back' }).click();
+  await expect(page.getByRole('heading', { name: 'Floppy Clash' })).toBeVisible();
+
+  await page.goto('/?room=k7pq2');
+  await expect(page.getByRole('heading', { name: 'Online' })).toBeVisible();
+  await expect(page.locator('#room')).toHaveValue('K7PQ2');
+  await expect(page.locator('#name')).toHaveValue('Tester');
+  await expect(page.locator('#join-room')).toHaveClass(/primary/);
 });
