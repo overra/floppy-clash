@@ -27,7 +27,10 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npx playwright install --with-deps chromium
-      - run: npx playwright test --project=logic
+      # The online project runs two browsers through a local `wrangler dev` relay (no Cloudflare account needed).
+      - run: npx playwright test --project=logic --project=online
+        env:
+          WRANGLER_SEND_METRICS: 'false'
 
   e2e-gpu:
     runs-on: ubuntu-latest

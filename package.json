@@ -6,17 +6,19 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "dev:worker": "mkdir -p dist && wrangler dev",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
     "lint": "eslint .",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc --noEmit && npm run types:worker && tsc -p worker/tsconfig.json --noEmit",
+    "types:worker": "wrangler types",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:e2e": "playwright test",
     "check": "npm run lint && npm run typecheck && npm run test && npm run build",
-    "server": "tsx server/signaling.ts",
+    "deploy": "npm run build && wrangler deploy",
     "ci": "npm run check"
   },
   "dependencies": {
@@ -27,21 +29,19 @@
     "planck": "1.5.0",
     "tweakpane": "4.0.5",
     "typegpu": "0.12.4",
-    "ws": "8.18.3",
     "zod": "3.24.2"
   },
   "devDependencies": {
     "@eslint/js": "9.36.0",
     "@playwright/test": "^1.62.1",
     "@types/node": "22.18.6",
-    "@types/ws": "8.18.1",
     "eslint": "9.36.0",
     "prettier": "3.6.2",
-    "tsx": "4.20.5",
     "typescript": "5.9.2",
     "typescript-eslint": "8.44.1",
     "unplugin-typegpu": "0.12.3",
     "vite": "7.1.7",
-    "vitest": "3.2.4"
+    "vitest": "3.2.4",
+    "wrangler": "^4.129.0"
   }
 }
