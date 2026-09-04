@@ -30,6 +30,7 @@ export function damageDeath(world: World): void {
       if (status.bubbled > 0) status.bubbled -= 1;
       if (status.pulled > 0) status.pulled -= 1;
       if (status.invuln > 0) status.invuln -= 1;
+      if (status.encumbered > 0) status.encumbered -= 1;
       entity.set(Status, status);
     }
 

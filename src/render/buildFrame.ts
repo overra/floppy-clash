@@ -38,6 +38,7 @@ import { isKick, isRear } from '../sim/player/strikes';
 import type { LightEmitter } from './gpu/lighting';
 import { weaponByIndex } from '../sim/weapons/defs';
 import { SWING_TICKS } from '../sim/weapons/projectiles';
+import { CHARGE_MAX_TICKS } from '../sim/weapons/systems';
 import type { SimHandle } from '../sim/world';
 import { updateCamera, type CameraState } from './camera';
 import { decorForLevel, decorGroups } from './decor';
@@ -313,6 +314,11 @@ export function buildFrame(
     }
     groups.push(group(placedBody, WEAPON_INK, Layer.Weapons, { blend: 'smoothUnion', smoothK: 0.04, style: 'shaded', pad: 0.2 }));
     if (placedAccent.length) groups.push(group(placedAccent, look.accentColor, Layer.Weapons, { style: 'flat', pad: 0.2, fx: look.glow ? 'glow' : undefined, glow: 0.25 }));
+    if (w.charge > 0 && placedAccent.length) {
+      // A charging swing: the business end heats up from a faint glow to white-hot at full charge.
+      const level = Math.min(1, w.charge / CHARGE_MAX_TICKS);
+      groups.push(group(placedAccent, withAlpha(level > 0.95 ? '#ffffff' : '#ffb347', 0.25 + 0.6 * level), Layer.Weapons, { style: 'flat', pad: 0.3, fx: 'glow', glow: 0.2 + 0.5 * level }));
+    }
   });
 
   // Projectiles.
@@ -454,6 +460,17 @@ export function buildFrame(
     const x = lerp(prev.x, t.x, alpha);
     const y = lerp(prev.y, t.y, alpha);
     const dir = Math.sign(t.x - prev.x) || 1;
+    if (snake.bomb) {
+      // Walker Mine: a squat shell on two scuttling legs, its fuse spark blinking faster as it runs down.
+      const step = Math.sin(time * 16);
+      groups.push(group([disk(x, y + 0.04, 0.2), cap(x - 0.1, y - 0.1, x - 0.14 + step * 0.06, y - 0.24, 0.035), cap(x + 0.1, y - 0.1, x + 0.14 - step * 0.06, y - 0.24, 0.035)], '#3a3f47', Layer.Projectiles, { blend: 'smoothUnion', smoothK: 0.05, style: 'shaded', pad: 0.3 }));
+      groups.push(group([disk(x + dir * 0.09, y + 0.07, 0.035)], '#ffd447', Layer.Projectiles, { style: 'flat', pad: 0.1 }));
+      const period = snake.fuse < 60 ? 4 : 10;
+      if (Math.floor(tick / period) % 2 === 0) {
+        groups.push(group([disk(x, y + 0.3, 0.05)], '#ff3b30', Layer.Projectiles, { style: 'flat', fx: 'glow', glow: 0.3 }));
+      }
+      return;
+    }
     const s = snake.giant ? 1.8 : 1;
     const segs: Primitive[] = [];
     let px = x;

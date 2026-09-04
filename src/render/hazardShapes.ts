@@ -300,6 +300,17 @@ export function hazardGroups(v: HazardVisual, theme: ThemePalette): ShapeGroup[]
     case HazardKind.TriggerDrop:
       return [];
 
+    case HazardKind.Repulsor: {
+      // A planted puck: a dark core inside a bright ring that breathes, so it reads as "do not touch".
+      const r = v.shape.r || v.hz.param0 || 0.45;
+      const pulse = 0.5 + 0.5 * Math.sin(v.time * 7);
+      return [
+        group([disk(v.x, v.y, r * (0.9 + 0.08 * pulse))], withAlpha('#67d98a', 0.35 + 0.25 * pulse), Layer.Hazards, { style: 'outline', fx: 'glow', glow: 0.45 }),
+        group([disk(v.x, v.y, r * 0.55)], '#1f3a2a', Layer.Hazards, { style: 'shaded' }),
+        group([disk(v.x, v.y, r * 0.2)], '#b8ffd0', Layer.Hazards, { style: 'flat', fx: 'glow', glow: 0.25 }),
+      ];
+    }
+
     default:
       return solidGroups(v, theme);
   }

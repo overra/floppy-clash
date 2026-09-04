@@ -39,6 +39,8 @@ export const LAUNCH_OVERLAY: Record<string, WeaponOverlay> = {
   sword: { launchScale: 1.25 },
   spear: { launchScale: 1.2 },
   'blink-dagger': { launchScale: 1.1 },
+  slugger: { launchScale: 1.2 },
+  mallet: { launchScale: 1.1 },
   // Attrition: builds percent, never finishes.
   'snake-gun': { dropWeight: 0.1 },
   'snake-shotgun': { dropWeight: 0.08 },
@@ -76,6 +78,10 @@ export const LAUNCH_WEAPONS: readonly string[] = [
   'ice-gun',
   'black-hole',
   'glue-gun',
+  'slugger',
+  'walker-mine',
+  'mallet',
+  'repulsor-puck',
 ];
 
 /** Apply the launch overlay to one base def: knockback folds in launchScale, thrown damage is capped. */

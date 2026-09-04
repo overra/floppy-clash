@@ -79,6 +79,8 @@ export const Weapon = trait({
   pickupCooldown: 0,
   thrown: false,
   thrownHit: false,
+  /** Charge weapons: ticks the trigger has been held toward the big swing. */
+  charge: 0,
 });
 export const Projectile = trait({
   kind: 0,
@@ -97,6 +99,8 @@ export const Projectile = trait({
   phase: 0,
   /** Melee swings: bit per player slot already struck this swing, so one swing lands once per target. */
   hitMask: 0,
+  /** Knockback multiplier for this shot (a charged swing lands harder than a tap). */
+  power: 1,
 });
 export const Hazard = trait({
   kind: 0,
@@ -124,9 +128,14 @@ export const Status = trait({
   bubbled: 0,
   pulled: 0,
   invuln: 0,
+  /** Lugging a forced swinger: no wall-kick while it lasts (refreshed every tick the weapon is held). */
+  encumbered: 0,
 });
-/** grace: ticks during which a freshly fired snake ignores whoever shot it (and sails ballistically while high). */
-export const Snake = trait({ hp: 0, giant: 0, flying: 0, biteCooldown: 0, grace: 0 });
+/**
+ * grace: ticks during which a freshly fired snake ignores whoever shot it (and sails ballistically while high).
+ * bomb: a walking mine rather than a snake; it goes off on contact, when shot, or when `fuse` runs out.
+ */
+export const Snake = trait({ hp: 0, giant: 0, flying: 0, biteCooldown: 0, grace: 0, bomb: 0, fuse: 0 });
 /** Bot brain state (local only). mode: BotMode. target: slot of the tracked enemy or -1. */
 export const Bot = trait({
   slot: 0,
@@ -242,6 +251,8 @@ export const HazardKind = {
   Spikeball: 17,
   Crusher: 18,
   TriggerDrop: 19,
+  /** A planted bumper (Repulsor Puck): shoves whoever touches it away, then fades. */
+  Repulsor: 20,
 } as const;
 
 export const ProjectileKind = {

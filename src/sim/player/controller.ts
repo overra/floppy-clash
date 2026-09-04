@@ -37,6 +37,8 @@ export function controller(world: World): void {
     const bubbled = (status?.bubbled ?? 0) > 0;
     // In a void well's grip the floor gives no purchase: air accel only, and no skidding to a stop.
     const pulled = (status?.pulled ?? 0) > 0;
+    // Lugging a forced swinger: no wall-kick.
+    const encumbered = (status?.encumbered ?? 0) > 0;
     if (bubbled) return;
     const skip = (h: RayHit) => ignoreMover(entity as unknown as number, h);
 
@@ -130,7 +132,7 @@ export function controller(world: World): void {
     else if (ctrl.jumpBuffer > 0) ctrl.jumpBuffer -= 1;
 
     // One held-jump wall-jump per new slide contact (climbing).
-    if (becameSlide && input.jump && ctrl.lockTicks === 0 && ctrl.jumpBuffer <= 0) {
+    if (becameSlide && input.jump && ctrl.lockTicks === 0 && ctrl.jumpBuffer <= 0 && !encumbered) {
       ctrl.jumpBuffer = 1;
     }
 
@@ -159,7 +161,7 @@ export function controller(world: World): void {
       ctrl.jumpBuffer = 0;
       ctrl.coyote = 0;
       ctrl.grounded = false;
-    } else if (ctrl.jumpBuffer > 0 && ctrl.wallSliding) {
+    } else if (ctrl.jumpBuffer > 0 && ctrl.wallSliding && !encumbered) {
       vx = -ctrl.wallDir * t.wallJumpX;
       vy = t.wallJumpY;
       ctrl.lockTicks = t.wallJumpLockTicks;

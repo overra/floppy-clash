@@ -150,7 +150,7 @@ function reviveFighter(world: World, player: Entity, x: number, y: number, invul
   if (!player.get(Combat)) player.add(Combat(stance));
   else player.set(Combat, stance);
   const status = player.get(Status);
-  if (status) player.set(Status, { burning: 0, slowed: 0, glued: 0, bubbled: 0, pulled: 0, invuln });
+  if (status) player.set(Status, { burning: 0, slowed: 0, glued: 0, bubbled: 0, pulled: 0, invuln, encumbered: 0 });
   let body = ctx.bodies.get(player);
   if (!body) {
     if (player.get(PhysBody)) player.remove(PhysBody);

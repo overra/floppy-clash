@@ -6,6 +6,7 @@ import { takeDamage } from './health';
 import { launchHit } from './knockback';
 import { chooseStrike, isKick, PUNCH_WINDUP_TICKS, strikeDef, type StrikeDef } from './strikes';
 import { combatAllowed } from '../rules/rounds';
+import { weaponDef } from '../weapons/resolve';
 import { Aim, Combat, Controller, Dead, Held, HeldBy, Loose, Player, StrikeKind, Transform, Weapon } from '../traits';
 
 const fighters = createQuery(Player, Combat, Aim, Controller, Transform);
@@ -201,9 +202,17 @@ export function combat(world: World): void {
     if (combat.strikeActive === 0 && combat.strikePending === 0) combat.strike = StrikeKind.None;
 
     const stunned = combat.stun > 0;
-    const armed = [...world.query(Weapon, Held)].some((w) => w.targetFor(HeldBy) === entity);
+    let armed = false;
+    let guardLocked = false;
+    for (const w of world.query(Weapon, Held)) {
+      if (w.targetFor(HeldBy) !== entity) continue;
+      armed = true;
+      const wep = w.get(Weapon);
+      guardLocked = !!wep && weaponDef(ctx.weapons, wep.defId).lockGuard;
+      break;
+    }
 
-    if (input.block && combat.blockMeter > 0 && !stunned) {
+    if (input.block && combat.blockMeter > 0 && !stunned && !guardLocked) {
       if (!combat.blocking) combat.blockStartTick = ctx.tick;
       combat.blocking = true;
       combat.blockMeter = Math.max(0, combat.blockMeter - 1 / t.blockMeterDrainTicks);

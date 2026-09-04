@@ -39,7 +39,7 @@ Pads only appear after you press a button. Keyboard/mouse is a development fallb
 ### Modes
 
 - **Last standing** (default): HP drains, the last fighter on their feet takes the round.
-- **Launch**: damage builds a percentage that scales knockback, only the blast zone kills, and every fighter has a stock of lives per round. Hold the stick as a hit lands to steer the launch (DI). Rotation prefers the open-air island stages (Skyhold, Floe, Perch) unless you pick levels yourself.
+- **Launch**: damage builds a percentage that scales knockback, only the blast zone kills, and every fighter has a stock of lives per round. Hold the stick as a hit lands to steer the launch (DI). Rotation prefers the open-air island stages (Skyhold, Floe, Perch) unless you pick levels yourself. Weapons play by a launch balance table (`src/sim/weapons/launch.ts`): rapid fire and scatter shove less, single shots and melee more, thrown guns shove for capped damage, and the default drop list leaves out attrition weapons.
 
 Rules also cover **Items** (normal / low / off), **Hazards** (off strips arenas to ground and moving platforms) and **Fixed spawns**; items off plus hazards off is a neutral stage.
 

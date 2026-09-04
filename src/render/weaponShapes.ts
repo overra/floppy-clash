@@ -196,9 +196,31 @@ export function weaponLook(kind: string, length: number): WeaponLook {
       return orbGun(length, '#7ae7ff');
     case 'black-hole':
       return orbGun(length, VOID);
+    case 'slugger':
+      return bat(length);
+    case 'mallet':
+      return mallet(length);
+    case 'walker-mine':
+      return launcher(length, '#4a4f58', { fat: true });
+    case 'repulsor-puck':
+      return orbGun(length, '#67d98a');
     default:
       return pistol(length, STEEL);
   }
+}
+
+/** A bat: a grip that swells into a barrel toward the tip. */
+function bat(len: number): WeaponLook {
+  const body = [cap(-0.1, 0, len * 0.45, 0, 0.04), cap(-0.14, 0, -0.1, 0, 0.055)];
+  const accentPrims = [cap(len * 0.4, 0, len * 0.92, 0, 0.075)];
+  return { body, accent: accentPrims, accentColor: '#c98f4a', muzzle: { x: len * 0.95, y: 0 } };
+}
+
+/** A mallet: a long handle with a squared head across the end. */
+function mallet(len: number): WeaponLook {
+  const body = [cap(-0.1, 0, len * 0.78, 0, 0.035)];
+  const accentPrims = [rbox(len * 0.82, 0, 0.14, 0.24, 0.04)];
+  return { body, accent: accentPrims, accentColor: '#8a5a2b', muzzle: { x: len * 0.96, y: 0 } };
 }
 
 /** Transform local-frame primitives to world space (mirror across the barrel axis when aiming left). */

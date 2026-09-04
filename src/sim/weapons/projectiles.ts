@@ -5,6 +5,7 @@ import { applyExplosion, queryBodiesInRadius, raycastClosest } from '../physics/
 import { takeDamage, hitZoneAt } from '../player/health';
 import { launchHit } from '../player/knockback';
 import { shieldBlocks } from '../player/combat';
+import { plantRepulsor } from '../hazards/repulsor';
 import { isLaunch } from '../rules/mode';
 import { assignNetId, createBoxBody, registerBody } from '../physics/bodies';
 import {
@@ -161,6 +162,39 @@ function spawnSnake(world: World, x: number, y: number, owner: Entity | undefine
   registerBody(world, snake, body);
 }
 
+/** Walker Mine: hit points, walking speed and the fuse it lights on landing. */
+const WALKER_HP = 30;
+const WALKER_SPEED = 3;
+const WALKER_FUSE_TICKS = 240;
+const WALKER_BLAST_RADIUS = 1.8;
+
+/** A mine on legs: the creature pipeline with a fuse, walking at the nearest fighter until it goes off. */
+function spawnWalker(world: World, x: number, y: number, owner: Entity | undefined, defId: number, vx = 0, vy = 0): void {
+  const ctx = getContext(world);
+  const walker = world.spawn(
+    Snake({ hp: WALKER_HP, giant: 0, flying: 0, biteCooldown: 0, grace: SNAKE_GRACE_TICKS, bomb: 1, fuse: WALKER_FUSE_TICKS }),
+    Health({ hp: WALKER_HP, maxHp: WALKER_HP }),
+    Projectile({ kind: ProjectileKind.Creature, defId, damage: 0 }),
+    Transform({ x, y, angle: 0 }),
+    PrevTransform({ x, y, angle: 0 }),
+  );
+  if (owner) walker.add(OwnedBy(owner));
+  assignNetId(world, walker);
+  const body = createBoxBody(ctx.physics, walker, 'projectile', x, y, 0.2, 0.2, 'dynamic', {
+    density: 0.6,
+    friction: 0.5,
+    fixedRotation: true,
+  });
+  body.setLinearVelocity(new Vec2(vx, vy));
+  registerBody(world, walker, body);
+}
+
+function walkerBlast(world: World, ctx: SimContext, entity: Entity, x: number, y: number, owner: Entity | undefined): void {
+  const def = weaponDef(ctx.weapons, entity.get(Projectile)?.defId ?? 0);
+  detonate(world, x, y, WALKER_BLAST_RADIUS, def.projectile.explodeDamage || 40, def.projectile.explodeImpulse || 12, owner);
+  ctx.pendingDestroy.push(entity);
+}
+
 function playerCentre(ctx: SimContext, entity: Entity, fallback: { x: number; y: number }): { x: number; y: number } {
   const b = ctx.bodies.get(entity);
   if (!b) return { x: fallback.x, y: fallback.y };
@@ -212,7 +246,7 @@ function stepSwing(world: World, ctx: SimContext, entity: Entity, proj: Projecti
     const block = shieldBlocks(world, other, ot.x, ot.y);
     if (block !== 'none') {
       emit(world, { type: 'block', player: other, reflected: false, x: c.x, y: c.y });
-      shove(ctx, other, aim.x, aim.y, def.knockback * 0.5);
+      shove(ctx, other, aim.x, aim.y, def.knockback * 0.5 * proj.power);
       // A parried lunge stops the attacker cold.
       const ob = ctx.bodies.get(owner);
       if (ob) ob.setLinearVelocity(new Vec2(0, ob.getLinearVelocity().y));
@@ -221,7 +255,7 @@ function stepSwing(world: World, ctx: SimContext, entity: Entity, proj: Projecti
     const duck = other.get(Controller)?.ducking ?? false;
     const zone = hitZoneAt(tipY - c.y, ctx.tuning.height, duck);
     takeDamage(world, other, proj.damage, zone, owner, c.x, c.y);
-    shove(ctx, other, aim.x, aim.y, def.knockback, 1.5);
+    shove(ctx, other, aim.x, aim.y, def.knockback * proj.power, 1.5 * proj.power);
   });
 
   world.query(Snake, Transform, Health).updateEach(([, st, h], snake) => {
@@ -484,6 +518,10 @@ function stepExplosive(world: World, ctx: SimContext, entity: Entity, proj: Proj
     proj.kind === ProjectileKind.BurstInto ||
     (proj.kind === ProjectileKind.Grenade && (touched !== null || def.projectile.bounce === 0));
   if ((touched !== null || hitSurface) && contactExplode) {
+    if (def.deploy !== 'none') {
+      deploy(world, ctx, entity, proj, def);
+      return;
+    }
     if (proj.kind === ProjectileKind.BurstInto) burst(world, proj, def, owner);
     explode(world, proj.x, proj.y, proj.defId, owner);
     ctx.pendingDestroy.push(entity);
@@ -497,11 +535,22 @@ function stepExplosive(world: World, ctx: SimContext, entity: Entity, proj: Proj
   if (proj.fuse > 0) {
     proj.fuse -= 1;
     if (proj.fuse <= 0) {
+      if (def.deploy !== 'none') {
+        deploy(world, ctx, entity, proj, def);
+        return;
+      }
       if (proj.kind === ProjectileKind.BurstInto) burst(world, proj, def, owner);
       explode(world, proj.x, proj.y, proj.defId, owner);
       ctx.pendingDestroy.push(entity);
     }
   }
+}
+
+/** A shell that plants something where it settles instead of going off. */
+function deploy(world: World, ctx: SimContext, entity: Entity, proj: ProjectileState, def: WeaponDef): void {
+  if (def.deploy === 'repulsor') plantRepulsor(world, proj.x, proj.y);
+  emit(world, { type: 'explosion', x: proj.x, y: proj.y, radius: 0.5, damage: 0 });
+  ctx.pendingDestroy.push(entity);
 }
 
 function stepBeam(world: World, ctx: SimContext, entity: Entity, proj: ProjectileState, def: WeaponDef, owner: Entity | undefined): void {
@@ -582,7 +631,8 @@ export function projectiles(world: World): void {
         return;
       case ProjectileKind.Creature:
         // The shell hatches on its first tick, keeping the muzzle velocity so snakes actually fly.
-        spawnSnake(world, proj.x, proj.y, owner, def.id.includes('launcher'), def.id.includes('flying'), proj.vx, proj.vy);
+        if (def.id === 'walker-mine') spawnWalker(world, proj.x, proj.y, owner, proj.defId, proj.vx, proj.vy);
+        else spawnSnake(world, proj.x, proj.y, owner, def.id.includes('launcher'), def.id.includes('flying'), proj.vx, proj.vy);
         ctx.pendingDestroy.push(entity);
         return;
       default:
@@ -625,14 +675,25 @@ export function projectiles(world: World): void {
   });
 
   world.query(Snake, Transform, Health).updateEach(([snake, st, health], entity) => {
+    const owner = ownerOf(entity);
     if (health.hp <= 0) {
-      emit(world, { type: 'blood', x: st.x, y: st.y, amount: 12 });
-      ctx.pendingDestroy.push(entity);
+      // A shot mine goes off where it stands; a shot snake just dies.
+      if (snake.bomb) walkerBlast(world, ctx, entity, st.x, st.y, owner);
+      else {
+        emit(world, { type: 'blood', x: st.x, y: st.y, amount: 12 });
+        ctx.pendingDestroy.push(entity);
+      }
       return;
     }
     if (snake.biteCooldown > 0) snake.biteCooldown -= 1;
     if (snake.grace > 0) snake.grace -= 1;
-    const owner = ownerOf(entity);
+    if (snake.bomb) {
+      snake.fuse -= 1;
+      if (snake.fuse <= 0) {
+        walkerBlast(world, ctx, entity, st.x, st.y, owner);
+        return;
+      }
+    }
     const body = ctx.bodies.get(entity);
     if (!body) return;
     const v = body.getLinearVelocity();
@@ -652,7 +713,7 @@ export function projectiles(world: World): void {
     const dirx = n.x - st.x;
     const diry = n.y - st.y;
     const len = Math.hypot(dirx, diry) || 1;
-    const speed = snake.flying ? 6 : snake.giant ? 3.5 : 4.5;
+    const speed = snake.flying ? 6 : snake.bomb ? WALKER_SPEED : snake.giant ? 3.5 : 4.5;
     if (snake.flying) {
       body.setLinearVelocity(new Vec2((dirx / len) * speed, (diry / len) * speed));
     } else {
@@ -660,6 +721,11 @@ export function projectiles(world: World): void {
       // Slither toward the target; hop when it is above us or now and then for the wriggle.
       const hop = resting && (diry > 0.6 || (n.d > 1.2 && ctx.rng.next() < 0.03));
       body.setLinearVelocity(new Vec2(Math.sign(dirx) * Math.min(speed, Math.abs(dirx) * 4), hop ? 6.5 : v.y));
+    }
+    if (snake.bomb) {
+      // Contact: the mine goes off (its own grace protects whoever lobbed it while it is still close).
+      if (n.d < 0.7) walkerBlast(world, ctx, entity, st.x, st.y, owner);
+      return;
     }
     if (n.d < 0.55 && snake.biteCooldown <= 0) {
       takeDamage(world, n.e, snake.giant ? 25 : 5, 'body', owner ?? entity, n.x, n.y);

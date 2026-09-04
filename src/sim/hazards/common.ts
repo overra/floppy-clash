@@ -65,6 +65,9 @@ export function paramsFromObject(obj: LevelObject): HazardParams {
     case 'bounce':
       // half-width, launch speed
       return { param0: w / 2, param1: obj.speed ?? 18, param2: 0, param3: 0 };
+    case 'repulsor':
+      // radius, shove speed, tick of the last shove
+      return { param0: obj.r ?? 0.45, param1: obj.speed ?? 12, param2: -999, param3: 0 };
     default:
       return {
         param0: obj.speed ?? obj.period ?? w,

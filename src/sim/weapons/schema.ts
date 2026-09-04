@@ -5,9 +5,17 @@ export const WeaponDefSchema = z.object({
   displayName: z.string().optional(),
   category: z.enum(['melee', 'pistol', 'rifle', 'explosive', 'snake', 'lava', 'other']),
   ammo: z.number(),
-  fireMode: z.enum(['semi', 'auto', 'burst', 'hold']),
+  /**
+   * `charge`: hold to wind up, release (or reach full charge) to swing, harder the longer it was held.
+   * `forced`: swings on its own every interval while held; the holder cannot raise a guard.
+   */
+  fireMode: z.enum(['semi', 'auto', 'burst', 'hold', 'charge', 'forced']),
   fireIntervalTicks: z.number(),
   burstCount: z.number().optional(),
+  /** Holding this weapon keeps the guard down and the wall-kick off (forced swingers). */
+  lockGuard: z.boolean().default(false),
+  /** What a shell leaves behind instead of a blast when it settles: `repulsor` plants a bumper. */
+  deploy: z.enum(['none', 'repulsor']).default('none'),
   projectile: z.object({
     kind: z.enum(['bullet', 'pellets', 'grenade', 'rocket', 'beam', 'melee', 'field', 'creature', 'burst-into']),
     speed: z.number().default(40),
