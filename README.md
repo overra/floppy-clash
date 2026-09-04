@@ -31,6 +31,13 @@ Pads only appear after you press a button. Keyboard/mouse is a development fallb
 
 **Solo vs Bots** starts a match against three utility bots from the main menu.
 
+### Modes
+
+- **Last standing** (default): HP drains, the last fighter on their feet takes the round.
+- **Launch**: damage builds a percentage that scales knockback, only the blast zone kills, and every fighter has a stock of lives per round. Hold the stick as a hit lands to steer the launch (DI). Rotation prefers the open-air island stages (Skyhold, Floe, Perch) unless you pick levels yourself.
+
+Rules also cover **Items** (normal / low / off), **Hazards** (off strips arenas to ground and moving platforms) and **Fixed spawns**; items off plus hazards off is a neutral stage.
+
 ### Static hosting / PWA
 
 `npm run build` emits `dist/`. Deploy that folder to any static host (GitHub Pages, Netlify, nginx). The [pages workflow](.github/workflows/pages.yml) publishes `dist/` when this branch is merged to `main`. Install from the browser as a PWA (`public/manifest.webmanifest` + `sw.js`) for offline couch play.
