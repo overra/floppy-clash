@@ -196,6 +196,7 @@ export function collectSettings(card: HTMLElement, menus: MenuState, settings: U
     reduceBlood: chk('rb', settings.reduceBlood),
     lighting: chk('lit', settings.lighting),
     includeUserLevels: chk('usr', settings.includeUserLevels),
+    telemetry: chk('tel', settings.telemetry),
     renderer: sel('ren', settings.renderer) as UserSettings['renderer'],
     rotation: sel('rot', settings.rotation) as UserSettings['rotation'],
     sfx: num('sfx', settings.sfx),
@@ -397,6 +398,11 @@ function renderSettings(
         </label>
         ${check('lit', '2D lighting (radiance cascades)', settings.lighting)}
       </div>
+      <h3>Privacy</h3>
+      <div class="form-grid">
+        ${check('tel', 'Share anonymous usage &amp; performance stats', settings.telemetry)}
+      </div>
+      <p class="dim">No account, no cookies, nothing that outlives this tab: which modes and levels get played, how long matches last, how smoothly frames run, and errors. Helps keep the game fast on the hardware people actually use.</p>
       <h3>Weapon toggles</h3>
       <div class="chips">${weaponBoxes}</div>
       <h3>Level toggles</h3>
