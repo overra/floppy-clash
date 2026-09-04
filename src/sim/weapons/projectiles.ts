@@ -3,7 +3,9 @@ import { Vec2 } from 'planck';
 import { emit, getContext, type SimContext } from '../context';
 import { applyExplosion, queryBodiesInRadius, raycastClosest } from '../physics/queries';
 import { takeDamage, hitZoneAt } from '../player/health';
+import { launchHit } from '../player/knockback';
 import { shieldBlocks } from '../player/combat';
+import { isLaunch } from '../rules/mode';
 import { assignNetId, createBoxBody, registerBody } from '../physics/bodies';
 import {
   Aim,
@@ -77,11 +79,8 @@ function applyStatus(target: Entity, status: string, ticks: number): void {
 }
 
 function shove(ctx: SimContext, target: Entity, dirX: number, dirY: number, amount: number, lift = 0): void {
-  const tb = ctx.bodies.get(target);
-  if (!tb) return;
-  const v = tb.getLinearVelocity();
   const len = Math.hypot(dirX, dirY) || 1;
-  tb.setLinearVelocity(new Vec2(v.x + (dirX / len) * amount, v.y + (dirY / len) * amount + lift));
+  launchHit(ctx.ecs, target, dirX / len, dirY / len, amount, lift);
 }
 
 /**
@@ -90,27 +89,38 @@ function shove(ctx: SimContext, target: Entity, dirX: number, dirY: number, amou
  */
 export function detonate(world: World, x: number, y: number, radius: number, damage: number, impulse: number, owner?: Entity, status = 'none'): void {
   emit(world, { type: 'explosion', x, y, radius, damage });
-  applyExplosion(world, x, y, radius, impulse, (body, falloff) => {
-    const data = body.getUserData() as FixtureUserData | undefined;
-    if (!data) return;
-    const target = data.entity as Entity;
-    if (!world.has(target)) return;
-    if (target.has(Player) && !target.has(Dead)) {
-      takeDamage(world, target, damage * falloff, 'body', owner ?? -1, x, y);
-      if (status !== 'none') applyStatus(target, status, Math.round(BURN_TICKS * Math.max(0.4, falloff)));
-    }
-    if (target.has(Snake)) {
-      const h = target.get(Health);
-      if (h) target.set(Health, { hp: h.hp - damage * falloff, maxHp: h.maxHp });
-    }
-    if (target.has(Destructible)) {
-      const d = target.get(Destructible);
-      if (d) {
-        const hp = d.hp - damage * falloff;
-        target.set(Destructible, { hp, maxHp: d.maxHp });
+  // Launch mode routes fighters through launchHit (percent scaling, DI, hitstun) instead of the raw impulse.
+  const launch = isLaunch(world);
+  applyExplosion(
+    world,
+    x,
+    y,
+    radius,
+    impulse,
+    (body, falloff, nx, ny) => {
+      const data = body.getUserData() as FixtureUserData | undefined;
+      if (!data) return;
+      const target = data.entity as Entity;
+      if (!world.has(target)) return;
+      if (target.has(Player) && !target.has(Dead)) {
+        takeDamage(world, target, damage * falloff, 'body', owner ?? -1, x, y);
+        if (launch) launchHit(world, target, nx, ny, impulse * falloff, 0.15 * impulse * falloff);
+        if (status !== 'none') applyStatus(target, status, Math.round(BURN_TICKS * Math.max(0.4, falloff)));
       }
-    }
-  });
+      if (target.has(Snake)) {
+        const h = target.get(Health);
+        if (h) target.set(Health, { hp: h.hp - damage * falloff, maxHp: h.maxHp });
+      }
+      if (target.has(Destructible)) {
+        const d = target.get(Destructible);
+        if (d) {
+          const hp = d.hp - damage * falloff;
+          target.set(Destructible, { hp, maxHp: d.maxHp });
+        }
+      }
+    },
+    { skipPlayers: launch },
+  );
 }
 
 function explode(world: World, x: number, y: number, defId: number, owner?: Entity): void {

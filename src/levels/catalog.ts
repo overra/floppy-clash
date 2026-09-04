@@ -1,8 +1,10 @@
 import { gymLevel, runTrack } from './gym';
 import { castleKeep, desertStack, factoryLine, woodsClearing, woodsRidge } from './handauthored';
+import { LAUNCH_STAGES } from './launch';
 import { GENERATED_LEVELS } from './generated';
 import type { LevelDef } from '../sim/level/schema';
 import { parseLevel } from '../sim/level/schema';
+import type { MatchMode } from '../sim/rules/settings';
 
 export const HAND_AUTHORED: LevelDef[] = [
   woodsClearing,
@@ -10,6 +12,7 @@ export const HAND_AUTHORED: LevelDef[] = [
   desertStack,
   factoryLine,
   castleKeep,
+  ...LAUNCH_STAGES,
 ];
 
 function uniquify(levels: LevelDef[]): LevelDef[] {
@@ -53,8 +56,12 @@ export function builtInMatchLevels(): LevelDef[] {
   return ALL_LEVELS.filter(isMatchLevel);
 }
 
-/** Built-in match arenas plus optional user-library levels, filtered by host toggles. */
-export function matchLevelPool(enabled: string[] | 'all', extra: LevelDef[] = []): LevelDef[] {
+/**
+ * Built-in match arenas plus optional user-library levels, filtered by host toggles. With every
+ * level enabled, launch mode narrows the pool to the open-air stages tagged for it (a full-floor
+ * arena has no blast zone underneath, so rounds there drag); an explicit selection is honoured as is.
+ */
+export function matchLevelPool(enabled: string[] | 'all', extra: LevelDef[] = [], mode: MatchMode = 'standing'): LevelDef[] {
   const seen = new Set<string>();
   const out: LevelDef[] = [];
   for (const level of [...builtInMatchLevels(), ...extra]) {
@@ -62,6 +69,10 @@ export function matchLevelPool(enabled: string[] | 'all', extra: LevelDef[] = []
     if (enabled !== 'all' && !enabled.includes(level.id)) continue;
     seen.add(level.id);
     out.push(level);
+  }
+  if (mode === 'launch' && enabled === 'all') {
+    const open = out.filter((l) => l.tags?.includes('launch'));
+    if (open.length > 0) return open;
   }
   return out;
 }

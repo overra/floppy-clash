@@ -69,6 +69,19 @@ export const tuning = {
   lavaDamage: 35,
   lavaCooldownTicks: 30,
 
+  // Launch mode. A hit's shove is the weapon's knockback times (base + percent/100 * perPercent),
+  // capped; hitstun grows with the launch speed; the stick held at the moment of the hit steers the
+  // launch angle by up to diMaxDeg (directional influence). Fallen fighters drop back in after
+  // respawnDelayTicks with respawnInvulnTicks of immunity.
+  launchBaseScale: 0.6,
+  launchPercentScale: 1.4,
+  launchMaxScale: 4,
+  hitstunPerSpeed: 1.5,
+  hitstunMaxTicks: 45,
+  diMaxDeg: 18,
+  respawnDelayTicks: 90,
+  respawnInvulnTicks: 120,
+
   // Between rounds: ~2 s of slow-mo on the last kill (36 ticks at 0.3x), 0.75 s with the scorecard
   // up at full speed, then a 1.5 s 3-2-1. About 4 s door to door; rounds against bots can be short,
   // so the gap has to be shorter still.

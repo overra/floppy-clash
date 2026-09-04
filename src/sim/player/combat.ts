@@ -3,6 +3,7 @@ import { Vec2 } from 'planck';
 import { emit, getContext } from '../context';
 import { rising } from '../input';
 import { takeDamage } from './health';
+import { launchHit } from './knockback';
 import { combatAllowed } from '../rules/rounds';
 import { Aim, Combat, Controller, Dead, Held, HeldBy, Loose, Player, Transform, Weapon } from '../traits';
 
@@ -128,11 +129,7 @@ function resolvePunch(world: World, attacker: Entity): void {
     }
 
     takeDamage(world, other, t.punchDamage, 'body', attacker, otherT.x, otherT.y);
-    const otherBody = ctx.bodies.get(other);
-    if (otherBody) {
-      const ov = otherBody.getLinearVelocity();
-      otherBody.setLinearVelocity(new Vec2(ov.x + aim.x * t.punchKnockback, ov.y + aim.y * t.punchKnockback + t.punchKnockbackUp));
-    }
+    launchHit(world, other, aim.x, aim.y, t.punchKnockback, t.punchKnockbackUp);
     disarm(world, other);
   }
 }

@@ -33,6 +33,8 @@ export const LevelSchema = z.object({
   id: z.string(),
   name: z.string(),
   theme: z.string(),
+  /** Free-form labels; 'launch' marks an open-air stage that launch mode prefers in rotation. */
+  tags: z.array(z.string()).optional(),
   bounds: z.object({ x: z.number(), y: z.number(), w: z.number(), h: z.number() }),
   killMargin: z.number().default(6),
   spawns: z.array(Vec2Schema).min(4),

@@ -14,6 +14,9 @@ export type SimEvent =
   | { type: 'clash'; x: number; y: number }
   | { type: 'blood'; x: number; y: number; amount: number }
   | { type: 'round-phase'; phase: string }
+  /** Launch mode: a fighter lost a life (`left` remain) or dropped back in from the top. */
+  | { type: 'stock'; slot: number; left: number }
+  | { type: 'respawn'; player: number; x: number; y: number }
   | { type: 'spawn'; kind: string; netId: number }
   | { type: 'despawn'; netId: number }
   | { type: 'score'; slot: number; wins: number };

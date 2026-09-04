@@ -13,14 +13,18 @@ const WAVE_GAP_TICKS = 8;
  * before anyone can move is a free win), and the first thing to fall is a volley of one gun per
  * fighter, each over its own slice of the arena, so nobody starts the round as the only one armed.
  */
+/** `low` items: no opening volley, and every wait between drops is this many times longer. */
+const LOW_ITEMS_SLOWDOWN = 3;
+
 export function openDrops(world: World): void {
   const ctx = getContext(world);
   const drop = world.get(DropState);
   if (!drop) return;
-  const size = Math.min(ctx.players.length, ctx.tuning.maxLooseWeapons);
+  const items = ctx.settings.items;
+  const size = items === 'normal' ? Math.min(ctx.players.length, ctx.tuning.maxLooseWeapons) : 0;
   world.set(DropState, {
     ...drop,
-    nextDrop: ctx.tick + ctx.tuning.firstDropDelayTicks,
+    nextDrop: ctx.tick + ctx.tuning.firstDropDelayTicks * (items === 'low' ? LOW_ITEMS_SLOWDOWN : 1),
     wave: size,
     waveSize: size,
   });
@@ -30,7 +34,7 @@ export function spawner(world: World): void {
   const ctx = getContext(world);
   const round = world.get(RoundState);
   const drop = world.get(DropState);
-  if (!round || !drop || !ctx.level.drops?.enabled) return;
+  if (!round || !drop || !ctx.level.drops?.enabled || ctx.settings.items === 'off') return;
   if (round.phase !== RoundPhase.Fighting) return;
 
   let loose = 0;
@@ -85,7 +89,7 @@ export function spawner(world: World): void {
   } else {
     // More fighters burn through more guns: tighten the cadence as the lobby grows.
     const crowd = 1 + 0.15 * Math.max(0, ctx.players.length - 2);
-    const scale = (ctx.level.drops.intervalScale ?? 1) / crowd;
+    const scale = ((ctx.level.drops.intervalScale ?? 1) / crowd) * (ctx.settings.items === 'low' ? LOW_ITEMS_SLOWDOWN : 1);
     drop.nextDrop =
       ctx.tick +
       Math.floor(ctx.rng.range(ctx.tuning.dropIntervalMinTicks, ctx.tuning.dropIntervalMaxTicks) * scale);

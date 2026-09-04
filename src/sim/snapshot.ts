@@ -1,7 +1,7 @@
 import type { World } from 'koota';
 import { fnv1a, hashToHex, quantize } from '../core/hash';
 import { getContext } from './context';
-import { Aim, Combat, Controller, Health, NetId, Player, Projectile, Transform, Weapon } from './traits';
+import { Aim, Combat, Controller, Health, NetId, Player, Projectile, Stocks, Transform, Weapon } from './traits';
 
 export type TraitSnapshot = {
   netId: number;
@@ -17,13 +17,19 @@ export type WorldSnapshot = {
 
 export function serializeWorld(world: World): WorldSnapshot {
   const ctx = getContext(world);
+  const launch = ctx.settings.mode === 'launch';
   const entities: TraitSnapshot[] = [];
   world.query(NetId).updateEach(([net], entity) => {
     const snap: TraitSnapshot = { netId: net.id, traits: {} };
     const t = entity.get(Transform);
     if (t) snap.traits.Transform = { x: t.x, y: t.y, angle: t.angle };
     const h = entity.get(Health);
-    if (h) snap.traits.Health = { hp: h.hp, maxHp: h.maxHp };
+    // Percent only exists in launch mode; leaving it out elsewhere keeps the standing-mode hash as it was.
+    if (h) snap.traits.Health = launch ? { hp: h.hp, maxHp: h.maxHp, percent: h.percent } : { hp: h.hp, maxHp: h.maxHp };
+    if (launch) {
+      const st = entity.get(Stocks);
+      if (st) snap.traits.Stocks = { left: st.left, respawnIn: st.respawnIn };
+    }
     const p = entity.get(Player);
     if (p) snap.traits.Player = { slot: p.slot, color: p.color, inputIndex: p.inputIndex };
     const c = entity.get(Controller);
@@ -60,7 +66,11 @@ export function restoreWorld(world: World, snap: WorldSnapshot): void {
       body?.setAngle(Number(t.angle));
     }
     const h = rec.traits.Health;
-    if (h && entity.get(Health)) entity.set(Health, { hp: Number(h.hp), maxHp: Number(h.maxHp) });
+    if (h && entity.get(Health)) {
+      entity.set(Health, { hp: Number(h.hp), maxHp: Number(h.maxHp), ...(h.percent !== undefined ? { percent: Number(h.percent) } : {}) });
+    }
+    const st = rec.traits.Stocks;
+    if (st && entity.get(Stocks)) entity.set(Stocks, { left: Number(st.left), respawnIn: Number(st.respawnIn) });
   });
 }
 

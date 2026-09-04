@@ -49,7 +49,10 @@ export const Controller = trait({
   vy: 0,
 });
 export const Aim = trait({ x: 1, y: 0, holdTicks: 0 });
-export const Health = trait({ hp: 100, maxHp: 100 });
+/** percent: launch-mode damage, climbing from 0 with no ceiling; hp is untouched by ordinary hits there. */
+export const Health = trait({ hp: 100, maxHp: 100, percent: 0 });
+/** Launch mode: lives left this round, and the ticks until a fallen fighter drops back in (0 = not waiting). */
+export const Stocks = trait({ left: 0, respawnIn: 0 });
 export const Combat = trait({
   punchCooldown: 0,
   punchActive: 0,
@@ -102,13 +105,17 @@ export const Anchor = trait({ x: 0, y: 0 });
 /** Render-facing geometry of the body's main fixture (derived, never authored). kind: ShapeKind. */
 export const Shape = trait({ kind: 0, hx: 0.5, hy: 0.5, r: 0 });
 export const Lifetime = trait({ ticksLeft: 0 });
-/** Ticks left on each affliction. pulled: in a void well's grip, so footing counts for nothing (controller.ts). */
+/**
+ * Ticks left on each affliction. pulled: in a void well's grip, so footing counts for nothing (controller.ts).
+ * invuln: fresh off a respawn (or a ledge in launch mode), hits and shoves pass straight through.
+ */
 export const Status = trait({
   burning: 0,
   slowed: 0,
   glued: 0,
   bubbled: 0,
   pulled: 0,
+  invuln: 0,
 });
 /** grace: ticks during which a freshly fired snake ignores whoever shot it (and sails ballistically while high). */
 export const Snake = trait({ hp: 0, giant: 0, flying: 0, biteCooldown: 0, grace: 0 });
@@ -176,7 +183,13 @@ export const MatchState = trait({
   showWins: 1,
   maxHp: 100,
   round: 0,
+  /** MatchMode as an index: 0 standing, 1 launch. */
+  mode: 0,
+  /** Launch mode: stocks every fighter starts a round with. */
+  stocks: 0,
 });
+
+export const MatchModeIndex = { standing: 0, launch: 1 } as const;
 
 export const SimClock = trait({ tick: 0, stepScale: 1 });
 /** Weapon rain: `wave` counts the opening volley still to fall (one per fighter, see spawner.ts). */
