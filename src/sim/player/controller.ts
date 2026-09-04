@@ -4,7 +4,7 @@ import { getContext } from '../context';
 import { rising } from '../input';
 import { raycastClosest, type RayHit } from '../physics/queries';
 import { findLedge, grabLedge, stepHang } from './ledge';
-import { Aim, Combat, Controller, Dead, Player, Status } from '../traits';
+import { Aim, Combat, Controller, Dead, Modifiers, Player, Status } from '../traits';
 
 const movers = createQuery(Player, Controller, Aim);
 
@@ -137,8 +137,12 @@ export function controller(world: World): void {
     }
 
     ctrl.ducking = input.down && ctrl.grounded;
-    const speed = t.runSpeed * (ctrl.ducking ? t.duckSpeedScale : 1) * (slowed ? 0.45 : 1) * (glued ? 0.15 : 1);
-    const accel = (ctrl.grounded && !pulled ? groundAccel : airAccel) * (glued ? 0.2 : 1);
+    // Pickup effects: a Sprint Charm quickens, a Lead Coat weighs down.
+    const mods = entity.get(Modifiers);
+    const speedMod = mods && mods.ticks > 0 ? mods.speed : 1;
+    const jumpMod = mods && mods.ticks > 0 ? mods.jump : 1;
+    const speed = t.runSpeed * (ctrl.ducking ? t.duckSpeedScale : 1) * (slowed ? 0.45 : 1) * (glued ? 0.15 : 1) * speedMod;
+    const accel = (ctrl.grounded && !pulled ? groundAccel : airAccel) * (glued ? 0.2 : 1) * speedMod;
 
     if (ctrl.lockTicks > 0) {
       ctrl.lockTicks -= 1;
@@ -157,13 +161,13 @@ export function controller(world: World): void {
     }
 
     if (ctrl.jumpBuffer > 0 && (ctrl.grounded || ctrl.coyote > 0)) {
-      vy = t.jumpSpeed;
+      vy = t.jumpSpeed * jumpMod;
       ctrl.jumpBuffer = 0;
       ctrl.coyote = 0;
       ctrl.grounded = false;
     } else if (ctrl.jumpBuffer > 0 && ctrl.wallSliding && !encumbered) {
       vx = -ctrl.wallDir * t.wallJumpX;
-      vy = t.wallJumpY;
+      vy = t.wallJumpY * jumpMod;
       ctrl.lockTicks = t.wallJumpLockTicks;
       ctrl.jumpBuffer = 0;
       ctrl.wallSliding = false;

@@ -248,7 +248,8 @@ function fireFor(sim: ReturnType<typeof makeSim>, ticks: number, semi: boolean, 
 describe('weapon behaviours by class', () => {
   it('every roster weapon can hurt a target standing in front of it', async () => {
     for (const def of WEAPON_DEFS) {
-      if (def.id === 'fists') continue;
+      // Fists are the unarmed default; consumables are taken on touch and hurt nobody (items.test.ts).
+      if (def.id === 'fists' || def.category === 'consumable') continue;
       // Keep the worker responsive to the runner during the long sweep.
       await new Promise<void>((resolve) => setImmediate(resolve));
       const melee = def.projectile.kind === 'melee';

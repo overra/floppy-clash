@@ -2,7 +2,7 @@ import type { Entity, World } from 'koota';
 import { Vec2 } from 'planck';
 import { getContext } from '../context';
 import { isLaunch } from '../rules/mode';
-import { Combat, Health, Player, Status } from '../traits';
+import { Combat, Health, Modifiers, Player, Status } from '../traits';
 
 /** How much harder a fighter flies than at 0%: always 1 outside launch mode. */
 export function knockbackScale(world: World, target: Entity): number {
@@ -29,6 +29,12 @@ export function launchHit(world: World, target: Entity, ux: number, uy: number, 
   const body = ctx.bodies.get(target);
   if (!body) return;
   if (isInvulnerable(target)) return;
+  // A Lead Coat takes the sting out of every shove.
+  const mods = target.get(Modifiers);
+  if (mods && mods.ticks > 0 && mods.knockbackTaken !== 1) {
+    amount *= mods.knockbackTaken;
+    lift *= mods.knockbackTaken;
+  }
   const v = body.getLinearVelocity();
   if (!isLaunch(world)) {
     body.setLinearVelocity(new Vec2(v.x + ux * amount, v.y + uy * amount + lift));

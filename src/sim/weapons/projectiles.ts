@@ -7,6 +7,7 @@ import { launchHit } from '../player/knockback';
 import { shieldBlocks } from '../player/combat';
 import { plantRepulsor } from '../hazards/repulsor';
 import { isLaunch } from '../rules/mode';
+import { reflects } from './consumables';
 import { assignNetId, createBoxBody, registerBody } from '../physics/bodies';
 import {
   Aim,
@@ -314,13 +315,15 @@ function stepBullet(
     const target = hit.entity as Entity;
     if (world.has(target) && target.has(Player) && !target.has(Dead)) {
       const block = shieldBlocks(world, target, hit.x, hit.y);
-      if (block === 'reflect') {
+      // A perfect block, or a Mirror Pin, sends the shot back where it came from as the target's own.
+      if (block === 'reflect' || reflects(target)) {
         proj.vx *= -1;
         proj.vy *= -1;
         proj.x = hit.x + proj.vx * dt;
         proj.y = hit.y + proj.vy * dt;
         if (owner !== undefined) entity.remove(OwnedBy('*'));
         entity.add(OwnedBy(target));
+        proj.ownerGrace = 4;
         emit(world, { type: 'block', player: target, reflected: true, x: hit.x, y: hit.y });
         return;
       }
@@ -506,6 +509,18 @@ function stepExplosive(world: World, ctx: SimContext, entity: Entity, proj: Proj
   const body = ctx.bodies.get(entity);
   const reach = 0.85 + (def.projectile.radius > 1 ? 0.5 : 0);
   const touched = touchingPlayer(world, ctx, proj.x, proj.y, reach, owner, proj.ownerGrace);
+  // A Mirror Pin turns a shell around before it can go off, and makes it the wearer's.
+  if (touched && reflects(touched) && body) {
+    const v = body.getLinearVelocity();
+    body.setLinearVelocity(new Vec2(-v.x, -v.y));
+    proj.vx = -v.x;
+    proj.vy = -v.y;
+    if (owner !== undefined) entity.remove(OwnedBy('*'));
+    entity.add(OwnedBy(touched));
+    proj.ownerGrace = 12;
+    emit(world, { type: 'block', player: touched, reflected: true, x: proj.x, y: proj.y });
+    return;
+  }
   let hitSurface = ctx.contactHits.has(entity as unknown as number);
   if (!hitSurface && body) {
     const ahead = raycastClosest(world, proj.x, proj.y, proj.x + proj.vx * dt * 2, proj.y + proj.vy * dt * 2, (h) => h.entity === owner || h.entity === entity || h.kind === 'player' || h.kind === 'projectile' || h.kind === 'sensor');

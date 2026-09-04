@@ -23,6 +23,8 @@ export const replication = {
   Static: 'replicated',
   Kinematic: 'replicated',
   Status: 'replicated',
+  Stocks: 'replicated',
+  Modifiers: 'replicated',
   Snake: 'replicated',
   Bot: 'local',
   Shape: 'local',
@@ -58,6 +60,14 @@ export const Aim = trait({ x: 1, y: 0, holdTicks: 0 });
 export const Health = trait({ hp: 100, maxHp: 100, percent: 0 });
 /** Launch mode: lives left this round, and the ticks until a fallen fighter drops back in (0 = not waiting). */
 export const Stocks = trait({ left: 0, respawnIn: 0 });
+/**
+ * A timed pickup effect on a fighter: run/jump multipliers, how much of every shove lands, whether
+ * projectiles bounce off, and the ticks left before everything snaps back to 1 / 0.
+ */
+export const Modifiers = trait({ speed: 1, jump: 1, knockbackTaken: 1, reflect: 0, ticks: 0, kind: 0 });
+
+/** Which pickup a Modifiers effect came from (for the figure's aura). */
+export const EffectKind = { None: 0, Lead: 1, Sprint: 2, Mirror: 3, Surge: 4 } as const;
 export const Combat = trait({
   strikeCooldown: 0,
   /** Ticks the current strike is shown for (wind-up plus the swing). */

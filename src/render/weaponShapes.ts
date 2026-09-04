@@ -204,9 +204,22 @@ export function weaponLook(kind: string, length: number): WeaponLook {
       return launcher(length, '#4a4f58', { fat: true });
     case 'repulsor-puck':
       return orbGun(length, '#67d98a');
+    case 'mend-kit':
+      return token([rbox(0, 0, 0.2, 0.16, 0.04)], [rbox(0, 0, 0.11, 0.035, 0.01), rbox(0, 0, 0.035, 0.11, 0.01)], '#ff5a6a', false);
+    case 'lead-coat':
+      return token([rbox(0, 0, 0.2, 0.18, 0.06), rbox(0, 0.16, 0.08, 0.05, 0.02)], [rbox(0, -0.02, 0.12, 0.07, 0.02)], '#6c7280', false);
+    case 'sprint-charm':
+      return token([disk(0, 0, 0.17)], [cap(-0.1, -0.03, 0.1, 0.05, 0.03), cap(-0.06, -0.09, 0.06, -0.05, 0.02)], GOLD, true);
+    case 'mirror-pin':
+      return token([disk(0, 0, 0.17)], [disk(0, 0, 0.1)], ICE, true);
     default:
       return pistol(length, STEEL);
   }
+}
+
+/** A pickup token: a silhouette with a bright emblem, drawn upright rather than along the aim. */
+function token(body: Primitive[], emblem: Primitive[], accent: string, glow: boolean): WeaponLook {
+  return { body, accent: emblem, accentColor: accent, muzzle: { x: 0, y: 0 }, glow };
 }
 
 /** A bat: a grip that swells into a barrel toward the tip. */

@@ -3,6 +3,7 @@ import { emit, getContext } from '../context';
 import { spawnRagdoll } from '../player/ragdoll';
 import { destroyBody } from '../physics/bodies';
 import { isLaunch } from '../rules/mode';
+import { tickModifiers } from '../weapons/consumables';
 import { Combat, Controller, Dead, Health, Player, Status, Stocks, Transform } from '../traits';
 
 const living = createQuery(Player, Health, Transform, Not(Dead));
@@ -33,6 +34,7 @@ export function damageDeath(world: World): void {
       if (status.encumbered > 0) status.encumbered -= 1;
       entity.set(Status, status);
     }
+    tickModifiers(entity);
 
     const oob =
       transform.x < bounds.x - margin ||

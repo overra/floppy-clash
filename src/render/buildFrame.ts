@@ -9,12 +9,14 @@ import {
   Crown,
   Dead,
   Destructible,
+  EffectKind,
   Hazard,
   HazardKind,
   Health,
   Held,
   HeldBy,
   MatchState,
+  Modifiers,
   OwnedBy,
   PartOf,
   Player,
@@ -192,10 +194,28 @@ export function buildFrame(
       },
       sec,
     );
-    const bodyColor = hurtTicks > 5 ? shade(color, 0.45) : ghosted ? withAlpha(color, 0.45) : color;
+    const mods = e.get(Modifiers);
+    const effect = mods && mods.ticks > 0 ? mods.kind : EffectKind.None;
+    const bodyColor = hurtTicks > 5 ? shade(color, 0.45) : ghosted ? withAlpha(color, 0.45) : effect === EffectKind.Lead ? shade(color, 0.7) : color;
     groups.push(group(fig.body, bodyColor, Layer.Players, { blend: 'smoothUnion', smoothK: FIGURE.smoothK, style: 'shaded', pad: 0.4 }));
     groups.push(group(fig.eyes, ghosted ? withAlpha(INK, 0.45) : INK, Layer.Players, { style: 'flat', pad: 0.1 }));
     anchors.set(e, fig.weaponAnchor);
+
+    if (effect !== EffectKind.None && !dead) {
+      // Pickup auras: a mirror sheen for the Mirror Pin, a warm trail-glow for the Sprint Charm, a
+      // dull iron ring for the Lead Coat; all fade in the last second so the wearer sees it coming.
+      const left = Math.min(1, (mods?.ticks ?? 0) / 60);
+      const pulse = 0.5 + 0.5 * Math.sin(time * 6);
+      if (effect === EffectKind.Mirror) {
+        groups.push(group([disk(x, y, 1.05 + 0.04 * pulse)], withAlpha('#c9f5ff', (0.35 + 0.3 * pulse) * left), Layer.Overlay, { style: 'outline', fx: 'glow', glow: 0.35 }));
+      } else if (effect === EffectKind.Sprint) {
+        groups.push(group([disk(x, y - 0.6, 0.5 + 0.1 * pulse)], withAlpha('#ffd447', 0.22 * left), Layer.Overlay, { style: 'flat', fx: 'glow', glow: 0.5 }));
+      } else if (effect === EffectKind.Lead) {
+        groups.push(group([disk(x, y, 0.95)], withAlpha('#9aa3b2', 0.3 * left), Layer.Overlay, { style: 'outline', pad: 0.2 }));
+      } else if (effect === EffectKind.Surge) {
+        groups.push(group([disk(x, y, 1.1 + 0.08 * pulse)], withAlpha('#ffffff', (0.4 + 0.4 * pulse) * left), Layer.Overlay, { style: 'outline', fx: 'glow', glow: 0.6 }));
+      }
+    }
 
     if (combat.stun > 0 && !dead) {
       // Seeing stars: a few sparks circling the head while the fighter is staggered.

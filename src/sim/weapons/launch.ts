@@ -82,6 +82,10 @@ export const LAUNCH_WEAPONS: readonly string[] = [
   'walker-mine',
   'mallet',
   'repulsor-puck',
+  'mend-kit',
+  'lead-coat',
+  'sprint-charm',
+  'mirror-pin',
 ];
 
 /** Apply the launch overlay to one base def: knockback folds in launchScale, thrown damage is capped. */

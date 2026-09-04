@@ -2,7 +2,7 @@ import type { Entity } from 'koota';
 import { describe, expect, it } from 'vitest';
 import { REPULSOR_TICKS } from '../src/sim/hazards';
 import { spawnWeapon } from '../src/sim/systems/weapons';
-import { Combat, Hazard, HazardKind, Health, Held, HeldBy, Lifetime, Loose, Snake, Status, Transform, Weapon } from '../src/sim/traits';
+import { Combat, Hazard, HazardKind, Health, Held, HeldBy, Lifetime, Loose, Modifiers, Snake, Status, Transform, Weapon } from '../src/sim/traits';
 import { CHARGE_MAX_TICKS } from '../src/sim/weapons/systems';
 import { hold, makeSim, playerOf, runTrack, stepMany } from './helpers';
 
@@ -136,6 +136,122 @@ describe('Mallet', () => {
       if (v.x < -2 && v.y > 6) kicked = true;
     }
     expect(kicked).toBe(false);
+  });
+});
+
+describe('consumables', () => {
+  /** Drop a consumable at the fighter's feet and step once so it is taken. */
+  function take(sim: ReturnType<typeof makeSim>, who: ReturnType<typeof playerOf>, id: string) {
+    const t = who.get(Transform)!;
+    const item = spawnWeapon(sim.ecs, id, t.x, t.y);
+    const ev = sim.step([hold({ aimX: 1, aimY: 0 }), idle, hold({}), hold({})]);
+    return { item, ev };
+  }
+
+  it('a Mend Kit heals in standing mode, wipes percent in launch mode, and is gone once taken', () => {
+    const standing = makeSim({ level: runTrack, seed: 3, settings: { playerCount: 1, items: 'off' } });
+    const a = playerOf(standing);
+    stepMany(standing, 5);
+    a.set(Health, { hp: 40 });
+    const { item, ev } = take(standing, a, 'mend-kit');
+    expect(a.get(Health)?.hp).toBe(90);
+    expect(ev.some((e) => e.type === 'pickup' && e.weaponId === 'mend-kit')).toBe(true);
+    standing.step();
+    expect(standing.ecs.has(item)).toBe(false);
+    a.set(Health, { hp: 80 });
+    take(standing, a, 'mend-kit');
+    expect(a.get(Health)?.hp).toBe(100);
+
+    const launch = makeSim({ level: runTrack, seed: 3, settings: { mode: 'launch', playerCount: 1, items: 'off' } });
+    const b = playerOf(launch);
+    stepMany(launch, 5);
+    b.set(Health, { percent: 120 });
+    take(launch, b, 'mend-kit');
+    expect(b.get(Health)?.percent).toBe(60);
+    expect(b.get(Health)?.hp).toBe(100);
+  });
+
+  it('consumables are taken even with a gun in hand, and the gun stays held', () => {
+    const { sim, a, gun } = duel('pistol', 6);
+    a.set(Health, { hp: 50 });
+    take(sim, a, 'mend-kit');
+    expect(a.get(Health)?.hp).toBe(100);
+    expect(gun.has(Held)).toBe(true);
+    expect(sim.ecs.query(Weapon, Loose).length).toBe(0);
+  });
+
+  it('a Lead Coat cuts the shove taken and the jump, then wears off', () => {
+    const plain = duel('pistol', 3);
+    let vPlain = 0;
+    for (let i = 0; i < 20; i++) {
+      const ev = plain.sim.step([hold({ attack: i === 0, aimX: 1, aimY: 0 }), idle, hold({}), hold({})]);
+      if (ev.some((e) => e.type === 'hit')) vPlain = plain.sim.ctx.bodies.get(plain.b)!.getLinearVelocity().x;
+    }
+    const coated = duel('pistol', 3);
+    const bt = coated.b.get(Transform)!;
+    spawnWeapon(coated.sim.ecs, 'lead-coat', bt.x, bt.y);
+    coated.sim.step([hold({ aimX: 1, aimY: 0 }), idle, hold({}), hold({})]);
+    expect(coated.b.get(Modifiers)?.knockbackTaken).toBeCloseTo(0.4, 5);
+    let vCoat = 0;
+    for (let i = 0; i < 20; i++) {
+      const ev = coated.sim.step([hold({ attack: i === 0, aimX: 1, aimY: 0 }), idle, hold({}), hold({})]);
+      if (ev.some((e) => e.type === 'hit')) vCoat = coated.sim.ctx.bodies.get(coated.b)!.getLinearVelocity().x;
+    }
+    expect(vPlain).toBeGreaterThan(0.5);
+    expect(vCoat).toBeLessThan(vPlain * 0.6);
+    // Jump height drops with it.
+    let apex = 0;
+    for (let i = 0; i < 60; i++) {
+      coated.sim.step([hold({ aimX: 1, aimY: 0 }), hold({ jump: i === 0, aimX: -1, aimY: 0 }), hold({}), hold({})]);
+      apex = Math.max(apex, coated.b.get(Transform)!.y);
+    }
+    expect(apex - bt.y).toBeLessThan(2.4);
+    // Wears off.
+    stepMany(coated.sim, 600, [hold({ aimX: 1, aimY: 0 }), idle, hold({}), hold({})]);
+    expect(coated.b.get(Modifiers)?.ticks).toBe(0);
+    expect(coated.b.get(Modifiers)?.knockbackTaken).toBe(1);
+  });
+
+  it('a Sprint Charm makes the wearer faster and jump higher for a while', () => {
+    const run = (charm: boolean) => {
+      const sim = makeSim({ level: runTrack, seed: 3, settings: { playerCount: 1, items: 'off' } });
+      const p = playerOf(sim);
+      stepMany(sim, 10);
+      if (charm) take(sim, p, 'sprint-charm');
+      const start = p.get(Transform)!.x;
+      stepMany(sim, 60, hold({ moveX: 1, aimX: 1, aimY: 0 }));
+      const ran = p.get(Transform)!.x - start;
+      let apex = 0;
+      const y0 = p.get(Transform)!.y;
+      for (let i = 0; i < 60; i++) {
+        sim.step([hold({ jump: i === 0, aimX: 1, aimY: 0 }), hold({}), hold({}), hold({})]);
+        apex = Math.max(apex, p.get(Transform)!.y - y0);
+      }
+      return { ran, apex };
+    };
+    const plain = run(false);
+    const quick = run(true);
+    expect(quick.ran).toBeGreaterThan(plain.ran * 1.3);
+    expect(quick.apex).toBeGreaterThan(plain.apex * 1.15);
+  });
+
+  it('a Mirror Pin sends bullets back at the shooter', () => {
+    const { sim, a, b } = duel('pistol', 5);
+    const bt = b.get(Transform)!;
+    spawnWeapon(sim.ecs, 'mirror-pin', bt.x, bt.y);
+    sim.step([hold({ aimX: 1, aimY: 0 }), idle, hold({}), hold({})]);
+    expect(b.get(Modifiers)?.reflect).toBe(1);
+    let reflected = 0;
+    let shooterHits = 0;
+    for (let i = 0; i < 40; i++) {
+      const ev = sim.step([hold({ attack: i === 0, aimX: 1, aimY: 0 }), idle, hold({}), hold({})]);
+      reflected += ev.filter((e) => e.type === 'block' && e.reflected && e.player === b).length;
+      shooterHits += ev.filter((e) => e.type === 'hit' && e.target === a).length;
+    }
+    expect(reflected).toBe(1);
+    expect(b.get(Health)?.hp).toBe(100);
+    expect(shooterHits).toBe(1);
+    expect(a.get(Health)?.hp ?? 100).toBeLessThan(100);
   });
 });
 

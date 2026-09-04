@@ -5,6 +5,7 @@ import { applyLevelSwitches, loadLevel } from '../level/loader';
 import type { LevelDef } from '../level/schema';
 import { spawnPositions } from '../level/spawns';
 import { createPlayerCapsule } from '../physics/bodies';
+import { NO_EFFECT } from '../weapons/consumables';
 import {
   Bot,
   Combat,
@@ -13,6 +14,7 @@ import {
   Hazard,
   Health,
   MatchState,
+  Modifiers,
   Player,
   Projectile,
   RagdollPart,
@@ -151,6 +153,7 @@ function reviveFighter(world: World, player: Entity, x: number, y: number, invul
   else player.set(Combat, stance);
   const status = player.get(Status);
   if (status) player.set(Status, { burning: 0, slowed: 0, glued: 0, bubbled: 0, pulled: 0, invuln, encumbered: 0 });
+  if (player.get(Modifiers)) player.set(Modifiers, NO_EFFECT);
   let body = ctx.bodies.get(player);
   if (!body) {
     if (player.get(PhysBody)) player.remove(PhysBody);

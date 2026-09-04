@@ -5,6 +5,7 @@ import { rising } from '../input';
 import { createBoxBody, registerBody, assignNetId } from '../physics/bodies';
 import { Aim, Combat, Controller, Dead, Held, HeldBy, Loose, OwnedBy, Player, Projectile, ProjectileKind, Status, Transform, Weapon } from '../traits';
 import type { WeaponDef } from './schema';
+import { consume } from './consumables';
 import { weaponIndex } from './defs';
 import { weaponDef } from './resolve';
 import { SWING_TICKS } from './projectiles';
@@ -155,10 +156,23 @@ export function weapons(world: World): void {
     if (!input) return;
 
     let held = heldWeapon(world, entity);
+    // Consumables are taken on touch whatever is in hand: the effect lands and the item is gone.
+    world.query(looseWeapons).updateEach(([wep, wt], weaponEntity) => {
+      if (wep.pickupCooldown > 0) return;
+      const def = weaponDef(ctx.weapons, wep.defId);
+      if (def.category !== 'consumable') return;
+      const dx = wt.x - transform.x;
+      const dy = wt.y - transform.y;
+      if (dx * dx + dy * dy < 0.85 * 0.85 && consume(world, entity, def)) {
+        wep.pickupCooldown = 999999;
+        ctx.pendingDestroy.push(weaponEntity);
+      }
+    });
     if (!held) {
       world.query(looseWeapons).updateEach(([wep, wt], weaponEntity) => {
         if (held) return;
         if (wep.pickupCooldown > 0) return;
+        if (weaponDef(ctx.weapons, wep.defId).category === 'consumable') return;
         const dx = wt.x - transform.x;
         const dy = wt.y - transform.y;
         if (dx * dx + dy * dy < 0.85 * 0.85) {

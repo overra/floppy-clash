@@ -3,7 +3,9 @@ import { z } from 'zod';
 export const WeaponDefSchema = z.object({
   id: z.string(),
   displayName: z.string().optional(),
-  category: z.enum(['melee', 'pistol', 'rifle', 'explosive', 'snake', 'lava', 'other']),
+  category: z.enum(['melee', 'pistol', 'rifle', 'explosive', 'snake', 'lava', 'other', 'consumable']),
+  /** Consumables apply this on pickup instead of being held (see weapons/consumables.ts). */
+  effect: z.enum(['none', 'mend', 'lead', 'sprint', 'mirror']).default('none'),
   ammo: z.number(),
   /**
    * `charge`: hold to wind up, release (or reach full charge) to swing, harder the longer it was held.
