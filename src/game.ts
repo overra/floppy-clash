@@ -33,8 +33,7 @@ import {
 } from './ui/menus';
 import { activate, focusedIn, moveFocus, nudge, setFocus, defaultFocus, type NavDir } from './ui/padNav';
 import { DEFAULT_MAP, loadMaps, saveMap } from './input/remap';
-import { gymLevel } from './levels/catalog';
-import { matchLevelPool } from './levels/catalog';
+import { builtInMatchLevels, gymLevel, matchLevelPool } from './levels/catalog';
 import { addShake, createCamera, worldToScreen } from './render/camera';
 import { buildFrame } from './render/buildFrame';
 import type { RenderFrame } from './render/frame';
@@ -59,6 +58,10 @@ import { createEditorState, fromHash, loadLibrary, type EditorState } from './ed
 import { mountEditor } from './editor/view';
 import { createRecorder } from './input/replay';
 import { parseLevel, type LevelDef } from './sim/level/schema';
+import { createTelemetry, privacySignalOptOut } from './telemetry/client';
+import { describeDevice } from './telemetry/device';
+import { createPerfAggregator } from './telemetry/perf';
+import type { GameMode, MatchOutcome, MatchRole } from './telemetry/schema';
 
 export type Game = {
   start: () => Promise<void>;
@@ -278,6 +281,115 @@ export function createGame(root: HTMLElement): Game {
   let stressTarget = Number(new URLSearchParams(window.location.search).get('stress') ?? 0) || 0;
   const stressRng = makeStressRng();
 
+  // -----------------------------------------------------------------------------------------------
+  // Telemetry: anonymous usage and frame-pacing statistics, batched to the Worker (src/telemetry,
+  // worker/telemetry.ts) and read back on /stats. Everything below is fire-and-forget; the settings
+  // toggle and the browser's Global Privacy Control signal both switch it off.
+  const telemetry = createTelemetry({
+    enabled: settings.telemetry && !privacySignalOptOut(),
+    ctx: describeDevice(),
+    context: () => ({ context: tracked ? tracked.mode : 'menu', renderer: rendererKind }),
+  });
+  const perfAgg = createPerfAggregator();
+  /** How often a perf summary goes out during a long match (endless mode never "ends"). */
+  const PERF_EVERY_MS = 60_000;
+  /** The match this browser is currently reporting on; null between matches. */
+  let tracked: {
+    mode: GameMode;
+    role: MatchRole;
+    level: string;
+    humans: number;
+    bots: number;
+    firstTo: number;
+    maxHp: number;
+    startedAt: number;
+    lastPerfAt: number;
+    kills: number;
+    resyncs: number;
+    longFramesAt: number;
+  } | null = null;
+
+  function trackMatchStart(level: LevelDef, humans: number, bots: number, firstTo: number, maxHp: number) {
+    // A match started over a running one (rematch, editor playtest) ends the old one first.
+    if (tracked) trackMatchEnd('restarted');
+    const now = performance.now();
+    const builtIn = builtInMatchLevels().some((l) => l.id === level.id) || level.id === gymLevel.id;
+    tracked = {
+      mode: online ? 'online' : humans === 1 && bots > 0 ? 'solo' : 'local',
+      role: online ? online.role : 'offline',
+      level: builtIn ? level.id : 'custom',
+      humans,
+      bots,
+      firstTo,
+      maxHp,
+      startedAt: now,
+      lastPerfAt: now,
+      kills: 0,
+      resyncs: 0,
+      longFramesAt: longFrames,
+    };
+    perfAgg.reset();
+    telemetry.match({ phase: 'start', ...matchFields(), seconds: 0, rounds: 0, kills: 0, won: false, longFrames: 0 });
+  }
+
+  /** Close the tracked match; `won` only means anything for a match the rules finished. */
+  function trackMatchEnd(outcome: MatchOutcome, won = false) {
+    if (!tracked) return;
+    const t = tracked;
+    telemetry.match({
+      phase: 'end',
+      ...matchFields(),
+      outcome,
+      seconds: Math.round((performance.now() - t.startedAt) / 1000),
+      rounds: sim?.ecs.get(MatchState)?.round ?? 0,
+      kills: t.kills,
+      won,
+      longFrames: Math.max(0, longFrames - t.longFramesAt),
+    });
+    flushPerf('end');
+    tracked = null;
+  }
+
+  function matchFields() {
+    const t = tracked!;
+    return { mode: t.mode, role: t.role, level: t.level, renderer: rendererKind, humans: t.humans, bots: t.bots, firstTo: t.firstTo, maxHp: t.maxHp };
+  }
+
+  /** Ship the frame-pacing summary gathered since the last one; a second of frames is the minimum worth sending. */
+  function flushPerf(reason: 'periodic' | 'end') {
+    const s = perfAgg.summary();
+    perfAgg.reset();
+    if (!tracked) return;
+    tracked.lastPerfAt = performance.now();
+    if (!s || s.frames < 60) return;
+    telemetry.perf({
+      mode: tracked.mode,
+      role: tracked.role,
+      renderer: rendererKind,
+      reason,
+      lighting: settings.lighting,
+      frames: s.frames,
+      seconds: s.seconds,
+      p50: s.p50,
+      p95: s.p95,
+      p99: s.p99,
+      max: s.max,
+      long12: s.long12,
+      long20: s.long20,
+      long50: s.long50,
+      sim: s.stages.sim ?? 0,
+      build: s.stages.build ?? 0,
+      render: s.stages.render ?? 0,
+      gpu: s.stages.gpu ?? 0,
+      particles: s.stages.particles ?? 0,
+      resScale: renderer?.resolutionScale ?? 1,
+      players: tracked.humans + tracked.bots,
+      rtt: room?.rtt ?? 0,
+      desyncs: tracked.resyncs,
+      heap: usedHeapMb(),
+    });
+  }
+
   // Attract mode: a bots-only brawl plays behind the menus so the title screen is never a dead panel.
   let demo: SimHandle | null = null;
   let demoCam = createCamera(gymLevel.bounds);
@@ -393,6 +505,7 @@ export function createGame(root: HTMLElement): Game {
           menus.firstTo = settings.firstTo;
           mixer.sfx = settings.sfx;
           mixer.music = settings.music;
+          telemetry.setEnabled(settings.telemetry && !privacySignalOptOut());
           menus.screen = 'menu';
           show();
         },
@@ -586,6 +699,8 @@ export function createGame(root: HTMLElement): Game {
     hitStop = 0;
     menus.screen = 'play';
     show();
+    const ms = sim.ecs.get(MatchState);
+    trackMatchStart(level, opts.playerCount, opts.bots, ms?.firstTo ?? opts.firstTo ?? settings.firstTo, ms?.maxHp ?? opts.maxHp ?? settings.maxHp);
   }
 
   // Debug/automation: per-slot input overrides that hold for a number of sim ticks, so browser
@@ -797,10 +912,11 @@ export function createGame(root: HTMLElement): Game {
       if (online.role === 'host') endOnlineMatch('the host ended it');
       else {
         room?.send('host', { t: 'input', input: packInput(EMPTY_INPUT) });
-        endOnlineLocal('you left the match');
+        endOnlineLocal('you left the match', 'left');
       }
       return;
     }
+    trackMatchEnd('quit');
     sim?.destroy();
     sim = null;
     paused = false;
@@ -903,6 +1019,7 @@ export function createGame(root: HTMLElement): Game {
     } catch (err) {
       lobby.phase = 'idle';
       menus.notice = err instanceof RoomError ? err.message : 'Could not connect to the room.';
+      telemetry.error({ kind: 'room', message: err instanceof RoomError ? err.code : 'unknown', source: role, context: 'menu', renderer: rendererKind });
     }
     show();
   }
@@ -924,7 +1041,7 @@ export function createGame(root: HTMLElement): Game {
       if (menus.screen === 'lobby') show();
     });
     session.on('closed', (reason) => {
-      teardownRoom();
+      teardownRoom('disconnected');
       menus.notice = reason === 'host-left' ? 'The host left the room.' : 'Connection to the room was lost.';
       menus.screen = 'lobby';
       show();
@@ -932,12 +1049,14 @@ export function createGame(root: HTMLElement): Game {
     session.on('message', onNetMessage);
   }
 
-  function teardownRoom() {
+  /** `outcome` is how a match still running ends up in the statistics. */
+  function teardownRoom(outcome: MatchOutcome = 'left') {
     window.clearInterval(pingTimer);
     room?.close();
     room = null;
     online = null;
     menus.online = false;
+    trackMatchEnd(outcome);
     sim?.destroy();
     sim = null;
     paused = false;
@@ -1017,12 +1136,13 @@ export function createGame(root: HTMLElement): Game {
   /** Host: stop the match for everyone; the room stays open. */
   function endOnlineMatch(reason: string) {
     if (room?.role === 'host') room.send('all', { t: 'end', reason });
-    endOnlineLocal(reason);
+    endOnlineLocal(reason, 'host-ended');
     if (room?.role === 'host') broadcastLobby();
   }
 
   /** Drop this browser's copy of the match and go back to the lobby. */
-  function endOnlineLocal(reason: string) {
+  function endOnlineLocal(reason: string, outcome: MatchOutcome) {
+    trackMatchEnd(outcome);
     sim?.destroy();
     sim = null;
     online = null;
@@ -1043,6 +1163,8 @@ export function createGame(root: HTMLElement): Game {
     online.desync = true;
     if (now - online.lastResyncAt < 3000) return;
     online.lastResyncAt = now;
+    if (tracked) tracked.resyncs += 1;
+    telemetry.error({ kind: 'desync', message: why, source: `tick ${sim.ctx.tick}`, context: 'online', renderer: rendererKind });
     console.warn(`[online] out of sync (${why}) at tick ${sim.ctx.tick}; asking the host for a snapshot`);
     room.send('host', { t: 'resync', tick: sim.ctx.tick });
   }
@@ -1097,7 +1219,7 @@ export function createGame(root: HTMLElement): Game {
       case 'end':
         if (isHost || from !== room.hostId) return;
         menus.lobby.inMatch = false;
-        if (online) endOnlineLocal(msg.reason);
+        if (online) endOnlineLocal(msg.reason, 'host-ended');
         else if (menus.screen === 'lobby') show();
         return;
       case 'chat': {
@@ -1270,6 +1392,13 @@ export function createGame(root: HTMLElement): Game {
       if (msg !== lastFrameError) {
         lastFrameError = msg;
         console.error('frame error', err);
+        telemetry.error({
+          kind: 'frame',
+          message: msg,
+          source: err instanceof Error ? (err.stack?.split('\n')[1]?.trim() ?? '') : '',
+          context: tracked ? tracked.mode : 'menu',
+          renderer: rendererKind,
+        });
       }
     }
     raf = requestAnimationFrame(tick);
@@ -1303,7 +1432,9 @@ export function createGame(root: HTMLElement): Game {
     decalLayer.consumed = 0;
     if (events.some((e) => e.type === 'kill')) {
       hitStop = 3;
-      recordKos(events.filter((e) => e.type === 'kill').length);
+      const kills = events.filter((e) => e.type === 'kill').length;
+      recordKos(kills);
+      if (tracked) tracked.kills += kills;
     } else if (events.some((e) => e.type === 'hit' && e.damage >= 15) || events.some((e) => e.type === 'clash')) {
       // A frame of freeze on a solid hit sells the impact (punches, headshots, clashes), like the kill stop.
       hitStop = 1;
@@ -1313,7 +1444,9 @@ export function createGame(root: HTMLElement): Game {
       // Online, "my" fighter is whichever slot this browser steers; at the couch it is always P1.
       const mySlot = online ? online.localSlot : 0;
       const wins = [ms?.wins0 ?? 0, ms?.wins1 ?? 0, ms?.wins2 ?? 0, ms?.wins3 ?? 0];
-      stats = recordMatch((wins[mySlot] ?? 0) >= (ms?.firstTo || 1));
+      const won = (wins[mySlot] ?? 0) >= (ms?.firstTo || 1);
+      stats = recordMatch(won);
+      trackMatchEnd('finished', won);
     }
     if (!settings.reduceShake) {
       if (events.some((e) => e.type === 'explosion' || e.type === 'kill')) addShake(cam, events.some((e) => e.type === 'explosion') ? 16 : 9);
@@ -1333,6 +1466,11 @@ export function createGame(root: HTMLElement): Game {
     // A 120 Hz frame is 8.3 ms; anything past 12 ms between rAF callbacks means a missed one. The
     // frame before it is what ran long, so that is the one logged.
     const heapNow = usedHeapMb();
+    if (tracked && sim && menus.screen === 'play') {
+      // Frame pacing while a match is actually being played: not the pause card, not the menus.
+      perfAgg.frame(now - last);
+      if (now - tracked.lastPerfAt >= PERF_EVERY_MS) flushPerf('periodic');
+    }
     if (sim && menus.screen === 'play' && now - last > 12) {
       longFrames += 1;
       if (longFrameLog.length < 64) {
@@ -1468,6 +1606,8 @@ export function createGame(root: HTMLElement): Game {
       drawHud(frame);
       profiler.lap('hud', t);
       profiler.end();
+      // Stage means for the perf summary; every 8th frame is plenty and keeps the per-frame cost nil.
+      if (tracked && running && (perfAgg.frames & 7) === 0) perfAgg.stages(profiler.last());
       if (rotatedThisFrame) {
         rotatedThisFrame = false;
         if (rotationLog.length < 64) rotationLog.push({ tick: sim.ctx.tick, level: renderedLevel.id, stages: profiler.last() });
@@ -1832,6 +1972,7 @@ export function createGame(root: HTMLElement): Game {
     }
     const why = gpuFailureReason();
     menus.notice = why ? `Canvas fallback — WebGPU ${why}` : 'Canvas fallback';
+    telemetry.error({ kind: 'gpu-fallback', message: why ?? 'unavailable', source: settings.renderer, context: tracked ? tracked.mode : 'menu', renderer: 'canvas' });
     if (menus.screen !== 'play') show();
     // A timed-out attempt is still in flight and will adopt itself if it ever lands; a hard failure is final.
     if (why !== 'timed out') gpuAttemptPending = false;
@@ -1861,6 +2002,20 @@ export function createGame(root: HTMLElement): Game {
         menus.screen = 'lobby';
       }
       show();
+      telemetry.page({
+        renderer: settings.renderer,
+        entry: isRoomCode(linkedRoom) ? 'invite' : 'direct',
+        standalone: window.matchMedia?.('(display-mode: standalone)').matches ?? false,
+        width: window.innerWidth,
+        height: window.innerHeight,
+        dpr: Math.round(window.devicePixelRatio * 100) / 100,
+        cores: navigator.hardwareConcurrency ?? 0,
+        memory: (navigator as Navigator & { deviceMemory?: number }).deviceMemory ?? 0,
+        touch: (navigator.maxTouchPoints ?? 0) > 0,
+        gamepads: pollGamepads().filter(Boolean).length,
+      });
+      // Closing the tab mid-match still yields an end row (with how long it ran) before the last batch goes out.
+      telemetry.onPageHide(() => trackMatchEnd('unload'));
       window.addEventListener('gamepadconnected', (ev) => {
         const pad = (ev as GamepadEvent).gamepad ?? pollGamepads().find(Boolean);
         if (!pad) return;
@@ -1976,8 +2131,10 @@ export function createGame(root: HTMLElement): Game {
     },
     stop() {
       cancelAnimationFrame(raf);
+      trackMatchEnd('unload');
       teardownRoom();
       stopDemo();
+      telemetry.destroy();
     },
   };
 }

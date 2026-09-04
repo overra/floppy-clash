@@ -13,5 +13,12 @@
     "noEmit": true,
     "types": []
   },
-  "include": ["./**/*.ts", "../worker-configuration.d.ts", "../src/net/relay.ts"]
+  "include": [
+    "./**/*.ts",
+    "../worker-configuration.d.ts",
+    "../src/net/relay.ts",
+    "../src/telemetry/schema.ts",
+    "../src/telemetry/points.ts",
+    "../src/telemetry/stats.ts"
+  ]
 }

@@ -45,12 +45,16 @@ Install from the browser as a PWA (`public/manifest.webmanifest` + `sw.js`) for 
 
 Settings persist HP, weapon/level toggles, remaps, audio, renderer, and the optional 2D lighting pass (`@typegpu/radiance-cascades` + Jump Flood, budget-gated). User levels from the editor join match rotation when that toggle is on.
 
+### Usage and performance stats
+
+Every deployment has a staff-only dashboard at `/stats`: sessions, matches by mode/level/outcome, devices and countries, frame pacing (p50/p95/p99, long frames, stage costs) by renderer and browser, room sizes and relay events, and grouped errors. The game batches anonymous events to `/api/telemetry` and the room relay reports its own lifecycle; both land in Cloudflare Workers Analytics Engine and are read back over its SQL API. Set three secrets (`STATS_KEY`, `CF_ACCOUNT_ID`, `CF_ANALYTICS_TOKEN`) and open the page — [docs/telemetry.md](docs/telemetry.md) has the schema, queries and what is (not) collected. Players can switch it off under Settings → Privacy; Global Privacy Control is honoured.
+
 ## Commands
 
 | Script | What it does |
 | --- | --- |
 | `npm run dev` | Vite dev server |
-| `npm run dev:worker` | The Worker (room relay) locally on :8787 via `wrangler dev` |
+| `npm run dev:worker` | The Worker (room relay, telemetry and stats API) locally on :8787 via `wrangler dev` |
 | `npm run check` | lint + typecheck (app and Worker) + unit tests + build |
 | `npm test` | Vitest (headless sim) |
 | `npm run test:e2e` | Playwright logic, online (two browsers through a local relay) and GPU smoke |
@@ -58,7 +62,7 @@ Settings persist HP, weapon/level toggles, remaps, audio, renderer, and the opti
 
 ## Architecture
 
-DOM-free `src/sim` (Koota + Planck) steps at 60 Hz. `src/render` only reads a `RenderFrame`. WebGPU SDF renderer is preferred; Canvas 2D is the fallback and debug path. See [PLAN.md](PLAN.md).
+DOM-free `src/sim` (Koota + Planck) steps at 60 Hz. `src/render` only reads a `RenderFrame`. WebGPU SDF renderer is preferred; Canvas 2D is the fallback and debug path. `src/telemetry` is the only thing that talks home, and `src/stats` (the `/stats` page, React + TanStack Charts) is a separate Vite entry so the game bundle stays framework-free. See [PLAN.md](PLAN.md).
 
 ## Legal
 

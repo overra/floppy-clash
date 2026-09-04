@@ -1,5 +1,8 @@
 import { RoomDO } from './room';
 import { isRoomCode } from '../src/net/relay';
+import { jsonError, originAllowed } from './http';
+import { handleStats } from './stats';
+import { handleTelemetry } from './telemetry';
 
 export { RoomDO };
 
@@ -16,24 +19,20 @@ export default {
       if (!originAllowed(request, url)) return new Response('Forbidden', { status: 403 });
       const code = room[1]!.toUpperCase();
       if (!isRoomCode(code)) return new Response('Bad room code', { status: 400 });
+      // `request.cf` does not travel into the Durable Object, so the two geo fields its statistics
+      // use ride along as headers (a browser cannot forge them: the Worker overwrites both).
+      const forwarded = new Request(request);
+      forwarded.headers.set('x-geo-country', request.cf?.country ?? 'XX');
+      forwarded.headers.set('x-geo-colo', request.cf?.colo ?? '');
       // Same code, same object: everyone who types ABCDE lands in the same relay.
-      return env.ROOM.getByName(code).fetch(request);
+      return env.ROOM.getByName(code).fetch(forwarded);
     }
+    if (url.pathname === '/api/telemetry') return handleTelemetry(request, env);
+    if (url.pathname === '/api/stats') return handleStats(request, env);
     if (url.pathname === '/api/health') {
       return Response.json({ ok: true, environment: env.ENVIRONMENT });
     }
+    if (url.pathname.startsWith('/api/')) return jsonError(404, 'not found');
     return env.ASSETS.fetch(request);
   },
 } satisfies ExportedHandler<Env>;
-
-/** The relay only serves the game it ships with (plus local dev servers proxying to it). */
-function originAllowed(request: Request, url: URL): boolean {
-  const origin = request.headers.get('Origin');
-  if (!origin) return true;
-  try {
-    const o = new URL(origin);
-    return o.host === url.host || o.hostname === 'localhost' || o.hostname === '127.0.0.1';
-  } catch {
-    return false;
-  }
-}
