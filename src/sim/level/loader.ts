@@ -1,7 +1,6 @@
 import type { Entity, World } from 'koota';
 import { getContext } from '../context';
 import { assignNetId, createPlayerCapsule } from '../physics/bodies';
-import { attachPhysicsArms } from '../player/arms';
 import { spawnWeapon } from '../systems/weapons';
 import { createHazard } from '../hazards';
 import {
@@ -56,13 +55,12 @@ export function spawnPlayer(world: World, slot: number, x: number, y: number, co
     Aim({ x: slot % 2 === 0 ? 1 : -1, y: 0, holdTicks: 0 }),
     Health({ hp: ctx.settings.maxHp, maxHp: ctx.settings.maxHp }),
     Combat({ punchCooldown: 0, punchActive: 0, blockMeter: 1, blockStartTick: -999, blocking: false, refillDelay: 0 }),
-    Status({ burning: 0, slowed: 0, glued: 0, bubbled: 0 }),
+    Status({ burning: 0, slowed: 0, glued: 0, bubbled: 0, pulled: 0 }),
     Transform({ x, y, angle: 0 }),
     PrevTransform({ x, y, angle: 0 }),
   );
   assignNetId(world, entity);
   createPlayerCapsule(world, entity, x, y);
-  if (ctx.settings.physicsArms) attachPhysicsArms(world, entity);
   ctx.players.push(entity);
   return entity;
 }

@@ -1,70 +1,48 @@
-import { Vec2 } from 'planck';
 import { getContext } from '../context';
-import { HazardKind, PrevTransform, Transform } from '../traits';
-import { createKinematicBox, kill } from './common';
+import { Anchor, HazardKind, Transform } from '../traits';
+import { anchorOf, createKinematicBox, kill, steerTo } from './common';
 import type { HazardModule } from './types';
 
-/** PLAN Appendix D: crush = kill on overlap, including the swept AABB so 60 Hz cannot tunnel. */
-export function crusherOverlaps(
-  px: number,
-  py: number,
-  hx: number,
-  hy: number,
-  halfW: number,
-  halfH: number,
-  prevX = hx,
-  prevY = hy,
-): boolean {
-  const minX = Math.min(prevX, hx) - halfW;
-  const maxX = Math.max(prevX, hx) + halfW;
-  const minY = Math.min(prevY, hy) - halfH;
-  const maxY = Math.max(prevY, hy) + halfH;
-  const pr = 0.3;
-  const ph = 0.9;
-  return px + pr >= minX && px - pr <= maxX && py + ph >= minY && py - ph <= maxY;
-}
-
+/**
+ * Ceiling slammer. Rests at its authored position, drops `param1` metres in a tenth of the
+ * `param0`-tick cycle, sits, then climbs back. param2 = phase offset. Anything under the face
+ * while it is down or descending is flattened.
+ */
 export const crusher: HazardModule = {
   typeId: 'crusher',
   kind: HazardKind.Crusher,
-  create: (world, obj) => createKinematicBox(world, obj, HazardKind.Crusher),
-  step(world, entity, hz) {
+  create(world, obj) {
+    const e = createKinematicBox(world, obj, HazardKind.Crusher);
+    e.add(Anchor({ x: obj.x, y: obj.y }));
+    return e;
+  },
+  step(world, entity, hz, tr) {
     const ctx = getContext(world);
-    // param0 is authored period. 0 means no oscillation — do not `|| 50`.
-    const period = hz.param0;
-    const t = period > 0 ? Math.sin(ctx.tick / period) : 0;
-    const body = ctx.bodies.get(entity);
-    // param1 is authored speed (default 4 in paramsFromObject). 0 means frozen —
-    // do not `|| 4` or a last-tick freeze becomes a 4 m/s this-tick drive.
-    if (body) body.setLinearVelocity(new Vec2(t * hz.param1, 0));
+    const home = anchorOf(entity, tr);
+    const period = Math.max(30, hz.param0 || 150);
+    const drop = hz.param1 || 3;
+    const p = ((ctx.tick + hz.param2) % period) / period;
+    let k = 0;
+    if (p < 0.45) k = 0;
+    else if (p < 0.55) k = (p - 0.45) / 0.1;
+    else if (p < 0.7) k = 1;
+    else k = 1 - (p - 0.7) / 0.3;
+    // armed while slamming or sitting at the bottom
+    hz.armed = p >= 0.45 && p < 0.7 ? 1 : 0;
+    steerTo(world, entity, home.x, home.y - drop * k);
   },
   contact(world, player, hz, ht, _ctrl, _dt, hazard) {
+    if (!hz.armed) return;
     const pt = player.get(Transform);
     if (!pt) return;
     const ctx = getContext(world);
-    const prev = hazard.get(PrevTransform);
-    const pprev = player.get(PrevTransform);
     const body = ctx.bodies.get(hazard);
-    const pos = body?.getPosition();
-    const lastX = prev?.x ?? ht.x;
-    const lastY = prev?.y ?? ht.y;
-    const bodyX = pos?.x ?? ht.x;
-    const bodyY = pos?.y ?? ht.y;
-    // param2/param3 are authored half-extents. 0 means no box — do not `|| 0.75` / `|| 3`.
-    const halfW = hz.param2;
-    const halfH = hz.param3;
-    const samples = [
-      [pt.x, pt.y],
-      [pprev?.x ?? pt.x, pprev?.y ?? pt.y],
-    ] as const;
-    for (const [px, py] of samples) {
-      if (
-        crusherOverlaps(px, py, ht.x, ht.y, halfW, halfH, lastX, lastY) ||
-        crusherOverlaps(px, py, bodyX, bodyY, halfW, halfH, ht.x, ht.y)
-      ) {
-        kill(world, player, pt.x, pt.y);
-        return;
-      }
+    const fixture = body?.getFixtureList();
+    const aabb = fixture?.getAABB(0);
+    const halfW = aabb ? (aabb.upperBound.x - aabb.lowerBound.x) / 2 : 1;
+    const bottom = aabb ? aabb.lowerBound.y : ht.y - 1;
+    if (Math.abs(pt.x - ht.x) < halfW + 0.1 && pt.y < bottom + 0.3 && pt.y > bottom - 1.15) {
+      kill(world, player, pt.x, pt.y);
     }
   },
 };

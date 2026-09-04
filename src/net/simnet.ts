@@ -1,5 +1,5 @@
 import type { PlayerInput } from '../sim/input';
-import { decodeWire, encodeWire, type NetMessage } from './protocol';
+import { encode, type NetMessage } from './protocol';
 
 export type LinkOpts = {
   latencyMs: number;
@@ -32,10 +32,9 @@ export function createSimulatedLink(opts: LinkOpts) {
         dropped += 1;
         return;
       }
-      const wire = encodeWire(msg);
-      const bytes = typeof wire === 'string' ? wire.length : wire.byteLength;
+      const bytes = encode(msg).length;
       bytesOut += bytes;
-      inbox.push({ deliverAt: now + opts.latencyMs, to, msg: decodeWire(wire), bytes });
+      inbox.push({ deliverAt: now + opts.latencyMs, to, msg, bytes });
     },
     receive(to: number): NetMessage[] {
       const ready: NetMessage[] = [];
@@ -53,47 +52,4 @@ export function createSimulatedLink(opts: LinkOpts) {
 
 export function bundleInputs(history: PlayerInput[]): PlayerInput[] {
   return history.slice(-3);
-}
-
-export type RemoteInbox = {
-  /** Newest accepted bundle tick; -1 = none yet. Unordered older packets are dropped. */
-  tick: number;
-  input: PlayerInput | null;
-  bundleLen: number;
-};
-
-export function emptyRemoteInbox(): RemoteInbox {
-  return { tick: -1, input: null, bundleLen: 0 };
-}
-
-/**
- * PLAN 4.13: unreliable/unordered channel. Accept a 3-input bundle only when
- * `msgTick` is newer than the last applied tick so a delayed packet cannot
- * clobber a later input. The newest sample in the bundle is the one applied
- * (older entries are the loss-tolerance redundancy).
- */
-export function acceptInputBundle(inbox: RemoteInbox, msgTick: number, bundle: PlayerInput[]): RemoteInbox {
-  const last = bundle[bundle.length - 1];
-  if (!last) return inbox;
-  if (inbox.tick >= 0 && msgTick < inbox.tick) return inbox;
-  return { tick: msgTick, input: last, bundleLen: bundle.length };
-}
-
-/** Host applies the newest input in a loss-tolerant 3-input bundle to a slot. */
-export function applyInputBundle(inputs: PlayerInput[], slot: number, bundle: PlayerInput[]): PlayerInput[] {
-  const accepted = acceptInputBundle(emptyRemoteInbox(), 0, bundle);
-  if (!accepted.input || slot < 0 || slot >= inputs.length) return inputs;
-  const next = inputs.slice();
-  next[slot] = accepted.input;
-  return next;
-}
-
-/** Overlay accepted remote seats onto a locally sampled input vector. Seat 0 stays host-local. */
-export function applyRemoteInboxes(inputs: PlayerInput[], inboxes: RemoteInbox[]): PlayerInput[] {
-  const next = inputs.slice();
-  for (let slot = 1; slot < inboxes.length && slot < next.length; slot++) {
-    const input = inboxes[slot]?.input;
-    if (input) next[slot] = input;
-  }
-  return next;
 }

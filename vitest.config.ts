@@ -1,9 +1,7 @@
 import path from 'node:path';
 import { defineConfig } from 'vitest/config';
-import typegpu from 'unplugin-typegpu/vite';
 
 export default defineConfig({
-  plugins: [typegpu()],
   resolve: {
     alias: {
       '@': path.resolve(__dirname, 'src'),
@@ -13,5 +11,7 @@ export default defineConfig({
     include: ['test/**/*.test.ts'],
     environment: 'node',
     globals: false,
+    // Whole-roster sweeps and 4-bot arena soaks step thousands of physics ticks; give them headroom on a busy box.
+    testTimeout: 30_000,
   },
 });

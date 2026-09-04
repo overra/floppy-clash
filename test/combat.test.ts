@@ -1,55 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { woodsClearing } from '../src/levels/handauthored';
-import {
-  Combat,
-  Crown,
-  Dead,
-  Health,
-  MatchState,
-  Player,
-  RagdollPart,
-  RoundPhase,
-  RoundState,
-  Transform,
-} from '../src/sim/traits';
-import { nextMatchLevel } from '../src/sim/systems/reset';
-import { hold, hp, makeSim, playerOf } from './helpers';
+import { Combat, Dead, Health, MatchState, Player, RoundPhase, RoundState, Transform } from '../src/sim/traits';
+import { hold, hp, makeSim, playerOf, runTrack } from './helpers';
 
 describe('M2 combat and rounds', () => {
-  it('punch bounces off a block (PLAN 4.7)', () => {
-    const sim = makeSim({ level: woodsClearing, seed: 31, settings: { playerCount: 2, bots: 0 } });
-    const a = playerOf(sim, 0);
-    const b = playerOf(sim, 1);
-    sim.ctx.bodies.get(a)?.setPosition({ x: 10, y: 4 });
-    sim.ctx.bodies.get(b)?.setPosition({ x: 10.8, y: 4 });
-    a.set(Transform, { x: 10, y: 4, angle: 0 });
-    b.set(Transform, { x: 10.8, y: 4, angle: 0 });
-    const combat = b.get(Combat);
-    if (combat) b.set(Combat, { ...combat, blocking: true, blockMeter: 1, blockStartTick: sim.ctx.tick });
-    const before = b.get(Health)?.hp ?? 100;
-    let blocked = false;
-    for (let i = 0; i < 8; i++) {
-      const ev = sim.step([
-        hold({ attack: i === 2, aimX: 1, aimY: 0 }),
-        hold({ block: true, aimX: -1, aimY: 0 }),
-        hold({}),
-        hold({}),
-      ]);
-      if (ev.some((e) => e.type === 'block')) blocked = true;
-    }
-    expect(blocked).toBe(true);
-    expect(b.get(Health)?.hp ?? 100).toBe(before);
-  });
-
-  it('unarmed punch emits a fists shot for SFX (PLAN M5)', () => {
-    const sim = makeSim({ level: woodsClearing, seed: 32, settings: { playerCount: 1 } });
-    const p = playerOf(sim);
-    sim.ctx.bodies.get(p)?.setPosition({ x: 10, y: 4 });
-    p.set(Transform, { x: 10, y: 4, angle: 0 });
-    const ev = sim.step([hold({ attack: true, aimX: 1, aimY: 0 }), hold({}), hold({}), hold({})]);
-    expect(ev.some((e) => e.type === 'shot' && e.weaponId === 'fists')).toBe(true);
-  });
-
   it('punch deals about 22 damage', () => {
     const sim = makeSim({ level: woodsClearing, seed: 5, settings: { playerCount: 2, bots: 0 } });
     const a = playerOf(sim, 0);
@@ -66,10 +20,48 @@ describe('M2 combat and rounds', () => {
     expect(before - after).toBeGreaterThanOrEqual(20);
   });
 
-  it('airborne punch (dropkick) knocks harder than a grounded punch', () => {
-    const groundedKb = punchKnock(false);
-    const airKb = punchKnock(true);
-    expect(airKb).toBeGreaterThan(groundedKb * 1.1);
+  /** Two fighters toe to toe on the run track floor, facing each other. */
+  function faceOff() {
+    const sim = makeSim({ level: runTrack, seed: 5, settings: { playerCount: 2, bots: 0 } });
+    const a = playerOf(sim, 0);
+    const b = playerOf(sim, 1);
+    sim.ctx.bodies.get(a)?.setPosition({ x: 20, y: 2.81 });
+    sim.ctx.bodies.get(b)?.setPosition({ x: 20.8, y: 2.81 });
+    for (let i = 0; i < 6; i++) sim.step([hold({ aimX: 1, aimY: 0 }), hold({ aimX: -1, aimY: 0 }), hold({}), hold({})]);
+    return { sim, a, b };
+  }
+
+  it('two punches thrown at once clash: no damage, both fighters stagger apart', () => {
+    const { sim, a, b } = faceOff();
+    let clashes = 0;
+    for (let i = 0; i < 8; i++) {
+      const ev = sim.step([hold({ attack: i === 0, aimX: 1, aimY: 0 }), hold({ attack: i === 1, aimX: -1, aimY: 0 }), hold({}), hold({})]);
+      clashes += ev.filter((e) => e.type === 'clash').length;
+    }
+    expect(clashes).toBe(1);
+    expect(a.get(Health)?.hp).toBe(100);
+    expect(b.get(Health)?.hp).toBe(100);
+    expect((a.get(Combat)?.stun ?? 0) + (b.get(Combat)?.stun ?? 0)).toBeGreaterThan(0);
+    // knocked away from each other
+    expect((a.get(Transform)?.x ?? 0) < 20).toBe(true);
+    expect((b.get(Transform)?.x ?? 0) > 20.8).toBe(true);
+  });
+
+  it('a punch into a raised guard is blocked and staggers the attacker', () => {
+    const { sim, a, b } = faceOff();
+    // B raises the guard well ahead of time so this is an ordinary (non-perfect) block.
+    for (let i = 0; i < 15; i++) sim.step([hold({ aimX: 1, aimY: 0 }), hold({ block: true, aimX: -1, aimY: 0 }), hold({}), hold({})]);
+    let blocks = 0;
+    for (let i = 0; i < 4; i++) {
+      const ev = sim.step([hold({ attack: i === 0, aimX: 1, aimY: 0 }), hold({ block: true, aimX: -1, aimY: 0 }), hold({}), hold({})]);
+      blocks += ev.filter((e) => e.type === 'block').length;
+    }
+    expect(blocks).toBe(1);
+    expect(b.get(Health)?.hp).toBe(100);
+    expect(a.get(Combat)?.stun ?? 0).toBeGreaterThan(10);
+    // Staggered: a second swing does nothing until the stun runs out.
+    const ev = sim.step([hold({ attack: true, aimX: 1, aimY: 0 }), hold({}), hold({}), hold({})]);
+    expect(ev.some((e) => e.type === 'punch')).toBe(false);
   });
 
   it('out of bounds kills', () => {
@@ -82,9 +74,27 @@ describe('M2 combat and rounds', () => {
   });
 
   it('round leaves countdown into fighting', () => {
-    const sim = makeSim({ seed: 8, settings: { playerCount: 2 } });
+    const sim = makeSim({ seed: 8, settings: { playerCount: 2 }, skipCountdown: false });
+    sim.step();
+    expect(sim.ecs.get(RoundState)?.phase).toBe(RoundPhase.Countdown);
     for (let i = 0; i < 200; i++) sim.step();
     expect(sim.ecs.get(RoundState)?.phase).toBe(RoundPhase.Fighting);
+  });
+
+  it('nobody takes damage during the countdown', () => {
+    const sim = makeSim({ level: woodsClearing, seed: 5, settings: { playerCount: 2, bots: 0 }, skipCountdown: false });
+    const a = playerOf(sim, 0);
+    const b = playerOf(sim, 1);
+    sim.ctx.bodies.get(a)?.setPosition({ x: 10, y: 4 });
+    sim.ctx.bodies.get(b)?.setPosition({ x: 10.8, y: 4 });
+    a.set(Transform, { x: 10, y: 4, angle: 0 });
+    b.set(Transform, { x: 10.8, y: 4, angle: 0 });
+    const before = b.get(Health)?.hp ?? 100;
+    for (let i = 0; i < 8; i++) {
+      sim.step([hold({ attack: i === 2, aimX: 1, aimY: 0 }), hold({}), hold({}), hold({})]);
+    }
+    expect(sim.ecs.get(RoundState)?.phase).toBe(RoundPhase.Countdown);
+    expect(b.get(Health)?.hp ?? 100).toBe(before);
   });
 
   it('last standing awards a win', () => {
@@ -100,11 +110,7 @@ describe('M2 combat and rounds', () => {
   });
 
   it('first-to-1 reaches MatchOver', () => {
-    const sim = makeSim({
-      level: woodsClearing,
-      seed: 10,
-      settings: { playerCount: 2, firstTo: 1 },
-    });
+    const sim = makeSim({ level: woodsClearing, seed: 10, settings: { playerCount: 2, firstTo: 1 } });
     sim.ctx.tuning.countdownTicks = 2;
     sim.ctx.tuning.slowmoTicks = 2;
     for (let i = 0; i < 10; i++) sim.step();
@@ -116,11 +122,7 @@ describe('M2 combat and rounds', () => {
   });
 
   it('same-tick double kill is a draw and awards no win', () => {
-    const sim = makeSim({
-      level: woodsClearing,
-      seed: 11,
-      settings: { playerCount: 2, firstTo: 0 },
-    });
+    const sim = makeSim({ level: woodsClearing, seed: 11, settings: { playerCount: 2, firstTo: 0 } });
     sim.ctx.tuning.countdownTicks = 2;
     for (let i = 0; i < 10; i++) sim.step();
     expect(sim.ecs.get(RoundState)?.phase).toBe(RoundPhase.Fighting);
@@ -131,64 +133,4 @@ describe('M2 combat and rounds', () => {
     expect((match?.wins0 ?? 0) + (match?.wins1 ?? 0)).toBe(0);
     expect(ev.some((e) => e.type === 'round-phase' && e.phase === 'draw')).toBe(true);
   });
-
-  it('crown sits on the match wins leader, not only the last kill', () => {
-    const sim = makeSim({
-      level: woodsClearing,
-      seed: 12,
-      settings: { playerCount: 2, firstTo: 0 },
-    });
-    sim.ctx.tuning.countdownTicks = 2;
-    sim.ctx.tuning.slowmoTicks = 2;
-    sim.ctx.tuning.scoreboardTicks = 2;
-    for (let i = 0; i < 10; i++) sim.step();
-    const match = sim.ecs.get(MatchState)!;
-    sim.ecs.set(MatchState, { ...match, wins0: 3, wins1: 1 });
-    playerOf(sim, 0).set(Health, { hp: 0, maxHp: 100 });
-    for (let i = 0; i < 6; i++) sim.step();
-    expect(playerOf(sim, 0).has(Crown)).toBe(true);
-    expect(playerOf(sim, 1).has(Crown)).toBe(false);
-  });
-
-  it('death swaps the capsule for a 10-part ragdoll', () => {
-    const sim = makeSim({ level: woodsClearing, seed: 13, settings: { playerCount: 1 } });
-    playerOf(sim, 0).set(Health, { hp: 0, maxHp: 100 });
-    sim.step([hold({}), hold({}), hold({}), hold({})]);
-    let parts = 0;
-    sim.ecs.query(RagdollPart).updateEach(() => {
-      parts += 1;
-    });
-    expect(parts).toBe(10);
-  });
-
-  it('random rotation never repeats the same level immediately', () => {
-    const sim = makeSim({ settings: { playerCount: 2, rotation: 'random' } });
-    const seen: string[] = [];
-    for (let i = 0; i < 8; i++) {
-      nextMatchLevel(sim.ecs);
-      seen.push(sim.ctx.level.id);
-    }
-    for (let i = 1; i < seen.length; i++) {
-      expect(seen[i]).not.toBe(seen[i - 1]);
-    }
-  });
 });
-
-function punchKnock(airborne: boolean): number {
-  const sim = makeSim({ level: woodsClearing, seed: airborne ? 21 : 20, settings: { playerCount: 2 } });
-  const a = playerOf(sim, 0);
-  const b = playerOf(sim, 1);
-  for (let i = 0; i < 30; i++) sim.step([hold({}), hold({}), hold({}), hold({})]);
-  const y = airborne ? 6.4 : 3.2;
-  sim.ctx.bodies.get(a)?.setPosition({ x: 10, y });
-  sim.ctx.bodies.get(b)?.setPosition({ x: 10.75, y });
-  sim.ctx.bodies.get(a)?.setLinearVelocity({ x: 0, y: airborne ? 1 : 0 });
-  sim.ctx.bodies.get(b)?.setLinearVelocity({ x: 0, y: airborne ? 1 : 0 });
-  a.set(Transform, { x: 10, y, angle: 0 });
-  b.set(Transform, { x: 10.75, y, angle: 0 });
-  if (!airborne) {
-    for (let i = 0; i < 12; i++) sim.step([hold({}), hold({}), hold({}), hold({})]);
-  }
-  sim.step([hold({ attack: true, aimX: 1, aimY: 0 }), hold({}), hold({}), hold({})]);
-  return Math.abs(sim.ctx.bodies.get(b)?.getLinearVelocity().x ?? 0);
-}

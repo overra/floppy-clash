@@ -38,14 +38,6 @@ export function lerp(a: number, b: number, t: number): number {
   return a + (b - a) * t;
 }
 
-/** Shortest-path angle lerp so spinning weapons/ragdolls interpolate cleanly. */
-export function lerpAngle(a: number, b: number, t: number): number {
-  let d = b - a;
-  while (d > Math.PI) d -= Math.PI * 2;
-  while (d < -Math.PI) d += Math.PI * 2;
-  return a + d * t;
-}
-
 export function lerpVec(a: Vec2, b: Vec2, t: number): Vec2 {
   return { x: lerp(a.x, b.x, t), y: lerp(a.y, b.y, t) };
 }

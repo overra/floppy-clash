@@ -9,25 +9,34 @@ export const tuning = {
   runSpeed: 8,
   duckSpeedScale: 0.5,
   groundAccelTicks: 6,
-  airAccelTicks: 20,
-  jumpSpeed: 11,
+  // Full air speed in a quarter second: steering back over a ledge after a wall-kick has to be quick.
+  airAccelTicks: 14,
+  // Apex ≈ v²/2g ≈ 3.1 m (~1.7 body heights): ledges up to ~2.7 m above the feet are a single hop,
+  // which is what lets a platform sit a full head above a fighter (2.2 m of air) and still be hopped.
+  jumpSpeed: 13.6,
   coyoteTicks: 5,
   jumpBufferTicks: 6,
   wallSlideMaxFall: 3,
-  wallJumpX: 6.5,
-  wallJumpY: 12,
-  wallJumpLockTicks: 8,
+  // A wall-kick is mostly up and only a little out: holding towards the wall brings the fighter back
+  // to it at the apex (~2.8 m higher), so repeated kicks climb instead of looping in a wide arc.
+  wallJumpX: 4.5,
+  wallJumpY: 13,
+  wallJumpLockTicks: 5,
   wallDetectDistance: 0.55,
+  // Ledge assist: a lip no more than this far above the feet gets scrambled onto (see controller.ts),
+  // probed this far outside the capsule, with at least this much speed carried over the edge.
+  mantleReach: 0.9,
+  mantleProbe: 0.25,
+  mantleSpeed: 2.5,
   maxFallSpeed: 28,
   maxHorizontalSpeed: 40,
 
   punchSelfImpulse: 4,
   blockPunchBonus: 3,
-  /** PLAN 2.2: holding down while punching adds a fast-descent slam. */
-  punchSlamImpulse: 7,
   punchDamage: 22,
-  punchKnockback: 6,
-  punchKnockbackUp: 0.3,
+  // The pop lifts the victim off the ground so the shove carries instead of dying to floor friction.
+  punchKnockback: 8,
+  punchKnockbackUp: 6,
   punchRange: 0.9,
   punchRadius: 0.45,
   punchActiveTicks: 4,
@@ -51,33 +60,31 @@ export const tuning = {
   refillOnPickup: true,
   flingWhenEmpty: true,
 
-  firstDropDelayTicks: 180,
-  dropIntervalMinTicks: 360,
-  dropIntervalMaxTicks: 600,
+  // Guns rain steadily: first one lands as the fight opens, then every 3–6 s (faster with more players).
+  firstDropDelayTicks: 90,
+  dropIntervalMinTicks: 180,
+  dropIntervalMaxTicks: 360,
   maxLooseWeapons: 6,
 
   lavaDamage: 35,
   lavaCooldownTicks: 30,
 
-  /** PLAN Appendix C flamethrower: 5/s burn for 6 s. */
-  burnDamage: 5,
-  burnIntervalTicks: 60,
-  burnDurationTicks: 360,
-
-  /** PLAN 2.2 dropkick: extra knockback on an airborne punch. */
-  dropkickKnockbackScale: 1.35,
-
-  countdownTicks: 180,
-  lastKillSlowmo: 0.25,
-  slowmoTicks: 72,
-  scoreboardTicks: 90,
+  // Between rounds: ~2 s of slow-mo on the last kill (36 ticks at 0.3x), 0.75 s with the scorecard
+  // up at full speed, then a 1.5 s 3-2-1. About 4 s door to door; rounds against bots can be short,
+  // so the gap has to be shorter still.
+  countdownTicks: 90,
+  lastKillSlowmo: 0.3,
+  slowmoTicks: 36,
+  scoreboardTicks: 45,
 
   cameraPadding: 4,
   cameraLerp: 0.12,
   cameraZoomLerp: 0.08,
 
   ownerGraceTicks: 6,
-  aimHoldAtRestTicks: 12,
+  // After the right stick is released the aim stays put this long (a flick-and-fire lands where the
+  // flick pointed), then the run direction takes it over. Standing still keeps it indefinitely.
+  aimHoldAtRestTicks: 20,
   stickSmoothing: 0.35,
   moveDeadzone: 0.2,
   aimDeadzone: 0.25,

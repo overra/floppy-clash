@@ -16,7 +16,7 @@ export const replication = {
   Projectile: 'replicated',
   Hazard: 'replicated',
   RagdollPart: 'replicated',
-  Lifetime: 'replicated',
+  Lifetime: 'local',
   Dead: 'replicated',
   Loose: 'replicated',
   Held: 'replicated',
@@ -25,19 +25,8 @@ export const replication = {
   Status: 'replicated',
   Snake: 'replicated',
   Bot: 'local',
-  Boss: 'replicated',
-  PhysArm: 'local',
-  Crown: 'replicated',
-  Solid: 'replicated',
-  Sensor: 'local',
-  Destructible: 'replicated',
-  SpawnPoint: 'local',
-  PunchHit: 'local',
-  RoundState: 'replicated',
-  MatchState: 'replicated',
-  SimClock: 'replicated',
-  DropState: 'replicated',
-  HazardPath: 'replicated',
+  Shape: 'local',
+  Anchor: 'local',
 } as const;
 
 export type ReplicationClass = 'replicated' | 'local';
@@ -64,6 +53,10 @@ export const Health = trait({ hp: 100, maxHp: 100 });
 export const Combat = trait({
   punchCooldown: 0,
   punchActive: 0,
+  /** Ticks until a thrown punch actually lands; two fighters swinging inside this window clash instead. */
+  punchPending: 0,
+  /** Staggered (blocked or clashed): no attacks, no guard, no steering until it runs out. */
+  stun: 0,
   blockMeter: 1,
   blockStartTick: -999,
   blocking: false,
@@ -89,6 +82,10 @@ export const Projectile = trait({
   gravity: 0,
   ownerGrace: 0,
   defId: 0,
+  /** Field projectiles: 0 while flying, 1 once anchored in place (black hole opened, time bubble popped). */
+  phase: 0,
+  /** Melee swings: bit per player slot already struck this swing, so one swing lands once per target. */
+  hitMask: 0,
 });
 export const Hazard = trait({
   kind: 0,
@@ -100,27 +97,49 @@ export const Hazard = trait({
   armed: 1,
 });
 export const RagdollPart = trait({ part: 0 });
+/** Rest position for kinematic hazards that oscillate (moving platforms, sweeping saws, crushers). */
+export const Anchor = trait({ x: 0, y: 0 });
+/** Render-facing geometry of the body's main fixture (derived, never authored). kind: ShapeKind. */
+export const Shape = trait({ kind: 0, hx: 0.5, hy: 0.5, r: 0 });
 export const Lifetime = trait({ ticksLeft: 0 });
+/** Ticks left on each affliction. pulled: in a void well's grip, so footing counts for nothing (controller.ts). */
 export const Status = trait({
   burning: 0,
   slowed: 0,
   glued: 0,
   bubbled: 0,
+  pulled: 0,
 });
-export const Snake = trait({ hp: 0, giant: 0, flying: 0, biteCooldown: 0 });
-export const Bot = trait({ slot: 0, think: 0 });
-export const Boss = trait({ hp: 200, bite: 0, speed: 3.2 });
-export const PhysArm = trait({ side: 0, owner: 0 });
-export const Crown = trait();
-/** Waypoint path for kinematic movers (PLAN 4.10 / Appendix D `platform.moving`). */
-export const HazardPath = trait(() => ({
-  points: [] as { x: number; y: number }[],
-  index: 0,
-  accum: 0,
+/** grace: ticks during which a freshly fired snake ignores whoever shot it (and sails ballistically while high). */
+export const Snake = trait({ hp: 0, giant: 0, flying: 0, biteCooldown: 0, grace: 0 });
+/** Bot brain state (local only). mode: BotMode. target: slot of the tracked enemy or -1. */
+export const Bot = trait({
+  slot: 0,
+  think: 0,
+  skill: 0.75,
   mode: 0,
-  dir: 1,
-  speed: 3,
-}));
+  timer: 0,
+  target: -1,
+  strafe: 1,
+  strafeTicks: 0,
+  aimErr: 0,
+  blockTicks: 0,
+  reactTicks: 0,
+  throwArmed: 0,
+  /** Last static nav surface the bot stood on (index into the level's NavGraph). */
+  surf: -1,
+  /** Progress watchdog: position sampled every couple of seconds, and a detour timer when it stalls. */
+  stuckX: 0,
+  stuckY: 0,
+  detour: 0,
+  detourDir: 1,
+  /** Consecutive ticks spent running into something without moving. */
+  blocked: 0,
+  /** A pickup we failed to reach (entity id) and how long to ignore it. */
+  shunned: -1,
+  shunTicks: 0,
+});
+export const Crown = trait();
 export const Dead = trait();
 export const Loose = trait();
 export const Held = trait();
@@ -130,7 +149,6 @@ export const Solid = trait();
 export const Sensor = trait();
 export const Destructible = trait({ hp: 60, maxHp: 60 });
 export const SpawnPoint = trait({ index: 0 });
-export const PunchHit = trait({ owner: 0, ticks: 0, damage: 0 });
 
 export const HeldBy = relation({ exclusive: true });
 export const OwnedBy = relation();
@@ -142,6 +160,8 @@ export const RoundState = trait({
   ticks: 0,
   aliveMask: 0,
   lastKiller: -1,
+  /** Slot that took the round (decided the moment the last kill lands, even if they die celebrating); -1 for a draw. */
+  winner: -1,
   seed: 0,
 });
 
@@ -159,7 +179,8 @@ export const MatchState = trait({
 });
 
 export const SimClock = trait({ tick: 0, stepScale: 1 });
-export const DropState = trait({ nextDrop: 0, looseCount: 0 });
+/** Weapon rain: `wave` counts the opening volley still to fall (one per fighter, see spawner.ts). */
+export const DropState = trait({ nextDrop: 0, looseCount: 0, wave: 0, waveSize: 0 });
 
 export const RoundPhase = {
   Loading: 0,
@@ -191,9 +212,6 @@ export const HazardKind = {
   Spikeball: 17,
   Crusher: 18,
   TriggerDrop: 19,
-  Boss: 20,
-  /** Short-lived chunks from a broken `block.destructible` (Appendix D). */
-  Debris: 21,
 } as const;
 
 export const ProjectileKind = {
@@ -206,6 +224,12 @@ export const ProjectileKind = {
   Field: 6,
   Creature: 7,
   BurstInto: 8,
+} as const;
+
+export const ShapeKind = {
+  Box: 0,
+  Circle: 1,
+  Capsule: 2,
 } as const;
 
 export const RagdollParts = {

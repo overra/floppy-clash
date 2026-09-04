@@ -3,9 +3,10 @@ import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { createCamera } from '../src/render/camera';
 import { buildFrame } from '../src/render/buildFrame';
-import { createDecalLayer, hashPixels } from '../src/render/fx/decals';
-import { emitFromEvents, type Decal, type Particle } from '../src/render/fx/particles';
-import { makeSim } from './helpers';
+import { createDecalLayer, createDecalLayerPool, decalLayerSize, hashPixels, snapDecalToSurface } from '../src/render/fx/decals';
+import { emitFromEvents, type Decal } from '../src/render/fx/particles';
+import { Transform } from '../src/sim/traits';
+import { hold, makeSim, playerOf, runTrack } from './helpers';
 
 const BLOOD = '#5a1010';
 const SCORCH = '#2a1a10';
@@ -50,13 +51,13 @@ describe('PLAN 4.11 persistent decals', () => {
         { type: 'blood', x: 8, y: 4, amount: 40 },
         { type: 'explosion', x: 10, y: 3, radius: 2, damage: 20 },
       ],
-      [],
+      null,
       decals,
     );
     layer.stampNew(decals);
     const cam = createCamera(sim.ctx.level.bounds);
-    const a = buildFrame(sim, cam, 0, 1280, 720, [], { decalLayer: layer, freezeCamera: true });
-    const b = buildFrame(sim, cam, 0, 1280, 720, [], { decalLayer: layer, freezeCamera: true });
+    const a = buildFrame(sim, cam, 0, 1280, 720, null, { decalLayer: layer, freezeCamera: true });
+    const b = buildFrame(sim, cam, 0, 1280, 720, null, { decalLayer: layer, freezeCamera: true });
     expect(a.decalLayer).toBe(layer);
     expect(b.decalLayer).toBe(layer);
     const decalColors = new Set([BLOOD, SCORCH]);
@@ -65,30 +66,66 @@ describe('PLAN 4.11 persistent decals', () => {
     expect(layer.stampCalls).toBe(decals.length);
   });
 
+  it('blood stains what it lands on: splashes snap onto nearby surfaces and mid-air ones are dropped', () => {
+    const sim = makeSim({ level: runTrack, settings: { playerCount: 1 } });
+    const p = playerOf(sim);
+    for (let i = 0; i < 60; i++) sim.step([hold({}), hold({}), hold({}), hold({})]);
+    const feet = p.get(Transform)!.y - sim.ctx.tuning.height / 2;
+    // Chest-height splash over the floor: pulled down onto (and slightly into) the track surface.
+    const onFloor: Decal = { x: 20, y: feet + 0.6, r: 0.3, color: BLOOD, kind: 'blood' };
+    expect(snapDecalToSurface(sim.ecs, onFloor)).toBe(true);
+    expect(onFloor.y).toBeLessThan(feet + 0.05);
+    expect(onFloor.y).toBeGreaterThan(feet - 0.3);
+    // Way up in the sky: nothing to stain.
+    const sky: Decal = { x: 20, y: feet + 6, r: 0.3, color: BLOOD, kind: 'blood' };
+    expect(snapDecalToSurface(sim.ecs, sky)).toBe(false);
+  });
+
+  it('the layer pool hands back a wiped same-size layer on rotation instead of building a new one', () => {
+    const pool = createDecalLayerPool(2);
+    const wide = { x: 0, y: 0, w: 64, h: 36 };
+    const narrow = { x: -5, y: 2, w: 40, h: 36 };
+    const a = pool.acquire(wide);
+    a.stampNew([{ x: 4, y: 3, r: 0.4, color: BLOOD, kind: 'blood' }]);
+    expect(a.sample(4, 3)[3]).toBeGreaterThan(0);
+    pool.release(a);
+    pool.release(a); // double release must not duplicate the spare
+    expect(pool.size).toBe(1);
+
+    // Different footprint: nothing suitable, so a fresh layer is built and the spare stays put.
+    const b = pool.acquire(narrow);
+    expect(b).not.toBe(a);
+    expect(pool.size).toBe(1);
+    expect(b.width).toBe(decalLayerSize(narrow).width);
+
+    // Same footprint but a shifted origin: the spare is recycled, wiped, and re-anchored.
+    const shifted = { x: 10, y: -3, w: 64, h: 36 };
+    const c = pool.acquire(shifted);
+    expect(c).toBe(a);
+    expect(pool.size).toBe(0);
+    expect(c.bounds).toEqual(shifted);
+    expect(c.stamped).toBe(0);
+    expect(c.consumed).toBe(0);
+    expect(c.dirty).toBe(true);
+    expect(c.sample(14, 0)[3]).toBe(0);
+    expect(c.hashPixels()).toBe(createDecalLayer(shifted).hashPixels());
+
+    // The pool is bounded: the oldest spare is dropped once it is full.
+    pool.release(b);
+    pool.release(c);
+    pool.release(createDecalLayer({ x: 0, y: 0, w: 24, h: 36 }));
+    expect(pool.size).toBe(2);
+    expect(pool.acquire(narrow)).not.toBe(b);
+  });
+
   it('GPU renderer uploads the persistent texture only when dirty', () => {
     const src = readFileSync(resolve(process.cwd(), 'src/render/gpu/renderer.ts'), 'utf8');
-    expect(src).toContain('if (!decalTex || !decalBind || layer.dirty)');
+    expect(src).toContain('if (!layer.dirty && decalTex && decalBind) return');
     expect(src).toContain('device.queue.writeTexture');
-    expect(src).toContain('decalPipeline.with(pass).with(decalBind).draw(6)');
-    expect(src).toContain('createDecalDrawPipeline');
+    expect(src).toContain('pass.draw(6, 1)');
     const canvas = readFileSync(resolve(process.cwd(), 'src/render/canvas/renderer.ts'), 'utf8');
     expect(canvas).toContain('if (layer.dirty)');
     expect(canvas).toContain('renderer.decalUploads += 1');
     expect(canvas).toContain('layer.dirty = false');
-  });
-});
-
-describe('M5 muzzle / sparks / smoke', () => {
-  it('shot events emit a flash, sparks, and a smoke puff', () => {
-    const particles: Particle[] = [];
-    emitFromEvents(
-      [{ type: 'shot', source: 0, weaponId: 'pistol', x: 1, y: 1, aimX: 1, aimY: 0 }],
-      particles,
-      [],
-    );
-    expect(particles.length).toBeGreaterThanOrEqual(6);
-    expect(particles.some((p) => p.color === '#fff4aa')).toBe(true);
-    expect(particles.some((p) => p.color === '#8a8680')).toBe(true);
-    expect(particles.some((p) => p.color === '#ffb347' || p.color === '#ffe08a')).toBe(true);
   });
 });

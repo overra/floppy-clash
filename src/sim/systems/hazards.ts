@@ -1,25 +1,15 @@
-import { createQuery, Not, type Entity, type World } from 'koota';
-import { authoredHalfWidth } from '../authored';
-import { emit, getContext } from '../context';
+import { createQuery, Not, type World } from 'koota';
+import { getContext } from '../context';
 import { moduleForKind } from '../hazards';
-import { assignNetId, createBoxBody, readBodyShape, registerBody } from '../physics/bodies';
-import { applyExplosion } from '../physics/queries';
-import { takeDamage } from '../player/health';
-import type { FixtureUserData } from '../physics/categories';
-import {
-  Controller,
-  Dead,
-  Destructible,
-  Hazard,
-  HazardKind,
-  Lifetime,
-  Player,
-  PrevTransform,
-  Transform,
-} from '../traits';
-import { spawnSnake } from '../weapons/projectiles';
+import { Controller, Dead, Destructible, Hazard, HazardKind, Player, Shape, Transform } from '../traits';
+import { detonate } from '../weapons/projectiles';
 
 const hazards = createQuery(Hazard, Transform);
+
+/** A barrel is a grenade-launcher shell you can stand next to: same reach, a little less bite. */
+const BARREL_BLAST_RADIUS = 2.4;
+const BARREL_BLAST_DAMAGE = 55;
+const BARREL_BLAST_IMPULSE = 12;
 
 export function hazardsStep(world: World): void {
   const ctx = getContext(world);
@@ -33,115 +23,26 @@ export function hazardsStep(world: World): void {
     world.query(hazards).updateEach(([hz, ht], hazard) => {
       const pt = player.get(Transform);
       if (!pt) return;
-      const dx = Math.abs(pt.x - ht.x);
-      const dy = Math.abs(pt.y - ht.y);
-      const hung = hz.kind === HazardKind.Chain && hz.param3 === 1;
-      // param0 is authored deck width. 0 means no extra hang reach — do not `|| 2.8`.
-      const bed =
-        hz.kind === HazardKind.Spikes
-          ? authoredHalfWidth(hz.param0)
-          : hz.kind === HazardKind.Lava
-            ? authoredHalfWidth(hz.param1)
-            : 0;
-      const prev = hazard.get(PrevTransform);
-      const pprev = player.get(PrevTransform);
-      const body = ctx.bodies.get(hazard);
-      const pos = body?.getPosition();
-      const shape = body ? readBodyShape(body) : null;
-      // Platforms / bounce: body half-width (or authored w/2). Keep the 1.6
-      // floor so last-tick saw/crusher sweeps still invoke contact.
-      const deck =
-        hz.kind === HazardKind.MovingPlatform || hz.kind === HazardKind.RotatingPlatform
-          ? shape && shape.circle === 0
-            ? shape.hx
-            : authoredHalfWidth(hz.param1)
-          : hz.kind === HazardKind.Bounce
-            ? shape && shape.circle === 0
-              ? shape.hx
-              : authoredHalfWidth(hz.param0)
-            : 0;
-      const reach = hung
-        ? Math.max(2.2, authoredHalfWidth(hz.param0) + 0.5)
-        : Math.max(1.6, bed + 0.5, deck + 0.5);
-      // Last-tick pose + this-tick commanded body (path teleport). Never vel*dt.
-      const sweep =
-        hz.kind === HazardKind.Saw ||
-        hz.kind === HazardKind.Crusher ||
-        hz.kind === HazardKind.Spikeball ||
-        hz.kind === HazardKind.Lava
-          ? pt.x >= Math.min(prev?.x ?? ht.x, ht.x, pos?.x ?? ht.x) - reach &&
-            pt.x <= Math.max(prev?.x ?? ht.x, ht.x, pos?.x ?? ht.x) + reach &&
-            pt.y >= Math.min(prev?.y ?? ht.y, ht.y, pos?.y ?? ht.y) - 1.6 &&
-            pt.y <= Math.max(prev?.y ?? ht.y, ht.y, pos?.y ?? ht.y) + 1.6
-          : false;
-      // Static / rising kill beds: last-tick player skip must still invoke contact.
-      const playerSweep =
-        hz.kind === HazardKind.Spikes || hz.kind === HazardKind.Lava
-          ? ht.x >= Math.min(pprev?.x ?? pt.x, pt.x) - reach &&
-            ht.x <= Math.max(pprev?.x ?? pt.x, pt.x) + reach &&
-            ht.y >= Math.min(pprev?.y ?? pt.y, pt.y) - 1.6 &&
-            ht.y <= Math.max(pprev?.y ?? pt.y, pt.y) + 1.6
-          : false;
-      const near = sweep || playerSweep || (dx < reach && dy < 1.6);
       const mod = moduleForKind(hz.kind);
       if (!mod?.contact) return;
-      if (!near && hz.kind !== HazardKind.Laser && hz.kind !== HazardKind.Conveyor) return;
+      const dx = Math.abs(pt.x - ht.x);
+      const dy = Math.abs(pt.y - ht.y);
+      // Broad phase: the hazard's own extents plus a player-sized margin.
+      const shape = hazard.get(Shape);
+      const reachX = 1.6 + (shape ? Math.max(shape.hx, shape.r) : 0);
+      const reachY = 1.6 + (shape ? Math.max(shape.hy, shape.r) : 0);
+      const near = dx < reachX && dy < reachY;
+      if (!near && hz.kind !== HazardKind.Laser) return;
       mod.contact(world, player, hz, ht, ctrl, dt, hazard);
     });
   });
 
-  world.query(Destructible, Transform).updateEach(([d, t], entity) => {
+  world.query(Destructible).updateEach(([d], entity) => {
     if (d.hp > 0) return;
-    const hz = entity.get(Hazard);
-    if (hz?.kind === HazardKind.Barrel) {
-      emit(world, { type: 'explosion', x: t.x, y: t.y, radius: 2.4, damage: 35 });
-      applyExplosion(world, t.x, t.y, 2.4, 10, (body, falloff) => {
-        const data = body.getUserData() as FixtureUserData | undefined;
-        const target = data?.entity as Entity | undefined;
-        if (!target || !world.has(target) || !target.has(Player) || target.has(Dead)) return;
-        takeDamage(world, target, 10 + 45 * falloff, 'body', -1, t.x, t.y);
-      });
-      // PLAN 2.5 / 4.14: Western barrels spawn snakes.
-      if (ctx.level.theme === 'western') {
-        spawnSnake(world, t.x - 0.2, t.y + 0.2, undefined, false, false);
-        spawnSnake(world, t.x + 0.2, t.y + 0.2, undefined, false, false);
-      }
-    }
-    if (hz?.kind === HazardKind.Destructible) {
-      spawnDestructibleDebris(world, t.x, t.y);
-    }
+    // A broken barrel goes off: the blast wounds neighbouring barrels too, so a cluster chains
+    // (each is destroyed at end of tick, so nothing detonates twice).
+    const t = entity.get(Transform);
+    if (t && entity.get(Hazard)?.kind === HazardKind.Barrel) detonate(world, t.x, t.y, BARREL_BLAST_RADIUS, BARREL_BLAST_DAMAGE, BARREL_BLAST_IMPULSE);
     ctx.pendingDestroy.push(entity);
   });
-}
-
-/** PLAN Appendix D: broken destructibles become short-lived dynamic chunks + particles. */
-function spawnDestructibleDebris(world: World, x: number, y: number): void {
-  const ctx = getContext(world);
-  emit(world, { type: 'explosion', x, y, radius: 0.8, damage: 0 });
-  for (let i = 0; i < 4; i++) {
-    const ox = (i - 1.5) * 0.18;
-    const chunk = world.spawn(
-      Transform({ x: x + ox, y: y, angle: 0 }),
-      PrevTransform({ x: x + ox, y: y, angle: 0 }),
-      Hazard({
-        kind: HazardKind.Debris,
-        param0: 0.24,
-        param1: 0.24,
-        param2: 0,
-        param3: 0,
-        hp: 0,
-        armed: 1,
-      }),
-      Lifetime({ ticksLeft: 50 }),
-    );
-    assignNetId(world, chunk);
-    const body = createBoxBody(ctx.physics, chunk, 'prop', x + ox, y, 0.12, 0.12, 'dynamic', {
-      density: 0.35,
-      friction: 0.4,
-      restitution: 0.15,
-      fixedRotation: false,
-    });
-    body.setLinearVelocity({ x: (i - 1.5) * 3.2, y: 3.5 + i * 0.4 });
-    registerBody(world, chunk, body);
-  }
 }

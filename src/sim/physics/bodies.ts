@@ -2,7 +2,7 @@ import type { Entity } from 'koota';
 import { Box, Circle, type Body, type World as PhysicsWorld } from 'planck';
 import { Category, Mask, type BodyKind, type FixtureUserData } from './categories';
 import { getContext } from '../context';
-import { NetId, PhysBody, Transform, PrevTransform } from '../traits';
+import { NetId, PhysBody, Shape, ShapeKind, Transform, PrevTransform } from '../traits';
 import type { World } from 'koota';
 
 export function registerBody(world: World, entity: Entity, body: Body): void {
@@ -10,12 +10,43 @@ export function registerBody(world: World, entity: Entity, body: Body): void {
   ctx.bodies.set(entity, body);
   ctx.entityOf.set(body, entity);
   entity.add(PhysBody({ body }));
-  // syncTransforms only writes entities that have PrevTransform. Weapons, snakes,
-  // chain links and other props must interpolate and pick up from the live body.
+  const shape = shapeOfBody(body);
+  if (entity.has(Shape)) entity.set(Shape, shape);
+  else entity.add(Shape(shape));
+  // Transform sync and rendering both key off (PhysBody, Transform, PrevTransform); a body whose
+  // entity lacks the previous-frame slot would fall in the physics world while its Transform
+  // (pickup radius, thrown hits, the drawn sprite) stayed frozen at the spawn point.
   const t = entity.get(Transform);
-  if (t && !entity.get(PrevTransform)) {
-    entity.add(PrevTransform({ x: t.x, y: t.y, angle: t.angle }));
+  if (t && !entity.has(PrevTransform)) entity.add(PrevTransform({ x: t.x, y: t.y, angle: t.angle }));
+}
+
+/** Half extents / radius of the first non-sensor fixture, so the renderer never guesses geometry. */
+export function shapeOfBody(body: Body): { kind: number; hx: number; hy: number; r: number } {
+  let fixture = body.getFixtureList();
+  let fallback: typeof fixture = null;
+  while (fixture) {
+    if (!fixture.isSensor()) break;
+    fallback ??= fixture;
+    fixture = fixture.getNext();
   }
+  const f = fixture ?? fallback;
+  if (!f) return { kind: ShapeKind.Box, hx: 0.5, hy: 0.5, r: 0 };
+  const s = f.getShape();
+  if (s.getType() === 'circle') {
+    const r = s.getRadius();
+    return { kind: ShapeKind.Circle, hx: r, hy: r, r };
+  }
+  if (s.getType() === 'polygon') {
+    const verts = (s as unknown as { m_vertices: { x: number; y: number }[] }).m_vertices ?? [];
+    let hx = 0;
+    let hy = 0;
+    for (const v of verts) {
+      hx = Math.max(hx, Math.abs(v.x));
+      hy = Math.max(hy, Math.abs(v.y));
+    }
+    return { kind: ShapeKind.Box, hx: hx || 0.5, hy: hy || 0.5, r: 0 };
+  }
+  return { kind: ShapeKind.Box, hx: 0.5, hy: 0.5, r: 0 };
 }
 
 export function destroyBody(world: World, entity: Entity): void {
@@ -79,30 +110,6 @@ export function createBoxBody(
   });
   body.setUserData(userData);
   return body;
-}
-
-/** Host fixture extents for late-join spawnMissing (PLAN 4.13). 0 is a legal size. */
-export function readBodyShape(body: Body): {
-  circle: number;
-  hx: number;
-  hy: number;
-  radius: number;
-} | null {
-  const fixture = body.getFixtureList();
-  if (!fixture) return null;
-  const shape = fixture.getShape();
-  if (shape instanceof Circle) {
-    return { circle: 1, hx: 0, hy: 0, radius: shape.getRadius() };
-  }
-  const verts = (shape as { m_vertices?: { x: number; y: number }[] }).m_vertices ?? [];
-  let hx = 0;
-  let hy = 0;
-  for (const v of verts) {
-    hx = Math.max(hx, Math.abs(v.x));
-    hy = Math.max(hy, Math.abs(v.y));
-  }
-  if (hx <= 0 && hy <= 0) return null;
-  return { circle: 0, hx, hy, radius: 0 };
 }
 
 export function createCircleBody(
@@ -177,7 +184,7 @@ export function createPlayerCapsule(
     isSensor: true,
     density: 0,
     filterCategoryBits: Category.Sensor,
-    filterMaskBits: Category.Static | Category.Prop | Category.Player | Category.Ragdoll | Category.Weapon,
+    filterMaskBits: Category.Static | Category.Prop | Category.Player | Category.Ragdoll,
     userData: { entity, kind: 'player', sensor: 'ground' },
   });
   body.setUserData(userData);

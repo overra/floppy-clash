@@ -12,8 +12,7 @@ export const triggerDrop: HazardModule = {
   step(world, entity, hz, tr) {
     const ctx = getContext(world);
     if (hz.armed && ctx.tick >= hz.param0) {
-      // param1 is the authored weapon index. 0 is fists — do not `|| 1`.
-      const def = weaponByIndex(hz.param1);
+      const def = weaponByIndex(hz.param1 || 1);
       spawnWeapon(world, def.id, tr.x, tr.y);
       hz.armed = 0;
     }

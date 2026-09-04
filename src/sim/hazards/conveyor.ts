@@ -1,5 +1,4 @@
 import { Vec2 } from 'planck';
-import { authoredHalfWidth } from '../authored';
 import { getContext } from '../context';
 import { HazardKind, Transform } from '../traits';
 import { createStaticBox } from './common';
@@ -14,14 +13,12 @@ export const conveyor: HazardModule = {
     if (!pt || !ctrl.grounded) return;
     const dx = Math.abs(pt.x - ht.x);
     const dy = Math.abs(pt.y - ht.y);
-    // param0 is authored full width (default 2). Reach is half-width.
-    // 0 means no belt — do not `|| 3` or `dx < param0` (that doubles the box).
-    if (dx < authoredHalfWidth(hz.param0) && dy < 1.1 && !ctrl.ducking) {
+    // param0 = half-width, param1 = belt speed (sign is direction)
+    if (dx < (hz.param0 || 3) + 0.2 && dy < 1.3 && !ctrl.ducking) {
       const body = getContext(world).bodies.get(player);
       if (body) {
         const v = body.getLinearVelocity();
-        // param1 is authored belt speed (default 4 in paramsFromObject). 0 means frozen.
-        body.setLinearVelocity(new Vec2(v.x + hz.param1 * dt * 8, v.y));
+        body.setLinearVelocity(new Vec2(v.x + (hz.param1 || 4) * dt * 8, v.y));
       }
     }
   },

@@ -9,9 +9,7 @@ export const rotatingPlatform: HazardModule = {
   create: (world, obj) => createKinematicBox(world, obj, HazardKind.RotatingPlatform),
   step(world, entity, hz) {
     const body = getContext(world).bodies.get(entity);
-    // param0 is authored omega (default 1 in paramsFromObject). 0 means frozen —
-    // do not `|| 1` or a freeze becomes a 1 rad/s this-tick drive.
-    if (body) body.setAngularVelocity(hz.param0);
+    if (body) body.setAngularVelocity(hz.param0 || 1);
   },
   contact(world, player, _hz, ht, ctrl, dt, hazard) {
     const pt = player.get(Transform);

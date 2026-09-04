@@ -1,106 +1,75 @@
 import type { Entity, World } from 'koota';
-import { authoredHalfWidth } from '../authored';
 import { getContext } from '../context';
-import { assignNetId, createBoxBody, createCircleBody, readBodyShape, registerBody } from '../physics/bodies';
+import { assignNetId, createBoxBody, createCircleBody, registerBody } from '../physics/bodies';
 import { takeDamage } from '../player/health';
 import { Vec2 } from 'planck';
-import {
-  Destructible,
-  Hazard,
-  HazardPath,
-  Kinematic,
-  PrevTransform,
-  Solid,
-  StandingOn,
-  Static,
-  Transform,
-} from '../traits';
+import { Anchor, Destructible, Hazard, Kinematic, PrevTransform, Solid, StandingOn, Static, Transform } from '../traits';
 import { weaponIndex } from '../weapons/defs';
 import type { LevelObject } from '../level/schema';
 import type { ControllerView, TransformView } from './types';
 
 export const lavaTouch = new Map<number, number>();
 
-/** Entity ids recycle across worlds; leftover cooldown is a false-green / missed tick. */
-export function clearLavaTouch(): void {
-  lavaTouch.clear();
+type HazardParams = { param0: number; param1: number; param2: number; param3: number };
+
+/** Half-extent of a two-point `path`, or a default sweep when only `speed` is authored. */
+function pathAmplitude(obj: LevelObject, fallback: number): { ax: number; ay: number } {
+  const a = obj.path?.[0];
+  const b = obj.path?.[1];
+  if (a && b) return { ax: Math.abs(b.x - a.x) / 2, ay: Math.abs(b.y - a.y) / 2 };
+  return { ax: fallback, ay: 0 };
 }
 
-export function paramsFromObject(obj: LevelObject): {
-  param0: number;
-  param1: number;
-  param2: number;
-  param3: number;
-} {
+/**
+ * Authored fields → the four numeric hazard params. Each type owns its own slots; the meaning
+ * is documented on the module that consumes them.
+ */
+export function paramsFromObject(obj: LevelObject): HazardParams {
+  const w = obj.w ?? 2;
+  const h = obj.h ?? 1;
   switch (obj.type) {
     case 'trigger.drop':
-      return {
-        param0: obj.atTick ?? 180,
-        param1: weaponIndex(obj.weapon ?? 'pistol'),
-        param2: 0,
-        param3: 0,
-      };
+      return { param0: obj.atTick ?? 180, param1: weaponIndex(obj.weapon ?? 'pistol'), param2: 0, param3: 0 };
+    case 'spikes':
+      return { param0: w, param1: 0, param2: 0, param3: 0 };
     case 'lava':
-      return { param0: obj.rate ?? 0, param1: obj.w ?? 2, param2: obj.h ?? 1, param3: 0 };
+      // rise rate (m/s), half-width reach
+      return { param0: obj.rate ?? 0, param1: w / 2, param2: 0, param3: 0 };
     case 'laser':
-      return {
-        param0: obj.onTicks ?? 40,
-        param1: obj.offTicks ?? 50,
-        param2: obj.warningTicks ?? 12,
-        // Omitted reach defaults to 14 m; live/create 0 stays 0 (not hardcoded 14).
-        param3: obj.reach ?? 14,
-      };
-    case 'ice':
-      return { param0: obj.w ?? 2, param1: obj.h ?? 1, param2: 0, param3: 0 };
-    case 'conveyor':
-      return { param0: obj.w ?? 2, param1: obj.speed ?? 4, param2: obj.h ?? 1, param3: 0 };
-    case 'bounce':
-      return { param0: obj.w ?? 2, param1: obj.speed ?? 16, param2: obj.h ?? 1, param3: 0 };
-    case 'saw':
-      // param2/param3 remember the spawn so a speed wobble stays centered (not a random walk).
-      return { param0: obj.omega ?? 6, param1: obj.speed ?? 0, param2: obj.x, param3: obj.y };
-    case 'spikeball': {
-      const style = obj.style === 'roll' ? 1 : obj.style === 'drop' ? 2 : 0;
-      // Swing hang is an anonymous static body; persist its world point for late-join.
-      return {
-        param0: obj.r ?? 0.4,
-        param1: style === 0 ? obj.x : 0,
-        param2: style,
-        param3: style === 0 ? obj.y + 2.4 : 0,
-      };
+      // unarmed ticks, armed ticks, phase offset, beam reach
+      return { param0: obj.offTicks ?? 90, param1: obj.onTicks ?? 40, param2: obj.delay ?? 0, param3: obj.w ?? 14 };
+    case 'platform.moving': {
+      // sweep half-extents, linear speed, running phase
+      const amp = pathAmplitude(obj, 3.5);
+      return { param0: amp.ax, param1: amp.ay, param2: obj.speed ?? 3, param3: 0 };
+    }
+    case 'saw': {
+      // spin (rad/s), sweep half-extent, linear speed, running phase
+      const amp = pathAmplitude(obj, 0);
+      return { param0: obj.omega ?? 7, param1: amp.ax, param2: obj.speed ?? 2.5, param3: 0 };
     }
     case 'crusher':
-      return {
-        param0: obj.period ?? 60,
-        param1: obj.speed ?? 4,
-        param2: (obj.w ?? 1.5) / 2,
-        param3: (obj.h ?? 6) / 2,
-      };
-    case 'platform.disappearing':
-      return { param0: obj.period ?? 140, param1: obj.delay ?? 0, param2: obj.w ?? 3, param3: obj.h ?? 0.5 };
-    case 'platform.collapsing':
-      return { param0: obj.w ?? 3, param1: 0, param2: obj.delay ?? 20, param3: obj.h ?? 1 };
+      // cycle period (ticks), drop distance (m), phase offset
+      return { param0: obj.period ?? 150, param1: obj.speed ?? 3, param2: obj.delay ?? 0, param3: 0 };
     case 'platform.rotating':
-      return { param0: obj.omega ?? 1, param1: obj.w ?? 4, param2: obj.h ?? 0.6, param3: 0 };
-    case 'platform.moving':
-      return {
-        param0: obj.speed ?? 3,
-        param1: obj.w ?? 4,
-        param2: obj.mode === 'loop' ? 0 : 1,
-        param3: obj.h ?? 0.6,
-      };
-    case 'platform.momentum':
-      return { param0: obj.w ?? 4, param1: obj.h ?? 0.6, param2: obj.x, param3: obj.y };
-    case 'spikes':
-      return { param0: obj.w ?? 2, param1: 0, param2: 0, param3: 0 };
-    case 'crate':
-    case 'barrel.explosive':
-      return { param0: obj.w ?? 2, param1: obj.h ?? 1, param2: 0, param3: 0 };
+      return { param0: obj.omega ?? 1, param1: 0, param2: 0, param3: 0 };
+    case 'platform.disappearing':
+      // period, phase offset
+      return { param0: obj.period ?? 180, param1: obj.delay ?? 0, param2: 0, param3: 0 };
+    case 'platform.collapsing':
+      // stand half-width, stood counter, ticks before it lets go
+      return { param0: w / 2 + 0.3, param1: 0, param2: obj.delay ?? 30, param3: 0 };
+    case 'conveyor':
+      // half-width, belt speed (sign = direction)
+      return { param0: w / 2, param1: obj.speed ?? 4, param2: 0, param3: 0 };
+    case 'bounce':
+      // half-width, launch speed
+      return { param0: w / 2, param1: obj.speed ?? 18, param2: 0, param3: 0 };
     default:
       return {
-        param0: obj.speed ?? obj.period ?? obj.w ?? 0,
-        param1: obj.path?.length ?? obj.rate ?? obj.offTicks ?? obj.h ?? 0,
-        param2: obj.mode === 'pingpong' ? 1 : (obj.delay ?? obj.warningTicks ?? 0),
+        param0: obj.speed ?? obj.period ?? w,
+        param1: obj.rate ?? obj.offTicks ?? h,
+        param2: obj.delay ?? obj.warningTicks ?? 0,
         param3: obj.onTicks ?? obj.omega ?? 0,
       };
   }
@@ -136,22 +105,11 @@ export function createStaticBox(
   entity.add(Static(), Solid());
   const w = (obj.w ?? 2) / 2;
   const h = (obj.h ?? 1) / 2;
-  const body = createBoxBody(
-    ctx.physics,
-    entity,
-    opts.sensor ? 'sensor' : 'solid',
-    obj.x,
-    obj.y,
-    w,
-    h,
-    'static',
-    {
-      friction: opts.friction ?? 0.6,
-      restitution: opts.restitution ?? 0,
-      sensor: opts.sensor,
-      angle: obj.angle ?? 0,
-    },
-  );
+  const body = createBoxBody(ctx.physics, entity, opts.sensor ? 'sensor' : 'solid', obj.x, obj.y, w, h, 'static', {
+    friction: opts.friction ?? 0.6,
+    restitution: opts.restitution ?? 0,
+    sensor: opts.sensor,
+  });
   registerBody(world, entity, body);
   return entity;
 }
@@ -170,11 +128,9 @@ export function createDynamicBox(
     density: opts.density ?? 0.5,
     friction: opts.friction ?? 0.5,
     fixedRotation: false,
-    angle: obj.angle ?? 0,
   });
   registerBody(world, entity, body);
-  if (opts.destructible != null)
-    entity.add(Destructible({ hp: opts.destructible, maxHp: opts.destructible }));
+  if (opts.destructible != null) entity.add(Destructible({ hp: opts.destructible, maxHp: opts.destructible }));
   return entity;
 }
 
@@ -182,13 +138,7 @@ export function createKinematicBox(
   world: World,
   obj: LevelObject,
   kind: number,
-  opts: {
-    dynamic?: boolean;
-    density?: number;
-    friction?: number;
-    sensor?: boolean;
-    tag?: boolean;
-  } = {},
+  opts: { dynamic?: boolean; density?: number; friction?: number; sensor?: boolean; tag?: boolean } = {},
 ): Entity {
   const ctx = getContext(world);
   const entity = spawnHazardEntity(world, obj, kind);
@@ -203,12 +153,7 @@ export function createKinematicBox(
     w,
     h,
     opts.dynamic ? 'dynamic' : 'kinematic',
-    {
-      friction: opts.friction ?? 0.8,
-      density: opts.density ?? 0,
-      sensor: opts.sensor,
-      angle: obj.angle ?? 0,
-    },
+    { friction: opts.friction ?? 0.8, density: opts.density ?? 0, sensor: opts.sensor },
   );
   registerBody(world, entity, body);
   if (opts.tag !== false) entity.add(Kinematic());
@@ -218,86 +163,31 @@ export function createKinematicBox(
 export function createKinematicCircle(world: World, obj: LevelObject, kind: number): Entity {
   const ctx = getContext(world);
   const entity = spawnHazardEntity(world, obj, kind);
-  const body = createCircleBody(
-    ctx.physics,
-    entity,
-    'sensor',
-    obj.x,
-    obj.y,
-    obj.r ?? 0.45,
-    'kinematic',
-    {
-      sensor: true,
-    },
-  );
+  const body = createCircleBody(ctx.physics, entity, 'sensor', obj.x, obj.y, obj.r ?? 0.45, 'kinematic', {
+    sensor: true,
+  });
   registerBody(world, entity, body);
   entity.add(Kinematic());
   return entity;
 }
 
-/** PLAN 4.10: kinematic waypoint follow (moving platforms, optional saw path). */
-export function stepHazardPath(world: World, entity: Entity, dt: number): void {
-  const path = entity.get(HazardPath);
-  const body = getContext(world).bodies.get(entity);
-  if (!path || !body || path.points.length < 2) return;
-  const n = path.points.length;
-  const i = ((path.index % n) + n) % n;
-  const next = path.mode === 0 ? (i + 1) % n : i + path.dir;
-  const clamped = path.mode === 0 ? next : Math.max(0, Math.min(n - 1, next));
-  const a = path.points[i]!;
-  const b = path.points[clamped]!;
-  const dx = b.x - a.x;
-  const dy = b.y - a.y;
-  const dist = Math.hypot(dx, dy) || 1;
-  path.accum += path.speed * dt;
-  if (path.accum >= dist) {
-    path.accum = 0;
-    if (path.mode === 0) {
-      path.index = (i + 1) % n;
-    } else {
-      path.index = clamped;
-      if (clamped === 0 || clamped === n - 1) path.dir *= -1;
-    }
-    body.setTransform(new Vec2(b.x, b.y), body.getAngle());
-    body.setLinearVelocity(new Vec2(0, 0));
-    return;
-  }
+/** Drive a kinematic body toward `target` over one tick (exact arrival, so riders get the real velocity). */
+export function steerTo(world: World, entity: Entity, tx: number, ty: number): void {
+  const ctx = getContext(world);
+  const body = ctx.bodies.get(entity);
+  if (!body) return;
+  const dt = 1 / ctx.tuning.tickRate;
   const p = body.getPosition();
-  const tx = a.x + (dx / dist) * path.accum;
-  const ty = a.y + (dy / dist) * path.accum;
   body.setLinearVelocity(new Vec2((tx - p.x) / dt, (ty - p.y) / dt));
 }
 
-export function kill(world: World, player: Entity, x: number, y: number): void {
-  if (getContext(world).holdHazards) return;
-  takeDamage(world, player, 9999, 'body', -1, x, y, true);
+export function anchorOf(entity: Entity, fallback: { x: number; y: number }): { x: number; y: number } {
+  if (!entity.has(Anchor)) entity.add(Anchor({ x: fallback.x, y: fallback.y }));
+  return entity.get(Anchor) ?? fallback;
 }
 
-/**
- * PLAN M4: closest point on a last→now segment, then a player-sized AABB.
- * Used by translating saws and fast spikeballs so 60 Hz cannot tunnel.
- */
-export function diskSweepsPlayer(
-  px: number,
-  py: number,
-  hx: number,
-  hy: number,
-  reach = 0.7,
-  prevX = hx,
-  prevY = hy,
-): boolean {
-  const dx = hx - prevX;
-  const dy = hy - prevY;
-  const len2 = dx * dx + dy * dy;
-  let t = 0;
-  if (len2 > 1e-8) {
-    t = Math.max(0, Math.min(1, ((px - prevX) * dx + (py - prevY) * dy) / len2));
-  }
-  const cx = prevX + dx * t;
-  const cy = prevY + dy * t;
-  const pr = 0.3;
-  const ph = 0.9;
-  return Math.abs(px - cx) < reach + pr && Math.abs(py - cy) < reach + ph;
+export function kill(world: World, player: Entity, x: number, y: number): void {
+  takeDamage(world, player, 9999, 'body', -1, x, y, true);
 }
 
 export function nearKill(
@@ -307,43 +197,25 @@ export function nearKill(
   ht: TransformView,
   reach = 0.7,
 ): void {
-  const prev = player.get(PrevTransform);
-  const lastX = prev?.x ?? pt.x;
-  const lastY = prev?.y ?? pt.y;
-  // Static hazard vs the player's last→now capsule (PLAN M4 60 Hz no-tunnel).
-  if (diskSweepsPlayer(ht.x, ht.y, pt.x, pt.y, reach, lastX, lastY)) {
-    kill(world, player, pt.x, pt.y);
-  }
+  const dx = Math.abs(pt.x - ht.x);
+  const dy = Math.abs(pt.y - ht.y);
+  if (dx < reach && dy < reach) kill(world, player, pt.x, pt.y);
 }
 
+/**
+ * Tag a rider. The controller does the actual carrying (it reads the ground body's velocity from
+ * the foot raycast), so this only records the relation for gameplay/rendering.
+ */
 export function carryRider(
-  world: World,
+  _world: World,
   player: Entity,
   hazard: Entity,
   pt: TransformView,
   ht: TransformView,
   ctrl: ControllerView,
-  dt: number,
+  _dt: number,
 ): void {
-  const ctx = getContext(world);
-  const pb = ctx.bodies.get(hazard);
-  const shape = pb ? readBodyShape(pb) : null;
-  const hz = hazard.get(Hazard);
-  // Body half-width wins (late-join BodyShape). Else authored param1 (full w).
-  // 0 means no carry reach — do not `|| 2.4`.
-  const halfW =
-    shape && shape.circle === 0
-      ? shape.hx
-      : hz && Number.isFinite(hz.param1)
-        ? authoredHalfWidth(hz.param1)
-        : 0;
   const dx = Math.abs(pt.x - ht.x);
-  if (!ctrl.grounded || dx >= halfW || pt.y <= ht.y || pt.y >= ht.y + 1.4) return;
+  if (!ctrl.grounded || dx >= 2.4 || pt.y <= ht.y || pt.y >= ht.y + 1.4) return;
   player.add(StandingOn(hazard));
-  const body = ctx.bodies.get(player);
-  if (pb && body) {
-    const pv = pb.getLinearVelocity();
-    const v = body.getLinearVelocity();
-    body.setLinearVelocity(new Vec2(v.x + pv.x * dt * 10, v.y + pv.y));
-  }
 }

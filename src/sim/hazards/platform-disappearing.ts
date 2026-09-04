@@ -9,20 +9,10 @@ export const disappearingPlatform: HazardModule = {
   create: (world, obj) => createKinematicBox(world, obj, HazardKind.Disappearing),
   step(world, entity, hz) {
     const ctx = getContext(world);
-    // param0 is authored period. 0 means frozen solid — do not `|| 180`.
-    const period = hz.param0;
-    if (period <= 0) {
-      hz.armed = 1;
-      const frozen = ctx.bodies.get(entity);
-      if (frozen) frozen.setActive(true);
-      return;
-    }
-    const phase = (ctx.tick + hz.param1) % period;
-    const solidFor = period * 0.55;
-    const warn = 18;
-    const solid = phase < solidFor;
-    const warning = solid && phase >= solidFor - warn;
-    hz.armed = !solid ? 0 : warning ? 2 : 1;
+    const period = hz.param0 || 180;
+    const phase = (ctx.tick + (hz.param1 || 0)) % period;
+    const solid = phase < period * 0.55;
+    hz.armed = solid ? 1 : 0;
     const body = ctx.bodies.get(entity);
     if (body) body.setActive(solid);
   },

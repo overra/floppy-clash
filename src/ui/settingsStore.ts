@@ -13,8 +13,6 @@ export type UserSettings = {
   sfx: number;
   music: number;
   lighting: boolean;
-  /** PLAN 4.6 opt-in motor arms on living players. */
-  physicsArms: boolean;
   includeUserLevels: boolean;
 };
 
@@ -35,7 +33,6 @@ export const DEFAULT_USER_SETTINGS: UserSettings = {
   sfx: 0.8,
   music: 0.25,
   lighting: false,
-  physicsArms: false,
   includeUserLevels: true,
 };
 

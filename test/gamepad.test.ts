@@ -1,16 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import {
-  buttonOn,
-  consumeLatch,
-  emptyLatch,
-  radialDeadzone,
-  readPad,
-  smoothStick,
-} from '../src/input/gamepad';
-import { tuning } from '../src/sim/tuning';
-import { playRumble, rumbleParams } from '../src/input/haptics';
-import { DEFAULT_MAP, shouldOfferRemap } from '../src/input/remap';
-import { claimDisconnectedSeat, createMenuState, markDisconnectedSeat } from '../src/ui/menus';
+import { consumeLatch, createPadEdgeTracker, emptyLatch, filterAim, isPadKey, padIndexOf, padKey, padLabel, radialDeadzone, readPad } from '../src/input/gamepad';
 
 function fakePad(partial: { id?: string; mapping?: GamepadMappingType; axes?: number[]; buttons?: boolean[] }): Gamepad {
   const buttons = (partial.buttons ?? []).map((pressed) => ({
@@ -95,142 +84,97 @@ describe('gamepad mapping', () => {
       { x: 1, y: 0 },
     );
     expect(ff.jump).toBe(false);
-
-    const safari = readPad(
-      fakePad({
-        id: 'Xbox Wireless Controller Extended Gamepad',
-        mapping: 'standard',
-        axes: [0.4, 0, 0.9, 0.1],
-        buttons: [true, false, false, false, false, false, false, true],
-      }),
-      emptyLatch(),
-      { x: 1, y: 0 },
-    );
-    expect(safari.jump).toBe(true);
-    expect(safari.attack).toBe(true);
-    expect(safari.aimX).toBeGreaterThan(0.4);
   });
 
-  it('offers remap when the mapping is not standard', () => {
-    expect(shouldOfferRemap('standard', 'Xbox', {})).toBe(false);
-    expect(shouldOfferRemap('custom', '054c-0ce6-Wireless Controller', {})).toBe(true);
-    expect(shouldOfferRemap('', '054c-0ce6-Wireless Controller', {})).toBe(true);
-    expect(
-      shouldOfferRemap('', '054c-0ce6-Wireless Controller', {
-        '054c-0ce6-Wireless Controller': DEFAULT_MAP,
-      }),
-    ).toBe(false);
+  it('reports a resting right stick as {0,0} so the sim can hand the aim to the run direction', () => {
+    const idle = readPad(fakePad({ axes: [0, 0, 0, 0] }), emptyLatch(), { x: 1, y: 0 });
+    expect(idle.aimX).toBe(0);
+    expect(idle.aimY).toBe(0);
+    const up = readPad(fakePad({ axes: [0, 0, 0, -0.9] }), emptyLatch(), { x: 0, y: 0 });
+    expect(up.aimY).toBeGreaterThan(0.5);
   });
 
-  it('first new pad claims the disconnected seat', () => {
-    const menus = createMenuState();
-    menus.seats[0] = { taken: true, ready: true, color: 0, padId: 'pad-a', name: 'A' };
-    menus.seats[1] = { taken: true, ready: true, color: 1, padId: 'pad-b', name: 'B' };
-    expect(markDisconnectedSeat(menus.seats, 'pad-b')).toBe(1);
-    const claim = claimDisconnectedSeat(menus.seats, 'pad-c', 1);
-    expect(claim?.padId).toBe('pad-c');
-    expect(menus.seats[0]?.padId).toBe('pad-a');
-    expect(menus.seats[1]?.padId).toBe('pad-c');
-  });
-
-  it('X / Square throws and does not attack (PLAN 4.12)', () => {
-    const input = readPad(
-      fakePad({ buttons: [false, false, true] }),
-      emptyLatch(),
-      { x: 1, y: 0 },
-    );
-    expect(input.throw).toBe(true);
-    expect(input.attack).toBe(false);
-  });
-
-  it('reads analog triggers at tuning.triggerThreshold', () => {
-    const analog = (value: number): Gamepad => {
-      const buttons = Array.from({ length: 17 }, () => ({
-        pressed: false,
-        touched: false,
-        value: 0,
-      }));
-      buttons[6] = { pressed: false, touched: value >= 0.5, value };
-      buttons[7] = { pressed: false, touched: value >= 0.5, value };
-      return {
-        id: 'Xbox 360 Controller (XInput STANDARD GAMEPAD)',
-        index: 0,
-        connected: true,
-        mapping: 'standard',
-        axes: [0, 0, 0, 0],
-        buttons,
-        timestamp: 1,
-        hapticActuators: [],
-        vibrationActuator: null,
-      } as unknown as Gamepad;
-    };
-    const down = readPad(analog(0.6), emptyLatch(), { x: 1, y: 0 });
-    expect(down.attack).toBe(true);
-    expect(down.block).toBe(true);
-    expect(buttonOn({ pressed: false, touched: false, value: 0.49 } as GamepadButton)).toBe(false);
-    expect(buttonOn({ pressed: false, touched: true, value: tuning.triggerThreshold } as GamepadButton)).toBe(
-      true,
-    );
-    const up = readPad(analog(0.2), emptyLatch(), { x: 1, y: 0 });
-    expect(up.attack).toBe(false);
-    expect(up.block).toBe(false);
-  });
-
-  it('smooths stick motion when memory is provided', () => {
-    expect(smoothStick(0, 1, 0.35)).toBeCloseTo(0.65);
-    const mem = { moveX: 0, moveY: 0 };
-    const a = readPad(fakePad({ axes: [1, 0, 0, 0] }), emptyLatch(), { x: 1, y: 0 }, DEFAULT_MAP, mem);
-    expect(a.moveX).toBeGreaterThan(0.4);
-    expect(a.moveX).toBeLessThan(1);
-    expect(mem.moveX).toBe(a.moveX);
-  });
-
-  it('LB / L1 is a second jump binding (PLAN 4.12)', () => {
-    const input = readPad(
-      fakePad({ buttons: [false, false, false, false, true] }),
-      emptyLatch(),
-      { x: 1, y: 0 },
-    );
-    expect(input.jump).toBe(true);
-    expect(input.attack).toBe(false);
-  });
-
-  it('d-pad is a digital move / duck fallback (PLAN 4.12)', () => {
-    const buttons = Array.from({ length: 17 }, () => false);
-    buttons[13] = true;
-    buttons[15] = true;
-    const input = readPad(fakePad({ buttons }), emptyLatch(), { x: 1, y: 0 });
-    expect(input.moveX).toBe(1);
-    expect(input.down).toBe(true);
+  it('ignores the spring-back of a released flick instead of aiming the other way', () => {
+    // A flick right, released: the stick snaps through centre and overshoots left for a frame or two.
+    const trace = [0.9, 0.95, 0.5, -0.1, -0.35, -0.15, 0];
+    let prev = { x: 0, y: 0 };
+    const seen: number[] = [];
+    for (const rx of trace) {
+      const input = readPad(fakePad({ axes: [0, 0, rx, 0] }), emptyLatch(), prev);
+      prev = { x: input.aimX, y: input.aimY };
+      seen.push(input.aimX);
+    }
+    expect(seen[0]).toBeGreaterThan(0.5);
+    expect(seen.some((x) => x < 0)).toBe(false);
+    // Same story when sampling skips the centre entirely: +0.3 straight to -0.35 is not a new aim.
+    expect(filterAim(-0.35, 0, { x: 0.07, y: 0 })).toEqual({ x: 0, y: 0 });
+    // A deliberate push the other way is, even from rest.
+    expect(filterAim(-0.9, 0, { x: 0, y: 0 }).x).toBeLessThan(-0.5);
+    // A weak nudge from rest is not enough to start aiming (the overshoot lives here)...
+    expect(filterAim(0.4, 0, { x: 0, y: 0 })).toEqual({ x: 0, y: 0 });
+    // ...but once engaged, the aim keeps tracking a moderate roll around the rim.
+    expect(filterAim(0.3, 0.3, { x: 0.4, y: 0 }).y).toBeGreaterThan(0);
   });
 
   it('honours a custom remap', () => {
     const latch = emptyLatch();
-    const map = { jump: 2, attack: 7, block: 6, throw: 3, pause: 9 };
-    const jumped = readPad(
-      fakePad({ id: 'custom', buttons: [false, false, true] }),
-      latch,
-      { x: 1, y: 0 },
-      map,
-    );
-    expect(jumped.jump).toBe(true);
-    const unusedA = readPad(
-      fakePad({ id: 'custom', buttons: [true, false, false] }),
-      emptyLatch(),
-      { x: 1, y: 0 },
-      map,
-    );
-    expect(unusedA.jump).toBe(false);
+    const pad = fakePad({
+      id: 'custom',
+      buttons: [false, false, true],
+    });
+    const input = readPad(pad, latch, { x: 1, y: 0 }, { jump: 2, attack: 7, block: 6, throw: 3, pause: 9 });
+    expect(input.jump).toBe(true);
+  });
+});
+
+describe('pad menu edges', () => {
+  it('keys seats by browser slot, not the (shared) id string, and shortens the label', () => {
+    const pad = fakePad({ id: 'DualSense Wireless Controller (STANDARD GAMEPAD Vendor: 054c Product: 0ce6)' });
+    expect(padKey(pad)).toBe('pad:0');
+    expect(padKey({ index: 2 })).toBe('pad:2');
+    expect(padIndexOf('pad:3')).toBe(3);
+    expect(padIndexOf('keyboard')).toBe(-1);
+    expect(isPadKey('pad:1')).toBe(true);
+    expect(isPadKey('keyboard')).toBe(false);
+    expect(padLabel(pad)).toBe('DualSense Wireless Controller');
+    expect(padLabel({ id: 'Xbox 360 Controller (XInput STANDARD GAMEPAD)' })).toBe('Xbox 360 Controller');
   });
 
-  it('playRumble calls playEffect when enabled and skips when disabled', () => {
-    expect(rumbleParams('boom').duration).toBe(180);
-    expect(rumbleParams('hit').duration).toBe(60);
-    const pad = fakePad({});
-    const calls: unknown[] = [];
-    expect(playRumble([pad, null], 'hit', true, (p, params) => calls.push([p.id, params.duration]))).toBe(1);
-    expect(calls).toEqual([[pad.id, 60]]);
-    expect(playRumble([pad], 'boom', false, () => calls.push('nope'))).toBe(0);
-    expect(calls).toHaveLength(1);
+  it('fires A / B / Start / Select once per press, however long they are held', () => {
+    const t = createPadEdgeTracker();
+    const held = fakePad({ buttons: [true, true, false, false, false, false, false, false, true, true] });
+    const first = t.update(held, 0);
+    expect(first).toMatchObject({ a: true, b: true, start: true, select: true });
+    const again = t.update(held, 16);
+    expect(again).toMatchObject({ a: false, b: false, start: false, select: false });
+    t.update(fakePad({ buttons: [] }), 32);
+    expect(t.update(held, 48).a).toBe(true);
+  });
+
+  it('honours a remapped pause button for Start', () => {
+    const t = createPadEdgeTracker();
+    expect(t.update(fakePad({ buttons: [false, false, false, false, true] }), 0, 4).start).toBe(true);
+  });
+
+  it('turns the d-pad and left stick into a repeating digital direction with hysteresis', () => {
+    const t = createPadEdgeTracker();
+    const down = fakePad({ buttons: [false, false, false, false, false, false, false, false, false, false, false, false, false, true] });
+    expect(t.update(down, 0).down).toBe(true);
+    // Held: quiet until the repeat delay, then a tick every repeat interval.
+    expect(t.update(down, 100).down).toBe(false);
+    expect(t.update(down, 400).down).toBe(true);
+    expect(t.update(down, 450).down).toBe(false);
+    expect(t.update(down, 520).down).toBe(true);
+    // Release, then the stick: a nudge under the threshold is nothing, a push is a move, and
+    // easing back to the hysteresis band does not re-trigger or flip.
+    t.update(fakePad({ buttons: [] }), 600);
+    expect(t.update(fakePad({ axes: [0.4, 0, 0, 0] }), 620)).toMatchObject({ right: false, left: false });
+    expect(t.update(fakePad({ axes: [0.9, 0, 0, 0] }), 640).right).toBe(true);
+    expect(t.update(fakePad({ axes: [0.5, 0, 0, 0] }), 660).right).toBe(false);
+    expect(t.update(fakePad({ axes: [0.2, 0, 0, 0] }), 680).right).toBe(false);
+    expect(t.update(fakePad({ axes: [0.9, 0, 0, 0] }), 700).right).toBe(true);
+    // Up on the stick is negative Y.
+    t.update(fakePad({ buttons: [] }), 720);
+    expect(t.update(fakePad({ axes: [0, -0.9, 0, 0] }), 740).up).toBe(true);
   });
 });

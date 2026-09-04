@@ -1,21 +1,9 @@
 import { builtInMatchLevels } from '../levels/catalog';
-import type { LevelDef } from '../sim/level/schema';
 import { DEFAULT_MAP, type PadMap } from '../input/remap';
-import { HP_PRESETS } from '../input/seats';
 import { WEAPON_DEFS, weaponDisplayName } from '../sim/weapons/defs';
-import { scoreboardMarkup } from './scoreboard';
 import { DEFAULT_USER_SETTINGS, type UserSettings } from './settingsStore';
 
-export type Screen =
-  | 'menu'
-  | 'join'
-  | 'settings'
-  | 'pause'
-  | 'scoreboard'
-  | 'lobby'
-  | 'editor'
-  | 'play'
-  | 'disconnect';
+export type Screen = 'menu' | 'join' | 'settings' | 'pause' | 'scoreboard' | 'lobby' | 'editor' | 'play' | 'disconnect';
 
 export type Seat = {
   taken: boolean;
@@ -24,8 +12,6 @@ export type Seat = {
   padId: string | 'keyboard' | 'bot';
   name: string;
 };
-
-export type PadSeatMemory = Record<string, { slot: number; color: number }>;
 
 export type MenuState = {
   screen: Screen;
@@ -37,18 +23,6 @@ export type MenuState = {
   roomCode: string;
   chat: string[];
   draftChat: string;
-  netRole: '' | 'host' | 'client';
-  netState: 'idle' | 'connecting' | 'up' | 'error';
-  lastSnapTick: number;
-  /** Seat index opened by a mid-round disconnect; first new pad may claim it. */
-  claimSeat: number;
-  /** Pad id that triggered the automatic remap offer (PLAN 4.12). */
-  remapPadId: string;
-  /** Screen to restore after Settings opened by remap / Back. */
-  returnScreen: Screen | '';
-  wins?: number[];
-  /** PLAN 4.12: pad `id` → slot/color for the session (survives join resets). */
-  padMemory: PadSeatMemory;
 };
 
 export type MenuActions = {
@@ -58,13 +32,7 @@ export type MenuActions = {
 export function createMenuState(): MenuState {
   return {
     screen: 'menu',
-    seats: Array.from({ length: 4 }, () => ({
-      taken: false,
-      ready: false,
-      color: 0,
-      padId: '',
-      name: '',
-    })),
+    seats: Array.from({ length: 4 }, () => ({ taken: false, ready: false, color: 0, padId: '', name: '' })),
     notice: '',
     firstTo: 0,
     maxHp: 100,
@@ -72,193 +40,104 @@ export function createMenuState(): MenuState {
     roomCode: '',
     chat: [],
     draftChat: '',
-    netRole: '',
-    netState: 'idle',
-    lastSnapTick: 0,
-    claimSeat: -1,
-    remapPadId: '',
-    returnScreen: '',
-    padMemory: {},
   };
 }
 
-export function rememberPad(memory: PadSeatMemory, padId: string, slot: number, color: number): void {
-  if (!padId || padId === 'bot') return;
-  memory[padId] = { slot, color };
-}
-
-export function rememberTakenSeats(seats: Seat[], memory: PadSeatMemory): void {
-  seats.forEach((s, i) => {
-    if (s.taken) rememberPad(memory, s.padId, i, s.color);
-  });
-}
-
-/** Clear join occupancy; `padMemory` is kept so a later A-press restores color/slot. */
-export function clearJoinSeats(seats: Seat[]): void {
-  for (const s of seats) {
-    s.taken = false;
-    s.ready = false;
-    s.padId = '';
-    s.name = '';
-    s.color = 0;
-  }
-}
-
-/** PLAN 4.12: offer remap at connect time, not mid-round (play/pause/disconnect). */
-export function shouldOfferRemapOnScreen(screen: Screen): boolean {
-  return screen === 'menu' || screen === 'join' || screen === 'lobby' || screen === 'settings';
-}
-
-/** Save / Back after a remap offer must restore join/lobby, not always the main menu. */
-export function screenAfterLeavingSettings(returnScreen: Screen | ''): Screen {
-  return returnScreen && returnScreen !== 'settings' ? returnScreen : 'menu';
-}
-
-/** Read lobby/settings HP + first-to so Start match is not stale vs the form. */
-export function readMatchSettingsFromCard(root: ParentNode, menus: MenuState): void {
-  const hp = root.querySelector('#hp') as HTMLInputElement | HTMLSelectElement | null;
-  const ft = root.querySelector('#ft') as HTMLInputElement | null;
-  if (hp) menus.maxHp = Number(hp.value) || menus.maxHp;
-  if (ft) menus.firstTo = Number(ft.value) || 0;
-}
-
-export function syncMatchSettingsFromDom(
-  root: ParentNode,
-  menus: MenuState,
-  settings: { maxHp: number; firstTo: number },
-): void {
-  readMatchSettingsFromCard(root, menus);
-  settings.maxHp = menus.maxHp;
-  settings.firstTo = menus.firstTo;
-}
-
-/** PLAN 4.12: remember which joined seat lost its pad. */
-export function markDisconnectedSeat(seats: Seat[], padId: string | undefined): number {
-  if (padId) {
-    const idx = seats.findIndex((s) => s.taken && s.padId === padId);
-    if (idx >= 0) return idx;
-  }
-  return seats.findIndex((s) => s.taken && s.padId !== 'keyboard' && s.padId !== 'bot');
-}
-
-/** First newly connected pad claims the disconnected seat (same id already handled by caller). */
-export function claimDisconnectedSeat(
-  seats: Seat[],
-  newPadId: string,
-  claimIndex: number,
-  memory: PadSeatMemory = {},
-): Seat | undefined {
-  const claim =
-    (claimIndex >= 0 ? seats[claimIndex] : undefined) ??
-    seats.find((s) => s.taken && s.padId !== 'keyboard' && s.padId !== 'bot') ??
-    seats.find((s) => s.taken);
-  if (claim) {
-    claim.padId = newPadId;
-    rememberPad(memory, newPadId, seats.indexOf(claim), claim.color);
-  }
-  return claim;
-}
-
 const COLORS = ['Yellow', 'Blue', 'Red', 'Green'];
+export const MAX_SEATS = 4;
 
-export function cycleSeatColor(seat: Seat, dir: number, memory?: PadSeatMemory): void {
-  seat.color = (seat.color + dir + 4) % 4;
-  if (memory && seat.padId) {
-    rememberPad(memory, seat.padId, memory[seat.padId]?.slot ?? 0, seat.color);
+/** Step to the next palette entry nobody else at the table has claimed. */
+export function cycleSeatColor(seat: Seat, dir: number, seats: Seat[] = []): void {
+  const used = new Set(seats.filter((s) => s !== seat && s.taken).map((s) => s.color));
+  let next = seat.color;
+  for (let i = 0; i < 4; i++) {
+    next = (next + dir + 4) % 4;
+    if (!used.has(next)) break;
   }
+  seat.color = next;
 }
 
-export type TakeSeatOpts = {
-  /**
-   * Solo vs Bots pre-fills keyboard on seat 0. A real pad must claim that
-   * human seat (PLAN M9) instead of becoming a leftover P2 that `playerCount: 1`
-   * would then treat as a bot.
-   */
-  replaceKeyboard?: boolean;
-};
+function freeColor(seats: Seat[]): number {
+  const used = new Set(seats.filter((s) => s.taken).map((s) => s.color));
+  for (let c = 0; c < 4; c++) if (!used.has(c)) return c;
+  return 0;
+}
 
 /** First press takes the next free seat; the same pad/keyboard pressing again readies (PLAN 4.12). */
-export function takeOrReadySeat(
-  seats: Seat[],
-  padId: string,
-  memory: PadSeatMemory = {},
-  opts: TakeSeatOpts = {},
-): Seat | undefined {
+export function takeOrReadySeat(seats: Seat[], padId: string, name = ''): Seat | undefined {
   const existing = seats.find((s) => s.taken && s.padId === padId);
   if (existing) {
     existing.ready = true;
-    rememberPad(memory, padId, seats.indexOf(existing), existing.color);
     return existing;
   }
-  return takeSeat(seats, padId, memory, opts);
-}
-
-function occupySeat(seat: Seat, seats: Seat[], padId: string, memory: PadSeatMemory, ready: boolean): Seat {
-  const mem = memory[padId];
-  seat.taken = true;
-  seat.padId = padId;
-  seat.ready = ready;
-  seat.color = mem?.color ?? seats.indexOf(seat);
-  seat.name = padId === 'keyboard' ? 'You' : '';
-  rememberPad(memory, padId, seats.indexOf(seat), seat.color);
-  return seat;
+  const empty = seats.find((s) => !s.taken);
+  if (!empty) return undefined;
+  empty.color = freeColor(seats);
+  empty.taken = true;
+  empty.padId = padId;
+  empty.ready = false;
+  empty.name = name || (padId === 'keyboard' ? 'Keyboard' : '');
+  return empty;
 }
 
 /** Connection / first sighting of a pad: occupy a seat, do not ready yet. */
-export function takeSeat(
-  seats: Seat[],
-  padId: string,
-  memory: PadSeatMemory = {},
-  opts: TakeSeatOpts = {},
-): Seat | undefined {
+export function takeSeat(seats: Seat[], padId: string, name = ''): Seat | undefined {
   const existing = seats.find((s) => s.padId === padId);
   if (existing) {
     existing.taken = true;
-    const mem = memory[padId];
-    if (mem) existing.color = mem.color;
-    rememberPad(memory, padId, seats.indexOf(existing), existing.color);
+    if (name) existing.name = name;
     return existing;
   }
-  if (opts.replaceKeyboard && padId !== 'keyboard') {
-    const kb = seats.find((s) => s.taken && s.padId === 'keyboard');
-    // Inherit ready: Solo vs Bots pre-readies the human seat (PLAN M9 one-pad start).
-    if (kb) return occupySeat(kb, seats, padId, memory, kb.ready);
-    // Solo is one human; extra pads must not become leftover P2s.
-    return undefined;
-  }
-  const mem = memory[padId];
-  const preferred = mem && seats[mem.slot] && !seats[mem.slot]!.taken ? seats[mem.slot] : undefined;
-  const empty = preferred ?? seats.find((s) => !s.taken);
+  const empty = seats.find((s) => !s.taken);
   if (!empty) return undefined;
-  return occupySeat(empty, seats, padId, memory, false);
+  empty.color = freeColor(seats);
+  empty.taken = true;
+  empty.padId = padId;
+  empty.ready = false;
+  empty.name = name;
+  return empty;
+}
+
+export function clearSeats(seats: Seat[]): void {
+  seats.forEach((s, i) => {
+    s.taken = false;
+    s.ready = false;
+    s.color = i;
+    s.padId = '';
+    s.name = '';
+  });
 }
 
 export function canStartMatch(seats: Seat[]): boolean {
   return seats.some((s) => s.taken && s.ready);
 }
 
-/** Already-connected pads (no fresh `gamepadconnected`) occupy join seats. */
-export function claimConnectedPadIds(
-  seats: Seat[],
-  padIds: string[],
-  memory: PadSeatMemory = {},
-  opts: TakeSeatOpts = {},
-): Seat[] {
-  const claimed: Seat[] = [];
-  for (const id of padIds) {
-    if (!id || id === 'keyboard' || id === 'bot') continue;
-    const seat = takeSeat(seats, id, memory, opts);
-    if (seat) claimed.push(seat);
-  }
-  return claimed;
+/** How many bots fit beside the humans at the table. */
+export function maxBots(seats: Seat[]): number {
+  return MAX_SEATS - seats.filter((s) => s.taken).length;
 }
 
-export function collectSettings(
-  card: HTMLElement,
-  menus: MenuState,
-  settings: UserSettings,
-  userLevels: LevelDef[] = [],
-): UserSettings {
+/**
+ * Palette index for every slot of a match: humans (taken seats, in order) keep what they picked,
+ * bots take whatever is left, so no two fighters share a color.
+ */
+export function assignColors(seats: Seat[], total: number): number[] {
+  const out: number[] = [];
+  const used = new Set<number>();
+  for (const s of seats.filter((s) => s.taken)) {
+    let c = s.color;
+    while (used.has(c)) c = (c + 1) % 4;
+    used.add(c);
+    out.push(c);
+  }
+  for (let c = 0; c < 4 && out.length < total; c++) {
+    if (!used.has(c)) out.push(c);
+  }
+  while (out.length < total) out.push(out.length % 4);
+  return out.slice(0, total);
+}
+
+export function collectSettings(card: HTMLElement, menus: MenuState, settings: UserSettings): UserSettings {
   const num = (id: string, fallback: number) => {
     const el = card.querySelector(`#${id}`) as HTMLInputElement | null;
     return el ? Number(el.value) : fallback;
@@ -276,7 +155,7 @@ export function collectSettings(
   menus.bots = num('bots', menus.bots);
   const weapons = WEAPON_DEFS.filter((d) => d.dropWeight > 0);
   const enabledW = weapons.filter((d) => chk(`w-${d.id}`, true)).map((d) => d.id);
-  const levels = [...builtInMatchLevels(), ...userLevels];
+  const levels = builtInMatchLevels();
   const enabledL = levels.filter((l) => chk(`l-${l.id}`, true)).map((l) => l.id);
   return {
     ...settings,
@@ -288,7 +167,6 @@ export function collectSettings(
     reduceShake: chk('rs', settings.reduceShake),
     reduceBlood: chk('rb', settings.reduceBlood),
     lighting: chk('lit', settings.lighting),
-    physicsArms: chk('arms', settings.physicsArms),
     includeUserLevels: chk('usr', settings.includeUserLevels),
     renderer: sel('ren', settings.renderer) as UserSettings['renderer'],
     rotation: sel('rot', settings.rotation) as UserSettings['rotation'],
@@ -323,82 +201,101 @@ export function renderMenus(
   actions: MenuActions,
   settings: UserSettings = DEFAULT_USER_SETTINGS,
   maps: Record<string, PadMap> = {},
-  stats?: {
-    matches: number;
-    wins: number;
-    kos: number;
-    achievements?: { firstBlood?: boolean; firstWin?: boolean; tenKos?: boolean };
-  },
-  userLevels: LevelDef[] = [],
+  stats?: { matches: number; wins: number; kos: number },
 ): void {
-  if (state.screen === 'editor') return;
   root.innerHTML = '';
   if (state.screen === 'play') return;
   const wrap = document.createElement('div');
-  wrap.style.cssText =
-    'position:absolute;inset:0;display:flex;align-items:center;justify-content:center;background:rgba(10,12,16,0.72);pointer-events:auto;';
+  wrap.className = `menu-wrap menu-${state.screen}`;
   const card = document.createElement('div');
-  card.style.cssText =
-    'width:min(760px,94vw);max-height:92vh;overflow:auto;background:#1b1e27;border-radius:16px;padding:28px;box-shadow:0 20px 60px rgba(0,0,0,0.4);';
+  card.className = 'menu-card';
   if (state.screen === 'menu') {
-    card.innerHTML = `${brandMarkup()}
-      <p style="color:#9aa3b2">Couch physics brawler. Press a button on a pad — or use the keyboard fallback.</p>
-      <p id="localstats" style="color:#9aa3b2;font-size:13px"></p>
-      <div style="display:flex;flex-wrap:wrap;gap:10px;margin-top:18px"></div>`;
-    const row = card.querySelector('div')!;
-    for (const [label, id] of [
-      ['Local Play', 'local'],
-      ['Solo vs Bots', 'bots'],
-      ['Online', 'online'],
-      ['Level Editor', 'editor'],
-      ['Settings', 'settings'],
+    card.classList.add('title');
+    card.innerHTML = `<h1 class="wordmark">Floppy <em>Clash</em></h1>
+      <div class="wordmark-bar" aria-hidden="true"><i style="--c:var(--p0)"></i><i style="--c:var(--p1)"></i><i style="--c:var(--p2)"></i><i style="--c:var(--p3)"></i></div>
+      <p class="tagline">Couch physics brawler. Press <kbd>A</kbd> on a pad to play — or use the keyboard.</p>
+      <div class="menu-actions"></div>
+      <p id="localstats" class="menu-stats"></p>
+      <p class="menu-keys"><kbd>A</kbd><kbd>D</kbd> move · <kbd>W</kbd>/<kbd>Space</kbd> jump · <kbd>S</kbd> duck · mouse aim · <kbd>LMB</kbd>/<kbd>C</kbd> attack · <kbd>RMB</kbd>/<kbd>V</kbd> block · <kbd>F</kbd> throw</p>
+      <p class="menu-keys"><kbd>Pad</kbd> left stick move · right stick aim · <kbd>A</kbd> jump · <kbd>RT</kbd>/<kbd>X</kbd> attack · <kbd>LT</kbd>/<kbd>B</kbd> block · <kbd>Y</kbd> throw · <kbd>Start</kbd> pause</p>`;
+    const row = card.querySelector('.menu-actions')!;
+    for (const [label, id, primary] of [
+      ['Solo vs Bots', 'bots', true],
+      ['Local Play', 'local', true],
+      ['Online', 'online', false],
+      ['Level Editor', 'editor', false],
+      ['Settings', 'settings', false],
     ] as const) {
-      row.append(btn(label, () => actions[id]?.()));
+      row.append(btn(label, () => actions[id]?.(), primary ? 'primary' : ''));
     }
     const statEl = card.querySelector('#localstats');
     if (statEl && stats) {
-      const a = stats.achievements;
-      const badges = [
-        a?.firstBlood && 'first blood',
-        a?.firstWin && 'first win',
-        a?.tenKos && '10 KOs',
-      ].filter(Boolean);
-      statEl.textContent = `Local stats — matches ${stats.matches} · wins ${stats.wins} · KOs ${stats.kos}${badges.length ? ` · ${badges.join(', ')}` : ''}`;
+      statEl.textContent = `Local stats — matches ${stats.matches} · wins ${stats.wins} · KOs ${stats.kos}`;
     }
   } else if (state.screen === 'join') {
-    card.innerHTML = `<h2>Join</h2><p>Press A / Space to join a seat. A / Space again readies. Left/Right change color. Start / Enter on a readied pad begins.</p>`;
+    const bots = Math.min(state.bots, maxBots(state.seats));
+    card.innerHTML = `<h2>Join</h2><p><kbd>A</kbd> / <kbd>Space</kbd> grabs a seat, again to ready up. <kbd>◀</kbd> <kbd>▶</kbd> picks a color, <kbd>▲</kbd> <kbd>▼</kbd> sets bots. <kbd>Start</kbd> / <kbd>Enter</kbd> begins${bots > 0 ? ` — ${bots} bot${bots === 1 ? '' : 's'} fill the empty seats` : ''}.</p>`;
+    const seats = document.createElement('div');
+    seats.className = 'seats';
+    // Humans sit in the seats they took, in order; bots fill the seats after them, so the card
+    // shows exactly who will stand where when the countdown starts.
+    const colors = assignColors(state.seats, MAX_SEATS);
+    let botsLeft = bots;
     state.seats.forEach((s, i) => {
-      const line = document.createElement('div');
-      line.style.cssText = `margin:8px 0;padding:10px;border-radius:8px;background:${s.taken ? '#2a3144' : '#151820'}`;
-      line.dataset.seat = String(i);
-      if (s.ready) line.dataset.ready = '1';
-      line.textContent = s.taken
-        ? `P${i + 1} ${COLORS[s.color]} ${s.ready ? 'READY' : 'joined — press A / Space to ready'} (${s.padId})`
-        : `P${i + 1} empty`;
-      card.append(line);
+      const bot = !s.taken && botsLeft > 0;
+      if (bot) botsLeft -= 1;
+      const seat = document.createElement('div');
+      seat.className = 'seat';
+      seat.style.setProperty('--c', s.taken ? `var(--p${s.color})` : bot ? `var(--p${colors[i] ?? i})` : '#5a6170');
+      seat.dataset.seat = String(i);
+      seat.dataset.taken = s.taken ? '1' : '0';
+      if (bot) seat.dataset.bot = '1';
+      if (s.ready) seat.dataset.ready = '1';
+      const face = document.createElement('div');
+      face.className = 'hud-face';
+      const name = document.createElement('div');
+      name.className = 'seat-name';
+      name.textContent = s.taken ? `P${i + 1} · ${COLORS[s.color]}` : bot ? `Bot ${i + 1}` : `P${i + 1}`;
+      const status = document.createElement('div');
+      status.className = 'seat-status';
+      status.textContent = s.taken ? (s.ready ? 'READY' : 'joined — press A / Space to ready') : bot ? 'CPU' : 'empty';
+      const pad = document.createElement('div');
+      pad.className = 'seat-pad';
+      pad.textContent = s.taken ? s.name || s.padId : '';
+      seat.append(face, name, status, pad);
+      seats.append(seat);
     });
-    card.append(btn('Start', () => actions.start?.()));
-    card.append(btn('Back', () => actions.back?.()));
+    card.append(seats);
+    const row = document.createElement('div');
+    row.className = 'menu-actions';
+    row.append(btn('Start', () => actions.start?.(), 'primary'));
+    const botsBtn = btn(`Bots: ${bots}`, () => actions.cycleBots?.());
+    botsBtn.id = 'cycle-bots';
+    row.append(botsBtn);
+    row.append(btn('Back', () => actions.back?.()));
+    card.append(row);
   } else if (state.screen === 'settings') {
-    renderSettings(card, state, settings, maps, actions, userLevels);
+    renderSettings(card, state, settings, maps, actions);
   } else if (state.screen === 'pause') {
-    card.innerHTML = `<h2>Paused</h2>`;
-    card.append(btn('Resume', () => actions.resume?.()));
-    card.append(btn('Quit', () => actions.quit?.()));
+    card.classList.add('compact');
+    card.innerHTML = `<h2>Paused</h2><p>Take a breather. The brawl waits.</p>`;
+    const row = document.createElement('div');
+    row.className = 'menu-actions';
+    row.append(btn('Resume', () => actions.resume?.(), 'primary'));
+    row.append(btn('Quit', () => actions.quit?.()));
+    card.append(row);
   } else if (state.screen === 'scoreboard') {
-    card.innerHTML = scoreboardMarkup({
-      title: 'Round over',
-      wins: state.wins ?? [0, 0, 0, 0],
-      firstTo: state.firstTo || undefined,
-    });
-    const note = document.createElement('p');
-    note.textContent = 'Next level incoming…';
-    card.append(note);
-    card.append(btn('Back', () => actions.back?.()));
+    card.innerHTML = `<h2 data-round-over="1">Round over</h2><p>Next level incoming…</p>`;
   } else if (state.screen === 'lobby') {
     renderLobby(card, state, settings, actions);
   } else if (state.screen === 'disconnect') {
-    card.innerHTML = `<h2>Controller disconnected</h2><p>Reconnect the same pad to resume, or press a button on a new pad to claim the seat.</p>`;
+    card.classList.add('compact');
+    card.innerHTML = `<h2>Controller disconnected</h2><p>Reconnect the pad to pick up where you left off.</p>`;
+    const row = document.createElement('div');
+    row.className = 'menu-actions';
+    row.append(btn('Resume anyway', () => actions.resume?.(), 'primary'));
+    row.append(btn('Quit', () => actions.quit?.()));
+    card.append(row);
   }
   if (state.notice) {
     const n = document.createElement('p');
@@ -410,96 +307,98 @@ export function renderMenus(
   root.append(wrap);
 }
 
-/** PLAN Appendix A host HP values as `<option>` markup. */
-export function hpSelectOptions(current: number): string {
-  const values = (HP_PRESETS as readonly number[]).includes(current)
-    ? [...HP_PRESETS]
-    : [...HP_PRESETS, current].sort((a, b) => a - b);
-  return values
-    .map((h) => `<option value="${h}" ${h === current ? 'selected' : ''}>${h}</option>`)
-    .join('');
-}
-
 function renderSettings(
   card: HTMLElement,
   state: MenuState,
   settings: UserSettings,
   maps: Record<string, PadMap>,
   actions: MenuActions,
-  userLevels: LevelDef[] = [],
 ): void {
   const weaponBoxes = WEAPON_DEFS.filter((d) => d.dropWeight > 0)
     .map((d) => {
       const on = settings.enabledWeapons === 'all' || settings.enabledWeapons.includes(d.id);
-      return `<label style="display:inline-block;margin:2px 8px 2px 0"><input id="w-${d.id}" type="checkbox" ${on ? 'checked' : ''}/> ${weaponDisplayName(d)}</label>`;
+      return `<label class="chip"><input id="w-${d.id}" type="checkbox" ${on ? 'checked' : ''}/> ${weaponDisplayName(d)}</label>`;
     })
     .join('');
-  const boxFor = (l: LevelDef, tag = '') => {
-    const on = settings.enabledLevels === 'all' || settings.enabledLevels.includes(l.id);
-    return `<label style="display:block;font-size:12px"><input id="l-${l.id}" type="checkbox" ${on ? 'checked' : ''}/> ${l.name} <span style="color:#9aa3b2">(${l.theme}${tag})</span></label>`;
-  };
-  const levelBoxes = builtInMatchLevels().slice(0, 80).map((l) => boxFor(l)).join('');
-  const userBoxes =
-    userLevels.length === 0
-      ? '<p style="color:#9aa3b2;font-size:12px">No saved editor levels yet.</p>'
-      : userLevels.map((l) => boxFor(l, ' · user')).join('');
-  const lastMap = (state.remapPadId && maps[state.remapPadId]) || Object.entries(maps)[0]?.[1] || DEFAULT_MAP;
-  const lastId = state.remapPadId || Object.keys(maps)[0] || '';
-  if (state.remapPadId) card.dataset.remapPad = state.remapPadId;
+  const levelBoxes = builtInMatchLevels()
+    .slice(0, 80)
+    .map((l) => {
+      const on = settings.enabledLevels === 'all' || settings.enabledLevels.includes(l.id);
+      return `<label class="chip"><input id="l-${l.id}" type="checkbox" ${on ? 'checked' : ''}/> ${l.name} <span class="dim">${l.theme}</span></label>`;
+    })
+    .join('');
+  const lastMap = Object.entries(maps)[0]?.[1] ?? DEFAULT_MAP;
+  const lastId = Object.keys(maps)[0] ?? '';
+  const check = (id: string, label: string, on: boolean) => `<label class="row"><span>${label}</span><input id="${id}" type="checkbox" ${on ? 'checked' : ''}></label>`;
   card.innerHTML = `<h2>Settings</h2>
-      <label>HP <select id="hp">${hpSelectOptions(state.maxHp)}</select></label><br/>
-      <label>First to <input id="ft" type="number" value="${state.firstTo}"></label><br/>
-      <label>Bots <input id="bots" type="number" value="${state.bots}"></label><br/>
-      <label>Show wins <input id="wins" type="checkbox" ${settings.showWins ? 'checked' : ''}></label><br/>
-      <label>Haptics <input id="hap" type="checkbox" ${settings.haptics ? 'checked' : ''}></label><br/>
-      <label>Colorblind palette <input id="cb" type="checkbox" ${settings.colorblind ? 'checked' : ''}></label><br/>
-      <label>Reduce shake <input id="rs" type="checkbox" ${settings.reduceShake ? 'checked' : ''}></label><br/>
-      <label>Reduce blood <input id="rb" type="checkbox" ${settings.reduceBlood ? 'checked' : ''}></label><br/>
-      <label>2D lighting (radiance cascades) <input id="lit" type="checkbox" ${settings.lighting ? 'checked' : ''}></label><br/>
-      <label>Physics arms (alive) <input id="arms" type="checkbox" ${settings.physicsArms ? 'checked' : ''}></label><br/>
-      <label>Include user levels in rotation <input id="usr" type="checkbox" ${settings.includeUserLevels ? 'checked' : ''}></label><br/>
-      <label>SFX <input id="sfx" type="range" min="0" max="1" step="0.05" value="${settings.sfx}"></label><br/>
-      <label>Music <input id="mus" type="range" min="0" max="1" step="0.05" value="${settings.music}"></label><br/>
-      <label>Level order
-        <select id="rot">
-          <option value="random" ${settings.rotation === 'random' ? 'selected' : ''}>Random</option>
-          <option value="ordered" ${settings.rotation === 'ordered' ? 'selected' : ''}>Ordered</option>
-        </select>
-      </label><br/>
-      <label>Renderer
-        <select id="ren">
-          <option value="auto" ${settings.renderer === 'auto' ? 'selected' : ''}>Auto</option>
-          <option value="gpu" ${settings.renderer === 'gpu' ? 'selected' : ''}>SDF / WebGPU</option>
-          <option value="canvas" ${settings.renderer === 'canvas' ? 'selected' : ''}>Canvas</option>
-        </select>
-      </label>
+      <h3>Match</h3>
+      <div class="form-grid">
+        <label class="row"><span>HP</span><input id="hp" type="number" min="1" value="${state.maxHp}"></label>
+        <label class="row"><span>First to <small>(0 = endless)</small></span><input id="ft" type="number" min="0" value="${state.firstTo}"></label>
+        <label class="row"><span>Bots</span><input id="bots" type="number" min="0" max="3" value="${state.bots}"></label>
+        ${check('wins', 'Show wins', settings.showWins)}
+        <label class="row"><span>Level order</span>
+          <select id="rot">
+            <option value="random" ${settings.rotation === 'random' ? 'selected' : ''}>Random</option>
+            <option value="ordered" ${settings.rotation === 'ordered' ? 'selected' : ''}>Ordered</option>
+          </select>
+        </label>
+        ${check('usr', 'Include user levels in rotation', settings.includeUserLevels)}
+      </div>
+      <h3>Feel &amp; accessibility</h3>
+      <div class="form-grid">
+        ${check('hap', 'Haptics', settings.haptics)}
+        ${check('cb', 'Colorblind palette', settings.colorblind)}
+        ${check('rs', 'Reduce shake', settings.reduceShake)}
+        ${check('rb', 'Reduce blood', settings.reduceBlood)}
+        <label class="row"><span>SFX</span><input id="sfx" type="range" min="0" max="1" step="0.05" value="${settings.sfx}"></label>
+        <label class="row"><span>Music</span><input id="mus" type="range" min="0" max="1" step="0.05" value="${settings.music}"></label>
+      </div>
+      <h3>Video</h3>
+      <div class="form-grid">
+        <label class="row"><span>Renderer</span>
+          <select id="ren">
+            <option value="auto" ${settings.renderer === 'auto' ? 'selected' : ''}>Auto</option>
+            <option value="gpu" ${settings.renderer === 'gpu' ? 'selected' : ''}>SDF / WebGPU</option>
+            <option value="canvas" ${settings.renderer === 'canvas' ? 'selected' : ''}>Canvas</option>
+          </select>
+        </label>
+        ${check('lit', '2D lighting (radiance cascades)', settings.lighting)}
+      </div>
       <h3>Weapon toggles</h3>
-      <div style="max-height:140px;overflow:auto;background:#151820;padding:8px;border-radius:8px">${weaponBoxes}</div>
+      <div class="chips">${weaponBoxes}</div>
       <h3>Level toggles</h3>
-      <div style="max-height:140px;overflow:auto;background:#151820;padding:8px;border-radius:8px">${levelBoxes}</div>
-      <h3>User levels</h3>
-      <div id="userlevels" style="max-height:100px;overflow:auto;background:#151820;padding:8px;border-radius:8px">${userBoxes}</div>
+      <div class="chips">${levelBoxes}</div>
       <h3>Per-pad remap</h3>
-      <p style="color:#9aa3b2;font-size:13px">Offered automatically for non-<code>standard</code> mappings. Button indices follow the W3C Gamepad API.</p>
-      <label>Pad id <input id="padid" value="${lastId}" placeholder="Xbox / DualSense id string"></label><br/>
-      <label>Jump <input id="map-jump" type="number" value="${lastMap.jump}"></label>
-      <label>Attack <input id="map-attack" type="number" value="${lastMap.attack}"></label>
-      <label>Block <input id="map-block" type="number" value="${lastMap.block}"></label>
-      <label>Throw <input id="map-throw" type="number" value="${lastMap.throw}"></label>
-      <label>Pause <input id="map-pause" type="number" value="${lastMap.pause}"></label>`;
-  card.append(
-    btn('Save', () => {
-      const next = collectSettings(card, state, settings, userLevels);
-      Object.assign(settings, next);
-      actions.save?.();
-    }),
+      <p class="dim">Offered automatically for non-<code>standard</code> mappings. Button indices follow the W3C Gamepad API.</p>
+      <div class="form-grid">
+        <label class="row wide"><span>Pad id</span><input id="padid" value="${lastId}" placeholder="Xbox / DualSense id string"></label>
+        <label class="row"><span>Jump</span><input id="map-jump" type="number" value="${lastMap.jump}"></label>
+        <label class="row"><span>Attack</span><input id="map-attack" type="number" value="${lastMap.attack}"></label>
+        <label class="row"><span>Block</span><input id="map-block" type="number" value="${lastMap.block}"></label>
+        <label class="row"><span>Throw</span><input id="map-throw" type="number" value="${lastMap.throw}"></label>
+        <label class="row"><span>Pause</span><input id="map-pause" type="number" value="${lastMap.pause}"></label>
+      </div>`;
+  const row = document.createElement('div');
+  row.className = 'menu-actions';
+  row.append(
+    btn(
+      'Save',
+      () => {
+        const next = collectSettings(card, state, settings);
+        Object.assign(settings, next);
+        actions.save?.();
+      },
+      'primary',
+    ),
   );
-  card.append(
+  row.append(
     btn('Save remap', () => {
       actions.saveRemap?.();
     }),
   );
-  card.append(btn('Back', () => actions.back?.()));
+  row.append(btn('Back', () => actions.back?.()));
+  card.append(row);
 }
 
 function syncLobbyFields(card: HTMLElement, state: MenuState, settings: UserSettings): void {
@@ -511,40 +410,24 @@ function syncLobbyFields(card: HTMLElement, state: MenuState, settings: UserSett
   if (ft) state.firstTo = Number(ft.value) || 0;
 }
 
-function renderLobby(
-  card: HTMLElement,
-  state: MenuState,
-  settings: UserSettings,
-  actions: MenuActions,
-): void {
+function renderLobby(card: HTMLElement, state: MenuState, settings: UserSettings, actions: MenuActions): void {
   card.innerHTML = `<h2>Online lobby</h2>
     <p>Host-authoritative WebRTC. Signaling is local (<code>npm run server</code>); live WAN STUN/TURN is a hardware path.</p>
-    <label>Room code <input id="room" value="${state.roomCode}" placeholder="ABC123" maxlength="8"></label>
-    <label>HP <select id="hp">${hpSelectOptions(state.maxHp)}</select></label>
-    <label>First to <input id="ft" type="number" value="${state.firstTo}"></label>
-    <p style="color:#9aa3b2;font-size:13px">Host-only: HP / first-to apply when you Host. Chat is reliable-channel text.</p>
-    <p id="netstatus" data-net-role="${state.netRole}" data-net-state="${state.netState}">${
-      state.netState === 'up'
-        ? `${state.netRole} ${state.roomCode} — WebRTC up${state.lastSnapTick ? ` · snap ${state.lastSnapTick}` : ''}`
-        : state.netState === 'connecting'
-          ? 'Connecting…'
-          : state.netState === 'error'
-            ? state.notice || 'Signaling failed'
-            : 'Idle — Host or Join a room'
-    }</p>`;
+    <div class="form-grid">
+      <label class="row"><span>Room code</span><input id="room" value="${state.roomCode}" placeholder="ABC123" maxlength="8"></label>
+      <label class="row"><span>HP</span><input id="hp" type="number" value="${state.maxHp}"></label>
+      <label class="row"><span>First to</span><input id="ft" type="number" value="${state.firstTo}"></label>
+    </div>
+    <p class="dim">Host-only: HP / first-to apply when you Host. Chat is reliable-channel text.</p>`;
   const chat = document.createElement('div');
-  chat.style.maxHeight = '160px';
-  chat.style.overflow = 'auto';
-  chat.style.background = '#151820';
-  chat.style.padding = '8px';
-  chat.style.whiteSpace = 'pre-wrap';
+  chat.className = 'chat-log';
   chat.textContent = state.chat.join('\n') || '(no messages)';
   const row = document.createElement('div');
+  row.className = 'chat-row';
   const input = document.createElement('input');
   input.id = 'chat';
   input.placeholder = 'Type a message';
   input.value = state.draftChat;
-  input.style.width = '70%';
   row.append(input);
   row.append(
     btn('Send', () => {
@@ -556,46 +439,34 @@ function renderLobby(
     }),
   );
   card.append(chat, row);
-  card.append(
-    btn('Host', () => {
-      syncLobbyFields(card, state, settings);
-      if (!state.roomCode) state.roomCode = Math.random().toString(36).slice(2, 8).toUpperCase();
-      actions.host?.();
-    }),
+  const actionsRow = document.createElement('div');
+  actionsRow.className = 'menu-actions';
+  actionsRow.append(
+    btn(
+      'Host',
+      () => {
+        syncLobbyFields(card, state, settings);
+        if (!state.roomCode) state.roomCode = Math.random().toString(36).slice(2, 8).toUpperCase();
+        actions.host?.();
+      },
+      'primary',
+    ),
   );
-  card.append(
+  actionsRow.append(
     btn('Join', () => {
       syncLobbyFields(card, state, settings);
       state.roomCode = state.roomCode || 'JOINME';
       actions.joinRoom?.();
     }),
   );
-  if (state.netRole === 'host' && state.netState === 'up') {
-    card.append(
-      btn('Start match', () => {
-        actions.startOnline?.();
-      }),
-    );
-  }
-  card.append(btn('Back', () => actions.back?.()));
+  actionsRow.append(btn('Back', () => actions.back?.()));
+  card.append(actionsRow);
 }
 
-/** PLAN M6 / §9: distinctive title + logo, not text-only. */
-export function brandMarkup(): string {
-  return `<img id="brand-logo" class="brand-logo" src="/favicon.svg" width="72" height="72" alt="Floppy Clash"/>
-      <h1 style="margin:8px 0 8px;font-size:42px">Floppy Clash</h1>`;
-}
-
-/** Rising-edge helper for join D-pad color (PLAN 4.12). */
-export function edgePressed(wasDown: boolean, isDown: boolean): boolean {
-  return isDown && !wasDown;
-}
-
-function btn(label: string, onClick: () => void): HTMLButtonElement {
+function btn(label: string, onClick: () => void, variant = ''): HTMLButtonElement {
   const b = document.createElement('button');
   b.textContent = label;
-  b.style.cssText =
-    'margin:6px 6px 0 0;padding:10px 16px;border:0;border-radius:10px;background:#f2c14e;color:#111;font-weight:700;cursor:pointer';
+  b.className = `menu-btn${variant ? ` ${variant}` : ''}`;
   b.addEventListener('click', onClick);
   return b;
 }

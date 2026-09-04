@@ -3,7 +3,6 @@ import type { LevelObject } from '../level/schema';
 import { HazardKind } from '../traits';
 import { barrel } from './barrel';
 import { bounce } from './bounce';
-import { boss } from './boss';
 import { chain } from './chain';
 import { spawnHazardEntity } from './common';
 import { conveyor } from './conveyor';
@@ -49,7 +48,6 @@ export const HAZARD_MODULES: HazardModule[] = [
   crusher,
   triggerDrop,
   voidHazard,
-  boss,
 ];
 
 export const APPENDIX_D_TYPE_IDS = [

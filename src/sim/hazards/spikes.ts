@@ -1,8 +1,7 @@
-import { authoredHalfWidth } from '../authored';
 import { getContext } from '../context';
 import { createBoxBody, registerBody } from '../physics/bodies';
 import { HazardKind, Static, Transform } from '../traits';
-import { nearKill, spawnHazardEntity } from './common';
+import { kill, spawnHazardEntity } from './common';
 import type { HazardModule } from './types';
 
 export const spikes: HazardModule = {
@@ -19,9 +18,9 @@ export const spikes: HazardModule = {
   },
   contact(world, player, hz, ht) {
     const pt = player.get(Transform);
-    // param0 is authored bed width (default 2). 0 means no reach — not a fixed 0.7.
-    const halfW = authoredHalfWidth(hz.param0);
-    if (!pt || halfW <= 0) return;
-    nearKill(world, player, pt, ht, halfW);
+    if (!pt) return;
+    // The strip is w wide (param0); anyone whose feet land on it dies along its whole length.
+    const halfW = (hz.param0 || 2) / 2;
+    if (Math.abs(pt.x - ht.x) < halfW + 0.2 && Math.abs(pt.y - ht.y) < 0.75) kill(world, player, pt.x, pt.y);
   },
 };

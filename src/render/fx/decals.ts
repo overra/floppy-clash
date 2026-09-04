@@ -1,8 +1,41 @@
 import type { World } from 'koota';
+import { raycastClosest, type RayHit } from '../../sim/physics/queries';
 import type { Decal } from './particles';
-import { FxDecal, unpackColor } from './world';
 
 export type WorldBounds = { x: number; y: number; w: number; h: number };
+
+const SURFACE_KINDS = new Set(['solid', 'prop', 'hazard']);
+/** How far a splash travels to find something to stain: below first (pooling), then walls, then ceilings. */
+const SNAP_DOWN = 1.1;
+const SNAP_SIDE = 0.7;
+
+function notSurface(h: RayHit): boolean {
+  return !SURFACE_KINDS.has(h.kind);
+}
+
+/**
+ * Blood only stains what it lands on. Move a decal onto the nearest surface (embedding it so most of the
+ * mark reads on the body, not the sky), or reject it when the splash is well clear of everything.
+ */
+export function snapDecalToSurface(world: World, d: Decal): boolean {
+  const probes: [number, number, number][] = [
+    [0, -SNAP_DOWN, 0.55],
+    [SNAP_SIDE, 0, 0.5],
+    [-SNAP_SIDE, 0, 0.5],
+    [0, SNAP_SIDE, 0.5],
+  ];
+  for (const [dx, dy, embed] of probes) {
+    const hit = raycastClosest(world, d.x, d.y, d.x + dx, d.y + dy, notSurface);
+    if (!hit) continue;
+    // Standing inside the body already: keep it where it is.
+    if (hit.fraction < 0.05) return true;
+    const len = Math.hypot(dx, dy) || 1;
+    d.x = hit.x + (dx / len) * d.r * embed;
+    d.y = hit.y + (dy / len) * d.r * embed;
+    return true;
+  }
+  return false;
+}
 
 /**
  * Persistent world-space decal texture (PLAN 4.11).
@@ -32,9 +65,46 @@ function align(n: number, a: number): number {
   return Math.ceil(n / a) * a;
 }
 
+/** Texture size for an arena: width padded to 64 px so rows stay aligned for the GPU upload. */
+export function decalLayerSize(bounds: WorldBounds, ppm = 16): { width: number; height: number } {
+  return {
+    width: Math.max(64, align(Math.ceil(Math.max(1, bounds.w) * ppm), 64)),
+    height: Math.max(1, Math.ceil(Math.max(1, bounds.h) * ppm)),
+  };
+}
+
+/**
+ * Re-uses rotated-out layers. A layer is a few MB of pixels plus a backing canvas, and building one
+ * landed on the same frame as the level swap itself, which was enough to miss a 120 Hz frame on the
+ * first frame of a round. Arenas come in a handful of sizes, so a spare of the right size is almost
+ * always waiting; it is wiped (a memset) instead of rebuilt.
+ */
+export function createDecalLayerPool(max = 4) {
+  const spare: PersistentDecalLayer[] = [];
+  return {
+    acquire(bounds: WorldBounds, ppm = 16): PersistentDecalLayer {
+      const { width, height } = decalLayerSize(bounds, ppm);
+      const i = spare.findIndex((l) => l.width === width && l.height === height && l.ppm === ppm);
+      if (i < 0) return createDecalLayer(bounds, ppm);
+      const layer = spare.splice(i, 1)[0]!;
+      layer.bounds = { ...bounds };
+      layer.clear();
+      return layer;
+    },
+    release(layer: PersistentDecalLayer): void {
+      if (spare.includes(layer)) return;
+      if (spare.length >= max) spare.shift();
+      spare.push(layer);
+    },
+    /** Spare layers currently held (tests). */
+    get size() {
+      return spare.length;
+    },
+  };
+}
+
 export function createDecalLayer(bounds: WorldBounds, ppm = 16): PersistentDecalLayer {
-  const width = Math.max(64, align(Math.ceil(Math.max(1, bounds.w) * ppm), 64));
-  const height = Math.max(1, Math.ceil(Math.max(1, bounds.h) * ppm));
+  const { width, height } = decalLayerSize(bounds, ppm);
   const pixels = new Uint8ClampedArray(width * height * 4);
   let canvas: HTMLCanvasElement | OffscreenCanvas | null = null;
   let ctx2d: CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D | null = null;
@@ -135,33 +205,15 @@ function stampDisk(layer: PersistentDecalLayer, d: Decal): void {
   layer.dirty = true;
   const ctx = layer.canvas && 'getContext' in layer.canvas ? layer.canvas.getContext('2d') : null;
   if (ctx) {
-    ctx.fillStyle = d.color;
-    ctx.globalAlpha = 0.7;
+    // Mirror the pixel buffer's linear falloff so the canvas fallback shows the same soft splat the GPU samples.
+    const grad = ctx.createRadialGradient(cx, cy, 0, cx, cy, rad);
+    grad.addColorStop(0, `rgba(${r},${g},${b},0.78)`);
+    grad.addColorStop(1, `rgba(${r},${g},${b},0)`);
+    ctx.fillStyle = grad;
     ctx.beginPath();
     ctx.arc(cx, cy, rad, 0, Math.PI * 2);
     ctx.fill();
-    ctx.globalAlpha = 1;
   }
-}
-
-/** Stamp unstamped FxDecal entities once, then mark them consumed. */
-export function stampFxDecals(world: World, layer: PersistentDecalLayer, accept?: (d: Decal) => boolean): number {
-  let n = 0;
-  world.query(FxDecal).updateEach(([d]) => {
-    if (d.stamped) return;
-    const decal: Decal = {
-      x: d.x,
-      y: d.y,
-      r: d.r,
-      color: unpackColor(d.color),
-      kind: d.kind === 1 ? 'scorch' : 'blood',
-    };
-    d.stamped = 1;
-    if (accept && !accept(decal)) return;
-    stampDisk(layer, decal);
-    n += 1;
-  });
-  return n;
 }
 
 export function hashPixels(layer: PersistentDecalLayer): number {

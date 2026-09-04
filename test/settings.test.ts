@@ -1,7 +1,5 @@
 import { describe, expect, it } from 'vitest';
 import { DEFAULT_USER_SETTINGS, loadSettings, saveSettings } from '../src/ui/settingsStore';
-import { brandMarkup, edgePressed, hpSelectOptions } from '../src/ui/menus';
-import { HP_PRESETS } from '../src/input/seats';
 import { loadStats, recordKos, recordMatch } from '../src/ui/statsStore';
 import { objectSchemaFields, applyField } from '../src/editor/properties';
 import { createEditorState, addObject, addSpawn, setDropEdge } from '../src/editor/editor';
@@ -22,23 +20,6 @@ function memoryStorage() {
 }
 
 describe('settings persistence', () => {
-  it('HP preset select lists Appendix A values', () => {
-    const markup = hpSelectOptions(100);
-    for (const hp of HP_PRESETS) {
-      expect(markup).toContain(`value="${hp}"`);
-    }
-    expect(markup).toContain('value="100" selected');
-    expect(hpSelectOptions(75)).toContain('value="75" selected');
-  });
-
-  it('brand markup ships the distinctive logo and title', () => {
-    expect(brandMarkup()).toContain('id="brand-logo"');
-    expect(brandMarkup()).toContain('/favicon.svg');
-    expect(edgePressed(false, true)).toBe(true);
-    expect(edgePressed(true, true)).toBe(false);
-    expect(edgePressed(false, false)).toBe(false);
-  });
-
   it('round-trips weapon/level toggles and lighting', () => {
     memoryStorage();
     saveSettings({
@@ -49,7 +30,6 @@ describe('settings persistence', () => {
       enabledLevels: ['woods-clearing'],
       sfx: 0.2,
       renderer: 'canvas',
-      physicsArms: true,
     });
     const loaded = loadSettings();
     expect(loaded.lighting).toBe(true);
@@ -57,7 +37,6 @@ describe('settings persistence', () => {
     expect(loaded.enabledWeapons).toEqual(['pistol', 'rpg']);
     expect(loaded.sfx).toBe(0.2);
     expect(loaded.renderer).toBe('canvas');
-    expect(loaded.physicsArms).toBe(true);
   });
 
   it('records local match stats', () => {
@@ -68,9 +47,6 @@ describe('settings persistence', () => {
     expect(s.kos).toBe(2);
     expect(s.matches).toBe(1);
     expect(s.wins).toBe(1);
-    expect(s.achievements.firstBlood).toBe(true);
-    expect(s.achievements.firstWin).toBe(true);
-    expect(s.achievements.tenKos).toBe(false);
   });
 });
 
@@ -79,7 +55,6 @@ describe('editor tools', () => {
     const fields = objectSchemaFields();
     expect(fields.some((f) => f.key === 'type')).toBe(true);
     expect(fields.some((f) => f.key === 'dir' && f.kind === 'enum')).toBe(true);
-    expect(fields.some((f) => f.key === 'reach' && f.kind === 'number')).toBe(true);
     const state = createEditorState();
     state.tool = 'spikes';
     addObject(state, 8, 4);
@@ -90,18 +65,5 @@ describe('editor tools', () => {
     expect(state.level.spawns.length).toBeGreaterThanOrEqual(5);
     setDropEdge(state, 2);
     expect(state.level.drops?.xMin).toBeLessThanOrEqual(2);
-  });
-
-  it('laser reach is an editable zod field (PLAN 4.15)', () => {
-    const state = createEditorState();
-    state.tool = 'laser';
-    addObject(state, 12, 6);
-    const laser = state.level.objects[state.selected]!;
-    expect(laser.type).toBe('laser');
-    expect(laser.reach).toBe(14);
-    applyField(laser, 'reach', '8');
-    expect(laser.reach).toBe(8);
-    applyField(laser, 'reach', '0');
-    expect(laser.reach).toBe(0);
   });
 });

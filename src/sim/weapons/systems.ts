@@ -3,11 +3,15 @@ import { Vec2 } from 'planck';
 import { emit, getContext } from '../context';
 import { rising } from '../input';
 import { createBoxBody, registerBody, assignNetId } from '../physics/bodies';
-import { Aim, Combat, Controller, Dead, Held, HeldBy, Loose, OwnedBy, Player, PrevTransform, Projectile, ProjectileKind, Transform, Weapon } from '../traits';
+import { Aim, Combat, Controller, Dead, Held, HeldBy, Loose, OwnedBy, Player, Projectile, ProjectileKind, Transform, Weapon } from '../traits';
 import type { WeaponDef } from './schema';
 import { weaponByIndex, weaponIndex } from './defs';
-import { rollIfRanged } from './mapping';
-import { takeDamage } from '../player/health';
+import { SWING_TICKS } from './projectiles';
+import { raycastClosest } from '../physics/queries';
+import { combatAllowed } from '../rules/rounds';
+
+/** Blink dagger: hop this far along the aim, stopping short of the first wall in the way. */
+const BLINK_DISTANCE = 4;
 
 const holders = createQuery(Player, Aim, Combat, Transform);
 const looseWeapons = createQuery(Weapon, Loose, Transform);
@@ -53,19 +57,13 @@ function spawnBullet(
   const speed = def.projectile.speed;
   const vx = Math.cos(angle) * speed;
   const vy = Math.sin(angle) * speed;
-  const damage = rollIfRanged(
-    ctx.rng,
-    def.projectile.damageMin,
-    def.projectile.damageMax,
-    def.projectile.damage,
-  );
   const proj = world.spawn(
     Projectile({
       kind: kindId(def.projectile.kind),
-      damage,
+      damage: def.projectile.damage,
       speed,
       bounces: def.projectile.bounce,
-      fuse: def.projectile.kind === 'rocket' && def.projectile.fuse === 0 ? 180 : def.projectile.fuse,
+      fuse: def.projectile.kind === 'melee' ? SWING_TICKS : def.projectile.kind === 'rocket' && def.projectile.fuse === 0 ? 180 : def.projectile.fuse,
       x,
       y,
       vx,
@@ -83,16 +81,18 @@ function spawnBullet(
     def.projectile.kind === 'field' ||
     def.projectile.kind === 'creature' ||
     def.projectile.kind === 'burst-into';
-  if (needsBody && def.projectile.radius > 0) {
-    proj.add(Transform({ x, y, angle: 0 }), PrevTransform({ x, y, angle: 0 }));
+  if (needsBody) {
+    // `projectile.radius` is the blast / field reach, not the shell: the body is a fist-sized
+    // object that rides through gaps and bounces like a grenade should.
+    const half = def.projectile.kind === 'field' ? 0.2 : def.projectile.burstInto === 'spike' ? 0.22 : 0.14;
     const body = createBoxBody(
       ctx.physics,
       proj,
       'projectile',
       x,
       y,
-      def.projectile.radius * 0.35,
-      def.projectile.radius * 0.35,
+      half,
+      half,
       'dynamic',
       { density: 0.4, friction: 0.2, restitution: def.projectile.bounce > 0 ? 0.55 : 0.05, bullet: true, fixedRotation: false },
     );
@@ -114,7 +114,6 @@ export function spawnWeapon(world: World, defId: string, x: number, y: number, l
       thrownHit: false,
     }),
     Transform({ x, y, angle: 0 }),
-    PrevTransform({ x, y, angle: 0 }),
   );
   assignNetId(world, entity);
   if (loose) entity.add(Loose());
@@ -136,55 +135,9 @@ function heldWeapon(world: World, player: Entity): Entity | undefined {
   return undefined;
 }
 
-/** PLAN 4.9: hand pose in meters from the holder origin along aim. */
-export function heldHandPose(
-  transform: { x: number; y: number },
-  aim: { x: number; y: number },
-  barrel: number,
-): { x: number; y: number; angle: number } {
-  return {
-    x: transform.x + aim.x * (0.45 + barrel * 0.25),
-    y: transform.y + aim.y * (0.45 + barrel * 0.25),
-    angle: Math.atan2(aim.y, aim.x),
-  };
-}
-
-/** PLAN 4.9: held body is deactivated and Transform is written so render / net / pickup stay on the aim arm. */
-function poseHeldWeapon(
-  world: World,
-  weapon: Entity,
-  transform: { x: number; y: number },
-  aim: { x: number; y: number },
-  barrel: number,
-): void {
-  const ctx = getContext(world);
-  const pose = heldHandPose(transform, aim, barrel);
-  weapon.set(Transform, pose);
-  const wbody = ctx.bodies.get(weapon);
-  if (wbody) {
-    wbody.setActive(false);
-    wbody.setPosition(new Vec2(pose.x, pose.y));
-    wbody.setAngle(pose.angle);
-    wbody.setLinearVelocity(new Vec2(0, 0));
-    wbody.setAngularVelocity(0);
-  }
-}
-
-/** Call after syncTransforms so the gun sits on this tick's player pose, not last tick's. */
-export function syncHeldWeapons(world: World): void {
-  for (const weapon of world.query(Weapon, Held)) {
-    const holder = weapon.targetFor(HeldBy);
-    if (!holder || holder.has(Dead)) continue;
-    const t = holder.get(Transform);
-    const aim = holder.get(Aim);
-    const wep = weapon.get(Weapon);
-    if (!t || !aim || !wep) continue;
-    poseHeldWeapon(world, weapon, t, aim, weaponByIndex(wep.defId).shape.length);
-  }
-}
-
 export function weapons(world: World): void {
   const ctx = getContext(world);
+  const live = combatAllowed(world);
 
   world.query(looseWeapons).updateEach(([weapon]) => {
     if (weapon.pickupCooldown > 0) weapon.pickupCooldown -= 1;
@@ -226,10 +179,8 @@ export function weapons(world: World): void {
     const def = weaponByIndex(wep.defId);
     const body = ctx.bodies.get(entity);
     if (!body) return;
-    poseHeldWeapon(world, held, transform, aim, def.shape.length);
 
     if (rising(prev?.throw ?? false, input.throw)) {
-      ctx.burstLeft.delete(entity);
       held.remove(Held);
       held.add(Loose());
       held.remove(HeldBy('*'));
@@ -239,14 +190,10 @@ export function weapons(world: World): void {
         thrownHit: false,
         pickupCooldown: ctx.tuning.pickupCooldownTicks,
       });
-      const tx = transform.x + aim.x * 0.6;
-      const ty = transform.y + aim.y * 0.6;
-      held.set(Transform, { x: tx, y: ty, angle: 0 });
-      held.add(OwnedBy(entity));
       const wbody = ctx.bodies.get(held);
       if (wbody) {
         wbody.setActive(true);
-        wbody.setPosition(new Vec2(tx, ty));
+        wbody.setPosition(new Vec2(transform.x + aim.x * 0.6, transform.y + aim.y * 0.6));
         const pv = body.getLinearVelocity();
         wbody.setLinearVelocity(
           new Vec2(pv.x + aim.x * ctx.tuning.throwSpeed, pv.y + aim.y * ctx.tuning.throwSpeed),
@@ -256,20 +203,13 @@ export function weapons(world: World): void {
       return;
     }
 
-    if (combat.blocking) {
-      ctx.burstLeft.delete(entity);
-      return;
-    }
+    if (combat.blocking || combat.stun > 0 || !live) return;
     const fireEdge = rising(prev?.attack ?? false, input.attack);
     const fireHeld = input.attack;
-    if (def.fireMode === 'burst' && fireEdge) {
-      ctx.burstLeft.set(entity, def.burstCount ?? 3);
-    }
-    const bursting = (ctx.burstLeft.get(entity) ?? 0) > 0;
     const canFire =
       (def.fireMode === 'semi' && fireEdge) ||
       (def.fireMode === 'auto' && fireHeld) ||
-      (def.fireMode === 'burst' && bursting) ||
+      (def.fireMode === 'burst' && fireEdge) ||
       (def.fireMode === 'hold' && fireHeld);
     const cd = ctx.fireCd.get(entity) ?? 0;
     if (cd > 0) ctx.fireCd.set(entity, cd - 1);
@@ -286,34 +226,34 @@ export function weapons(world: World): void {
     }
 
     ctx.fireCd.set(entity, def.fireIntervalTicks);
-    if (def.fireMode === 'burst') {
-      const left = (ctx.burstLeft.get(entity) ?? 1) - 1;
-      if (left <= 0) ctx.burstLeft.delete(entity);
-      else ctx.burstLeft.set(entity, left);
+    if (def.id === 'blink-dagger') {
+      // Teleport first so the swing that follows lands where the fighter reappears: stop short of walls,
+      // and short of the first enemy on the line so the blade arrives in range.
+      const wall = raycastClosest(world, transform.x, transform.y, transform.x + aim.x * BLINK_DISTANCE, transform.y + aim.y * BLINK_DISTANCE, (h) => h.entity === entity || (h.kind !== 'solid' && h.kind !== 'prop' && h.kind !== 'player'));
+      const dist = wall ? Math.max(0, wall.fraction * BLINK_DISTANCE - (wall.kind === 'player' ? 0.7 : 0.4)) : BLINK_DISTANCE;
+      const px = transform.x + aim.x * dist;
+      const py = transform.y + aim.y * dist;
+      body.setPosition(new Vec2(px, py));
+      body.setLinearVelocity(new Vec2(aim.x * 3, Math.max(0, aim.y * 3)));
+      entity.set(Transform, { x: px, y: py, angle: transform.angle });
+      transform.x = px;
+      transform.y = py;
+      emit(world, { type: 'explosion', x: px, y: py, radius: 0.6, damage: 0 });
     }
-    const shots = Math.max(1, def.projectile.count ?? 1);
+    const shots = def.projectile.kind === 'pellets' ? def.projectile.count : def.fireMode === 'burst' ? (def.burstCount ?? 3) : 1;
     const muzzleX = transform.x + aim.x * (0.45 + def.shape.length * 0.5);
     const muzzleY = transform.y + aim.y * (0.45 + def.shape.length * 0.5);
     for (let i = 0; i < shots; i++) {
       spawnBullet(world, entity, def, muzzleX, muzzleY, aim.x, aim.y);
     }
-    // PLAN Appendix C M16: ammo counts burst sequences (30 bursts), not bullets.
-    if (!def.infiniteAmmo && (def.fireMode !== 'burst' || fireEdge)) {
+    if (!def.infiniteAmmo) {
       held.set(Weapon, { ...wep, ammo: wep.ammo - 1 });
     }
     const vel = body.getLinearVelocity();
-    const along = def.recoil.forward - def.recoil.back;
     body.setLinearVelocity(
-      new Vec2(vel.x + aim.x * along, vel.y + def.recoil.up + aim.y * along),
+      new Vec2(vel.x - aim.x * def.recoil.back + aim.x * def.recoil.forward, vel.y + def.recoil.up - aim.y * def.recoil.back),
     );
     emit(world, { type: 'shot', source: entity, weaponId: def.id, x: muzzleX, y: muzzleY, aimX: aim.x, aimY: aim.y });
-    if (def.id === 'blink-dagger') {
-      // PLAN Appendix C: teleport forward, damage at destination (same tick).
-      transform.x += aim.x * 4;
-      transform.y += aim.y * 4;
-      body.setPosition(new Vec2(transform.x, transform.y));
-    }
-    void takeDamage;
     void Controller;
   });
 }

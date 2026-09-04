@@ -17,6 +17,10 @@ const applyOne = ([player, controller, aim]: [
   const raw = ctx.rawInputs[player.inputIndex] ?? ctx.rawInputs[player.slot] ?? cooked;
   const input = normalizeInput(cooked);
   const t = ctx.tuning;
+  // Aim model: a deflected right stick (or the mouse, or a bot) owns the aim outright, so you can
+  // fight while backing away. Released, the aim holds for a beat (a flick-and-fire still lands where
+  // the flick pointed) and then follows the left stick, so running right punches right without ever
+  // touching the right stick. Standing still keeps the last aim.
   const stickActive = Math.hypot(raw.aimX, raw.aimY) > 0.01;
   if (stickActive) {
     aim.x = input.aimX;

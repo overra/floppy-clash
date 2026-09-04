@@ -1,99 +1,61 @@
 import { Pane } from 'tweakpane';
+import { attachBots } from './sim/ai/bots';
 import { createFixedStepLoop, interpolationAlpha } from './core/loop';
+import { createProfiler, formatStats, type StageStats } from './core/perf';
+import { armFighters, makeStressRng, stressEvents } from './debug/stress';
 import { createMixer } from './audio/mixer';
 import { createKeyboardFallback } from './input/keyboard';
 import {
-  buttonOn,
   consumeLatch,
+  createPadEdgeTracker,
   emptyLatch,
+  isPadKey,
+  padIndexOf,
+  padKey,
+  padLabel,
   pollGamepads,
   readPad,
   type Latch,
-  type PadStickMemory,
+  type PadEdges,
+  type PadEdgeTracker,
 } from './input/gamepad';
 import {
+  assignColors,
   canStartMatch,
-  claimConnectedPadIds,
-  claimDisconnectedSeat,
-  clearJoinSeats,
+  clearSeats,
   collectPadMap,
   createMenuState,
   cycleSeatColor,
-  edgePressed,
-  markDisconnectedSeat,
-  rememberTakenSeats,
+  maxBots,
   renderMenus,
-  screenAfterLeavingSettings,
-  shouldOfferRemapOnScreen,
-  syncMatchSettingsFromDom,
   takeOrReadySeat,
   takeSeat,
 } from './ui/menus';
-import { scoreboardMarkup } from './ui/scoreboard';
-import { playRumble } from './input/haptics';
-import { joinStartIndex, loadMaps, saveMap, shouldOfferRemap } from './input/remap';
-import {
-  canResumePause,
-  humanSeatAssignments,
-  keyboardSeatIndex,
-  matchPlayerCount,
-  pauseRisingEdge,
-  routeSeatInputs,
-  samplePrimaryLocal,
-  seedHeldFromDown,
-} from './input/seats';
-import { getLevel, gymLevel, matchLevelPool } from './levels/catalog';
-import { addShake, createCamera } from './render/camera';
+import { activate, focusedIn, moveFocus, nudge, setFocus, defaultFocus, type NavDir } from './ui/padNav';
+import { DEFAULT_MAP, loadMaps, saveMap } from './input/remap';
+import { gymLevel } from './levels/catalog';
+import { matchLevelPool } from './levels/catalog';
+import { addShake, createCamera, worldToScreen } from './render/camera';
 import { buildFrame } from './render/buildFrame';
+import type { RenderFrame } from './render/frame';
 import { createCanvasRenderer, type Renderer } from './render/canvas/renderer';
-import { emptyJfaIdentityReport, type JfaIdentityReport } from './render/gpu/lighting';
-import { emptyReadback, type FramebufferReadback } from './render/gpu/readback';
-import { getLastGpuInitError, tryCreateGpuRenderer } from './render/gpu/renderer';
-import { createDecalLayer, stampFxDecals, type PersistentDecalLayer } from './render/fx/decals';
-import { emitIntoWorld, listParticles, stepFxParticles } from './render/fx/particles';
-import { clearFx, createFxWorld } from './render/fx/world';
-import { blankInputs, EMPTY_INPUT, type PlayerInput } from './sim/input';
-import { inspectWorld, formatInspect } from './sim/inspect';
-import { primitiveSdf } from './render/sdf/primitives';
-import {
-  Controller,
-  Dead,
-  Health,
-  MatchState,
-  Player,
-  RoundPhase,
-  RoundState,
-  Transform,
-  Weapon,
-} from './sim/traits';
-import { applyExistingClientSnap } from './net/clientSnapApply';
-import { createClientView, snapshotCanOpenClientView, type ClientView } from './net/clientView';
-import { enqueuePendingSnap, extrasAfterOpen, takeOpenableFromQueue } from './net/lateJoinBuffer';
+import { gpuFailureReason, tryCreateGpuRenderer } from './render/gpu/renderer';
+import { createDecalLayerPool, snapDecalToSurface, type PersistentDecalLayer } from './render/fx/decals';
+import { createParticles, emitFromEvents, stepParticles, type Decal } from './render/fx/particles';
+import { blankInputs, type PlayerInput } from './sim/input';
+import { Bot, Combat, Dead, Health, Held, HeldBy, Loose, MatchState, Player, Projectile, RoundPhase, RoundState, Transform, Weapon } from './sim/traits';
+import { WEAPON_BY_ID, weaponByIndex } from './sim/weapons/defs';
 import { createSimWorld, type SimHandle } from './sim/world';
 import { spawnWeapon } from './sim/systems/weapons';
-import { applyFistDriveAll } from './sim/ai/fistDrive';
 import { tuning } from './sim/tuning';
 import { loadSettings, saveSettings, type UserSettings } from './ui/settingsStore';
 import { loadStats, recordKos, recordMatch } from './ui/statsStore';
-import { hostContentMessages, lateJoinSnapshotMessage, snapshotBytes } from './net/protocol';
-import { drainChangeTrackers, type WorldSnapshot } from './sim/snapshot';
-import {
-  acceptInputBundle,
-  applyRemoteInboxes,
-  bundleInputs,
-  emptyRemoteInbox,
-  type RemoteInbox,
-} from './net/simnet';
+import { hostContentMessages, lateJoinSnapshotMessage } from './net/protocol';
 import { createEditorState, fromHash, loadLibrary, type EditorState } from './editor/editor';
 import { mountEditor } from './editor/view';
-import {
-  createLocalLoopback,
-  createWebRtcSession,
-  signalingUrlFromLocation,
-  type NetSession,
-} from './net/transport';
-import { createRecorder, parseReplay } from './input/replay';
-import { parseLevel, type LevelDef } from './sim/level/schema';
+import { createLocalLoopback } from './net/transport';
+import { createRecorder } from './input/replay';
+import type { LevelDef } from './sim/level/schema';
 
 export type Game = {
   start: () => Promise<void>;
@@ -107,90 +69,125 @@ type FloppyDebug = {
   countdown: number;
   physicsMs: number;
   gpuMs: number;
+  /** Backing-store pixels and the dynamic resolution scale the renderer settled on. */
+  resolution: { w: number; h: number; scale: number };
   phase: number;
+  /** Screen-space player positions (CSS px) for automation and debugging. */
+  players: {
+    slot: number;
+    color: number;
+    x: number;
+    y: number;
+    sx: number;
+    sy: number;
+    hp: number;
+    dead: boolean;
+    blocking: boolean;
+    weapon: string | null;
+    bot: Record<string, number> | null;
+  }[];
+  /** Loose weapons lying around, for checking what bots are trying to fetch. */
+  loose: { x: number; y: number; id: string; cooldown: number }[];
   forceLastStand: () => void;
-  armLiveFists: () => void;
-  disarmLiveFists: () => void;
-  configureMatch: (partial: {
-    maxHp?: number;
-    enabledWeapons?: string[] | 'all';
-    enabledLevels?: string[] | 'all';
-    rotation?: 'random' | 'ordered';
-  }) => void;
-  fistKills: number;
-  liveFists: boolean;
-  speedRounds: () => void;
-  matchRound: number;
-  scoreboardTicksSeen: number;
-  scoreboardWindow: number;
-  debugDraw: boolean;
-  debugHud: boolean;
-  freezeCam: boolean;
-  netRole: string;
-  netState: string;
-  netReady: boolean;
-  lastSnapTick: number;
-  lastSnapBytes: number;
-  lastSnapBinary: boolean;
-  lastSnapWireBytes: number;
-  lastInputTick: number;
-  lastInputBundleLen: number;
-  playerXs: number[];
-  playerYs: number[];
-  maxHp: number;
-  holdInput: (partial: Partial<PlayerInput>) => void;
-  clearInput: () => void;
-  clientViewTick: number;
-  clientAppliedX: number;
-  clientRestored: boolean;
-  clientPendingSnaps: number;
-  weaponCount: number;
-  p0Hp: number;
-  p0Dead: boolean;
-  slowmo: number;
-  rendererSwitches: number;
-  lastReplayBytes: number;
-  lastReplayName: string;
-  replayLoaded: boolean;
-  loadReplay: (json: string) => boolean;
-  netPeers: number;
-  netSlot: number;
-  entities: number;
-  chatOpen: boolean;
-  lastChat: string;
-  lastFrameGroups: number;
-  lastFrameColored: number;
-  inspect: string;
-  lastLevelId: string;
-  pendingLevelId: string;
-  loadLevel: (raw: unknown) => string;
-  sendMatchChat: (text: string) => void;
-  gpuPipelineBackend: 'typegpu' | 'none';
-  gpuPipelineApi: 'root.createRenderPipeline' | '';
-  gpuPipelineResourceType: string;
-  gpuInitError: string;
-  readFramebuffer: () => Promise<FramebufferReadback>;
-  lightingKind: 'cascades' | 'glow' | 'off' | 'none';
-  jfaBound: boolean;
-  jfaError: string;
-  readJfaIdentity: () => Promise<JfaIdentityReport>;
-  playerColors: number[];
-  pausedBy: string | null;
-  playerGrounded: boolean[];
-  lastSeatJumps: boolean[];
-  padMaps: Record<string, { jump: number; attack: number; block: number; throw: number; pause: number }>;
-  matchWins: number[];
+  /** Puts a weapon straight into a fighter's hands (browser tests and manual checks of a specific gun). */
+  giveWeapon: (slot: number, id: string) => void;
+  freeze: (on: boolean) => void;
+  stepTicks: (n: number) => void;
+  /** Per-stage frame timings (ms) over the last few seconds: input, sim, fx, build, render, hud, frame. */
+  perf: () => Record<string, StageStats>;
+  /** rAF gaps over 12 ms seen during play since the page loaded (missed frames at 120 Hz). */
+  longFrames: number;
+  /**
+   * The first 64 long frames: when, how long the gap was, the stage breakdown of the frame before it,
+   * and the JS heap (MB, Chrome only) on either side of the gap; a drop means a major GC ran in it.
+   */
+  longFrameLog: { at: number; interval: number; tick: number; before: Record<string, number>; heapBefore: number; heapAfter: number }[];
+  /** Per-stage cost of every frame in which the sim swapped arenas: the one frame that does a level's worth of setup. */
+  rotationLog: { tick: number; level: string; stages: Record<string, number> }[];
+  /** The most recent RenderFrame handed to the renderer (group/pixel accounting from the console). */
+  lastFrame: () => RenderFrame | null;
+  /** Stress scene: keep at least `target` particles alive and every fighter armed (0 turns it off). */
+  stress: (target: number) => void;
+};
+
+type FloppyLauncher = {
+  /** Start a deterministic solo match from anywhere (menu included); returns the level id used. */
+  startMatch: (opts?: { level?: string; seed?: number; bots?: number; humans?: number; firstTo?: number }) => string;
+  /** Drop a loose weapon into the running sim (defaults to just above player 1). */
+  spawnWeapon: (id: string, x?: number, y?: number) => boolean;
+  /** Put a weapon straight into a player's hands. */
+  giveWeapon: (slot: number, id: string) => boolean;
+  /** Every weapon id in the roster, for galleries and sweeps. */
+  weaponIds: () => string[];
+  /** Hold an input override for a slot for the next N sim ticks (merged over live input). */
+  scriptInput: (slot: number, input: Partial<PlayerInput>, ticks: number) => void;
+  /** Drop a fighter at a world position, at rest. */
+  teleport: (slot: number, x: number, y: number) => boolean;
+  /** Live projectile list for inspection: kind, phase, fuse, position. */
+  projectiles: () => { kind: number; phase: number; fuse: number; x: number; y: number; defId: number }[];
+  /** Stress scene (see FloppyDebug.stress); available before a match starts. */
+  stress: (target: number) => void;
 };
 
 declare global {
   interface Window {
     __floppy?: FloppyDebug;
+    __floppyLaunch?: FloppyLauncher;
   }
+}
+
+/** Used JS heap in MB from Chrome's non-standard `performance.memory`, 0 elsewhere. */
+function usedHeapMb(): number {
+  const mem = (performance as Performance & { memory?: { usedJSHeapSize: number } }).memory;
+  return mem ? Math.round(mem.usedJSHeapSize / 1048576) : 0;
 }
 
 export function createGame(root: HTMLElement): Game {
   let canvas = root.querySelector('#game') as HTMLCanvasElement;
   const menusEl = root.querySelector('#menus') as HTMLElement;
+  // A canvas element can only ever own one context type ('2d' or 'webgpu'), so
+  // each renderer is created against its own element and the winner is swapped
+  // into the DOM under the same id/class.
+  function adoptCanvas(next: HTMLCanvasElement) {
+    if (next === canvas) return;
+    next.id = canvas.id;
+    next.className = canvas.className;
+    canvas.replaceWith(next);
+    sizeObserver?.unobserve(canvas);
+    canvas = next;
+    sizeObserver?.observe(canvas);
+    measureCanvas();
+  }
+  /**
+   * CSS size of the canvas. Kept current by a ResizeObserver rather than read from `clientWidth` every
+   * frame: a layout read inside the frame forces a synchronous layout whenever a HUD transition has
+   * dirtied the tree, which is most frames of a real fight.
+   */
+  const view = { w: 1280, h: 720 };
+  let viewDirty = true;
+  let lastDpr = window.devicePixelRatio || 1;
+  function measureCanvas() {
+    view.w = canvas.clientWidth || 1280;
+    view.h = canvas.clientHeight || 720;
+    viewDirty = true;
+  }
+  const sizeObserver =
+    typeof ResizeObserver === 'function'
+      ? new ResizeObserver((entries) => {
+          for (const entry of entries) {
+            const box = entry.contentBoxSize?.[0];
+            if (box && entry.target === canvas) {
+              view.w = Math.round(box.inlineSize) || 1280;
+              view.h = Math.round(box.blockSize) || 720;
+              viewDirty = true;
+            } else if (entry.target === canvas) {
+              measureCanvas();
+            }
+          }
+        })
+      : null;
+  sizeObserver?.observe(canvas);
+  measureCanvas();
   const hudEl = root.querySelector('#hud') as HTMLElement;
   const settings: UserSettings = loadSettings();
   const menus = createMenuState();
@@ -202,101 +199,154 @@ export function createGame(root: HTMLElement): Game {
   mixer.music = settings.music;
   const loop = createFixedStepLoop(tuning.tickRate);
   const latches: Latch[] = [emptyLatch(), emptyLatch(), emptyLatch(), emptyLatch()];
-  const lastAim = [
-    { x: 1, y: 0 },
-    { x: -1, y: 0 },
-    { x: 1, y: 0 },
-    { x: -1, y: 0 },
-  ];
-  const stickMem: PadStickMemory[] = [
-    { moveX: 0, moveY: 0 },
-    { moveX: 0, moveY: 0 },
-    { moveX: 0, moveY: 0 },
-    { moveX: 0, moveY: 0 },
-  ];
-  const joinAHeld = [false, false, false, false];
-  const joinStartHeld = [false, false, false, false];
-  const pauseHeld = [false, false, false, false];
-  const joinLeftHeld = [false, false, false, false];
-  const joinRightHeld = [false, false, false, false];
+  // Last accepted right-stick vector per pad, for the release-transient filter ({0,0} = at rest).
+  const lastAim: { x: number; y: number }[] = [];
+  const padEdges: PadEdgeTracker[] = [];
+  /**
+   * Which device drives each fighter slot in the running match ('keyboard' or 'pad:<index>'),
+   * fixed when the match starts from the seats people took. Empty outside a match (and for
+   * matches launched from the editor / debug hooks), in which case slot k falls back to pad k,
+   * or the keyboard for slot 0 when no pad sits there.
+   */
+  let slotDevices: string[] = [];
+  /** The last device that pressed a menu control: "Solo vs Bots" seats whoever chose it. */
+  let lastMenuDevice = 'keyboard';
   let renderer: Renderer | null = null;
   let rendererKind: 'gpu' | 'canvas' = 'canvas';
   let sim: SimHandle | null = null;
   let cam = createCamera(gymLevel.bounds);
-  const fx = createFxWorld();
-  let decalLayer: PersistentDecalLayer = createDecalLayer(gymLevel.bounds);
-  let clientView: ClientView | null = null;
-  let lastSnapBytes = 0;
-  let lastSnapBinary = false;
-  let lastSnapWireBytes = 0;
-  let lastClientLevelId = '';
-  let lastInputTick = -1;
-  let lastInputBundleLen = 0;
-  let inputSeq = 0;
-  let heldNetInput: PlayerInput | null = null;
-  let liveFists = false;
-  let liveFistsApplied = false;
-  let fistKills = 0;
-  let scoreboardTicksSeen = 0;
-  let rendererSwitches = 0;
-  let netName = 'guest';
-  let netSlot = 0;
-  let nextGuestSlot = 0;
-  const slotByName = new Map<string, number>();
-  let helloRetryAt = 0;
-  let pendingLevel: LevelDef | undefined;
-  let pendingClientSnaps: WorldSnapshot[] = [];
-  const remoteInboxes: RemoteInbox[] = [
-    emptyRemoteInbox(),
-    emptyRemoteInbox(),
-    emptyRemoteInbox(),
-    emptyRemoteInbox(),
-  ];
-  const inputHist: PlayerInput[] = [];
-  let chatOpen = false;
-  let replayLoaded = false;
-  let matchChatEl: HTMLDivElement | null = null;
+  const particles = createParticles();
+  const decals: Decal[] = [];
+  // Decal textures are recycled across level swaps (match and attract mode share the pool).
+  const decalPool = createDecalLayerPool();
+  let decalLayer: PersistentDecalLayer = decalPool.acquire(gymLevel.bounds);
+  let renderedLevel: LevelDef = gymLevel;
   let raf = 0;
   let last = performance.now();
   let paused = false;
   let editor: EditorState | null = null;
-  let playtestingEditor = false;
   let pane: Pane | null = null;
-  let net: NetSession = createLocalLoopback();
+  const net = createLocalLoopback();
   let extraLevels: LevelDef[] = [];
   let debugHud = false;
   let debugDraw = false;
   let freezeCam = false;
+  let humanCount = 1;
+  const slotName = (slot: number) => (slot >= humanCount ? `Bot ${slot + 1}` : `P${slot + 1}`);
+  // Debug: hold the sim still (rendering continues) and single-step it from the console.
+  let frozen = false;
+  let frozenSteps = 0;
   let recorder = createRecorder(0, 'gym');
   let maps = loadMaps();
   let hitStop = 0;
   let stats = loadStats();
-  let lastFrameGroups = 0;
-  let lastFrameColored = 0;
-  let pausedBy: string | null = null;
-  let routeByJoinSeats = false;
-  let lastSampled = blankInputs(4);
+  // Where each frame's time goes (F3 overlay, window.__floppy.perf()), and the stress scene that
+  // keeps the battlefield busy for profiling: `?stress=600` or __floppy.stress(600).
+  const profiler = createProfiler(240);
+  let longFrames = 0;
+  const longFrameLog: FloppyDebug['longFrameLog'] = [];
+  const rotationLog: FloppyDebug['rotationLog'] = [];
+  let rotatedThisFrame = false;
+  let lastHeap = 0;
+  let lastFrame: RenderFrame | null = null;
+  /** Canvas CSS size, sampled once per frame. */
+  // The #hud element starts visible in the markup; `null` forces the first frame to set it.
+  let hudShown: boolean | null = null;
+  let stressTarget = Number(new URLSearchParams(window.location.search).get('stress') ?? 0) || 0;
+  const stressRng = makeStressRng();
+
+  // Attract mode: a bots-only brawl plays behind the menus so the title screen is never a dead panel.
+  let demo: SimHandle | null = null;
+  let demoCam = createCamera(gymLevel.bounds);
+  const demoParticles = createParticles(2048);
+  const demoDecals: Decal[] = [];
+  let demoDecalLayer: PersistentDecalLayer = decalPool.acquire(gymLevel.bounds);
+  let demoLevel: LevelDef = gymLevel;
+  const demoLoop = createFixedStepLoop(tuning.tickRate);
+  const DEMO_SCREENS = new Set(['menu', 'join', 'settings', 'lobby']);
+  /** `--hp` values for 0..100 %, pre-stringified so a health tick allocates nothing. */
+  const HP_SCALE = Array.from({ length: 101 }, (_, i) => (i / 100).toFixed(2));
+
+  function startDemo() {
+    const pool = matchLevelPool('all');
+    const level = pool[Math.floor(Math.random() * pool.length)] ?? gymLevel;
+    demo?.destroy();
+    demo = createSimWorld({
+      level,
+      seed: (Math.random() * 1e9) | 0,
+      settings: { playerCount: 0, bots: 4, maxHp: 100, firstTo: 0, showWins: false },
+    });
+    attachBots(demo.ecs, [0, 1, 2, 3]);
+    demoCam = createCamera(level.bounds);
+    demoParticles.clear();
+    demoDecals.length = 0;
+    decalPool.release(demoDecalLayer);
+    demoDecalLayer = decalPool.acquire(level.bounds);
+    demoLevel = level;
+  }
+
+  function stopDemo() {
+    demo?.destroy();
+    demo = null;
+  }
+
+  function stepDemo(dt: number) {
+    if (!demo) startDemo();
+    const world = demo!;
+    const scale = world.ecs.get(RoundState)?.phase === RoundPhase.LastKill ? tuning.lastKillSlowmo : 1;
+    const steps = demoLoop.consume(dt, scale);
+    for (let i = 0; i < steps; i++) {
+      const events = world.step(blankInputs(4));
+      if (world.ctx.level !== demoLevel) {
+        demoLevel = world.ctx.level;
+        demoParticles.clear();
+        demoDecals.length = 0;
+        decalPool.release(demoDecalLayer);
+        demoDecalLayer = decalPool.acquire(demoLevel.bounds);
+      }
+      emitFromEvents(events, demoParticles, demoDecals);
+      demoDecalLayer.stampNew(demoDecals, (d) => (!settings.reduceBlood || d.kind === 'scorch') && snapDecalToSurface(world.ecs, d));
+      demoDecals.length = 0;
+      demoDecalLayer.consumed = 0;
+    }
+    stepParticles(demoParticles, dt);
+    const frame = buildFrame(world, demoCam, interpolationAlpha(demoLoop), view.w, view.h, settings.reduceBlood ? null : demoParticles, {
+      colorblind: settings.colorblind,
+      decalLayer: demoDecalLayer,
+      dt: dt * scale,
+    });
+    renderer?.render(frame);
+  }
 
   function show() {
+    // Re-rendering replaces every node; if a pad / arrow-key cursor was on a control, put it back
+    // on the same control (by id, else by label) so the cursor does not vanish on each state change.
+    const prev = menusEl.querySelector<HTMLElement>('.pad-focus');
+    const prevKey = prev ? (prev.id ? `#${prev.id}` : prev.textContent?.trim() ?? '') : '';
+    const prevScreen = menusEl.querySelector('.menu-wrap')?.className ?? '';
     renderMenus(
       menusEl,
       menus,
       {
         local: () => {
-          rememberTakenSeats(menus.seats, menus.padMemory);
-          clearJoinSeats(menus.seats);
+          clearSeats(menus.seats);
           menus.screen = 'join';
           menus.bots = 0;
-          claimVisiblePads();
           show();
         },
         bots: () => {
-          rememberTakenSeats(menus.seats, menus.padMemory);
-          clearJoinSeats(menus.seats);
+          // Seat whoever pressed the button (pad or keyboard), readied, with a full table of bots:
+          // one more press of Start and the match is on.
+          clearSeats(menus.seats);
+          const seat = takeOrReadySeat(menus.seats, lastMenuDevice, deviceLabel(lastMenuDevice));
+          if (seat) seat.ready = true;
           menus.screen = 'join';
           menus.bots = 3;
-          menus.seats[0] = { taken: true, ready: true, color: 0, padId: 'keyboard', name: 'You' };
-          claimVisiblePads();
+          show();
+        },
+        cycleBots: () => {
+          const cap = maxBots(menus.seats);
+          menus.bots = cap > 0 ? (menus.bots + 1) % (cap + 1) : 0;
           show();
         },
         online: () => {
@@ -305,29 +355,12 @@ export function createGame(root: HTMLElement): Game {
         },
         editor: () => openEditor(),
         settings: () => {
-          menus.returnScreen = 'menu';
-          menus.remapPadId = '';
-          void loadLibrary()
-            .then((levels) => {
-              extraLevels = levels;
-              menus.screen = 'settings';
-              show();
-            })
-            .catch(() => {
-              menus.screen = 'settings';
-              show();
-            });
+          menus.screen = 'settings';
+          show();
         },
         start: () => startIfReady(),
-        startOnline: () => {
-          void beginMatch();
-        },
         back: () => {
-          const ret = menus.returnScreen;
-          menus.returnScreen = '';
-          menus.remapPadId = '';
-          menus.notice = '';
-          menus.screen = screenAfterLeavingSettings(ret);
+          menus.screen = 'menu';
           show();
         },
         save: () => {
@@ -336,11 +369,7 @@ export function createGame(root: HTMLElement): Game {
           menus.firstTo = settings.firstTo;
           mixer.sfx = settings.sfx;
           mixer.music = settings.music;
-          mixer.applyGains();
-          const ret = menus.returnScreen;
-          menus.returnScreen = '';
-          menus.remapPadId = '';
-          menus.screen = screenAfterLeavingSettings(ret);
+          menus.screen = 'menu';
           show();
         },
         saveRemap: () => {
@@ -350,349 +379,95 @@ export function createGame(root: HTMLElement): Game {
           menus.notice = `Saved remap for ${padId}`;
           show();
         },
-        resume: () => {
-          requestResume('*');
-        },
-        quit: () => {
-          rememberTakenSeats(menus.seats, menus.padMemory);
-          sim = null;
-          paused = false;
-          pausedBy = null;
-          routeByJoinSeats = false;
-          if (playtestingEditor && editor) {
-            playtestingEditor = false;
-            menus.screen = 'editor';
-            mountEditor(menusEl, editor, editorFns());
-            return;
+        resume: () => setPaused(false),
+        quit: () => quitToMenu(),
+        host: () => {
+          if (!menus.roomCode) menus.roomCode = Math.random().toString(36).slice(2, 8).toUpperCase();
+          settings.maxHp = menus.maxHp;
+          settings.firstTo = menus.firstTo;
+          saveSettings(settings);
+          menus.chat.push(`* hosted room ${menus.roomCode} (HP ${menus.maxHp}, first-to ${menus.firstTo || 'endless'})`);
+          for (const msg of hostContentMessages(
+            JSON.stringify({ maxHp: settings.maxHp, firstTo: settings.firstTo }),
+            JSON.stringify({ id: 'host-level' }),
+          )) {
+            net.send(msg);
           }
-          playtestingEditor = false;
-          menus.screen = 'menu';
           show();
         },
-        host: () => {
-          void connectLobby('host');
-        },
         joinRoom: () => {
-          void connectLobby('client');
+          menus.roomCode = menus.roomCode || 'JOINME';
+          menus.chat.push(`* joined ${menus.roomCode}`);
+          show();
         },
         chat: (text?: string) => {
           if (!text) return;
           menus.chat.push(`you: ${text}`);
-          net.send({ t: 'chat', from: menus.netRole || 'you', text });
+          net.send({ t: 'chat', from: 'you', text });
           show();
         },
       },
       settings,
       maps,
       stats,
-      extraLevels,
     );
+    if (prevKey && menusEl.querySelector('.menu-wrap')?.className === prevScreen) {
+      const again = prevKey.startsWith('#')
+        ? menusEl.querySelector<HTMLElement>(prevKey)
+        : [...menusEl.querySelectorAll<HTMLElement>('button')].find((b) => b.textContent?.trim() === prevKey);
+      if (again) setFocus(menusEl, again);
+    }
   }
 
-  function editorFns() {
-    return {
-      playtest: (level: LevelDef) => {
-        playtestingEditor = true;
-        startSim(level, { playerCount: 1, bots: 1 });
-      },
+  function openEditor() {
+    stopDemo();
+    editor = createEditorState();
+    const hash = location.hash.startsWith('#l=') ? location.hash.slice(3) : '';
+    if (hash) {
+      const loaded = fromHash(hash);
+      if (loaded) editor.level = loaded;
+    }
+    menus.screen = 'editor';
+    mountEditor(menusEl, editor, {
+      playtest: (level) => startSim(level, { playerCount: 1, bots: 1 }),
       back: () => {
-        playtestingEditor = false;
         menus.screen = 'menu';
         editor = null;
         show();
       },
-    };
+    });
   }
 
-  function openEditor() {
-    if (!editor) editor = createEditorState();
-    const loaded = fromHash(location.hash);
-    if (loaded) editor.level = loaded;
-    menus.screen = 'editor';
-    mountEditor(menusEl, editor, editorFns());
-  }
-
+  let matchStarting = false;
   async function beginMatch() {
-    syncMatchSettingsFromDom(menusEl, menus, settings);
-    const taken = menus.seats.filter((s) => s.taken).length;
-    const online = menus.netRole === 'host' && net.peerCount > 0 ? 1 + net.peerCount : 0;
-    const vsBots = menus.bots > 0;
-    if (!online && vsBots) claimVisiblePads();
-    const seats = online ? undefined : humanSeatAssignments(menus.seats);
-    const humans = online || Math.max(1, taken);
-    extraLevels = settings.includeUserLevels ? await loadLibrary().catch(() => []) : [];
-    const pool = matchLevelPool(settings.enabledLevels, extraLevels);
-    const level =
-      pendingLevel ??
-      (settings.rotation === 'ordered'
-        ? (pool[0] ?? gymLevel)
-        : (pool[Math.floor(Math.random() * pool.length)] ?? gymLevel));
-    startSim(level, {
-      playerCount: online ? humans : vsBots ? 1 : matchPlayerCount(menus.seats, false),
-      bots: menus.bots,
-      maxHp: menus.maxHp,
-      firstTo: menus.firstTo,
-      seats,
-    });
-  }
-
-  function queuePendingSnap(snap: WorldSnapshot): void {
-    pendingClientSnaps = enqueuePendingSnap(pendingClientSnaps, snap);
-  }
-
-  function applyBufferedSnaps(view: ClientView, opened: WorldSnapshot, extras: WorldSnapshot[]): void {
-    const t0 = performance.now();
-    view.push(t0, opened);
-    extras.forEach((snap, i) => {
-      view.push(t0 + (i + 1) * 16, snap);
-    });
-    view.apply(t0 + extras.length * 16 + 120);
-  }
-
-  function openClientViewFrom(snap: WorldSnapshot, extras: WorldSnapshot[]): ClientView | null {
-    const override =
-      pendingLevel && (!snap.levelId || snap.levelId === pendingLevel.id) ? pendingLevel : undefined;
+    // Start and Enter both land here; the level library load is async, so guard against a
+    // double press spawning two sims.
+    if (matchStarting) return;
+    matchStarting = true;
     try {
-      const view = createClientView(snap, 120, override);
-      clientView = view;
-      pendingClientSnaps = [];
-      applyBufferedSnaps(view, snap, extras);
-      return view;
-    } catch {
-      return null;
+      const taken = menus.seats.filter((s) => s.taken);
+      const humans = Math.max(1, taken.length);
+      const bots = Math.min(menus.bots, maxBots(menus.seats));
+      extraLevels = settings.includeUserLevels ? await loadLibrary().catch(() => []) : [];
+      const pool = matchLevelPool(settings.enabledLevels, extraLevels);
+      const level =
+        settings.rotation === 'ordered'
+          ? (pool[0] ?? gymLevel)
+          : (pool[Math.floor(Math.random() * pool.length)] ?? gymLevel);
+      startSim(level, {
+        playerCount: humans,
+        bots,
+        maxHp: settings.maxHp,
+        firstTo: settings.firstTo,
+        devices: taken.length ? taken.map((s) => s.padId) : ['keyboard'],
+        colors: assignColors(menus.seats, humans + bots),
+      });
+    } finally {
+      matchStarting = false;
     }
-  }
-
-  function tryOpenClientView(snap: WorldSnapshot): ClientView | null {
-    if (clientView) return clientView;
-    if (!snapshotCanOpenClientView(snap, pendingLevel)) {
-      queuePendingSnap(snap);
-      return null;
-    }
-    const extras = extrasAfterOpen(pendingClientSnaps, snap);
-    const view = openClientViewFrom(snap, extras);
-    if (!view) queuePendingSnap(snap);
-    return view;
-  }
-
-  function flushPendingClientSnaps(): void {
-    if (clientView || pendingClientSnaps.length === 0) return;
-    const taken = takeOpenableFromQueue(pendingClientSnaps, pendingLevel);
-    if (!taken) return;
-    const view = openClientViewFrom(taken.opened, taken.extras);
-    if (!view) {
-      pendingClientSnaps = enqueuePendingSnap(pendingClientSnaps, taken.opened);
-      for (const extra of taken.extras) pendingClientSnaps = enqueuePendingSnap(pendingClientSnaps, extra);
-      return;
-    }
-    syncClientLevelChrome();
-  }
-
-  function retryClientHello(): void {
-    if (menus.netRole !== 'client' || netSlot !== 0 || !net.ready || !netName) return;
-    const now = performance.now();
-    if (now - helloRetryAt <= 400) return;
-    helloRetryAt = now;
-    net.send({ t: 'hello', name: netName }, true);
-  }
-
-  function enterClientPlayIfReady(): void {
-    if (!clientView || menus.netRole !== 'client' || menus.screen === 'play') return;
-    menus.screen = 'play';
-    show();
-  }
-
-  function attachNet(session: NetSession): void {
-    net.close();
-    net = session;
-    net.onMessage((msg) => {
-      if (msg.t === 'chat') {
-        menus.chat.push(`${msg.from}: ${msg.text}`);
-        if (menus.screen === 'lobby') show();
-        else {
-          const log = matchChatEl?.querySelector('#matchchat-log');
-          if (log) log.textContent = menus.chat.slice(-6).join('\n');
-        }
-      }
-      if (msg.t === 'settings') {
-        try {
-          const parsed = JSON.parse(msg.json) as { maxHp?: number; firstTo?: number };
-          if (parsed.maxHp != null) {
-            menus.maxHp = parsed.maxHp;
-            settings.maxHp = parsed.maxHp;
-          }
-          if (parsed.firstTo != null) {
-            menus.firstTo = parsed.firstTo;
-            settings.firstTo = parsed.firstTo;
-          }
-          menus.notice = 'Host settings received';
-        } catch {
-          /* ignore */
-        }
-        if (menus.screen === 'lobby') show();
-      }
-      if (msg.t === 'level') {
-        menus.notice = 'Host level JSON received';
-        try {
-          pendingLevel = parseLevel(JSON.parse(msg.json));
-        } catch {
-          try {
-            const parsed = JSON.parse(msg.json) as LevelDef;
-            if (parsed?.id && parsed.bounds) pendingLevel = parsed;
-          } catch {
-            /* id-only payload */
-          }
-        }
-        if (pendingLevel) {
-          clientView?.useLevel(pendingLevel);
-          flushPendingClientSnaps();
-          enterClientPlayIfReady();
-        }
-        if (menus.screen === 'lobby') show();
-      }
-      if (msg.t === 'input' && session.role === 'host') {
-        if (msg.slot > 0 && msg.slot < 4) {
-          remoteInboxes[msg.slot] = acceptInputBundle(remoteInboxes[msg.slot]!, msg.tick, msg.bundle);
-          lastInputTick = remoteInboxes[msg.slot]!.tick;
-          lastInputBundleLen = remoteInboxes[msg.slot]!.bundleLen;
-        }
-      }
-      if (msg.t === 'event' && msg.kind === 'slot') {
-        const [name, slot] = msg.payload.split(':');
-        if (name === netName) netSlot = Number(slot) || 0;
-      }
-      if (msg.t === 'snapshot') {
-        menus.lastSnapTick = msg.snap.tick;
-        lastSnapBinary = session.lastInboundBinary;
-        lastSnapWireBytes = session.lastInboundBytes;
-        lastSnapBytes = lastSnapWireBytes || snapshotBytes(msg.snap);
-        menus.notice = `Late-join snapshot tick ${msg.snap.tick}`;
-        if (session.role === 'client') {
-          if (pendingLevel) clientView?.useLevel(pendingLevel);
-          if (!clientView) tryOpenClientView(msg.snap);
-          if (clientView) {
-            clientView = applyExistingClientSnap({
-              view: clientView,
-              apply: (view) => {
-                view.push(performance.now(), msg.snap);
-                view.apply(performance.now());
-                syncClientLevelChrome();
-              },
-              rebuild: () => openClientViewFrom(msg.snap, []),
-            });
-          }
-          retryClientHello();
-          enterClientPlayIfReady();
-        }
-        if (menus.screen === 'lobby') show();
-      }
-      if (msg.t === 'event' && msg.kind === 'disconnect') {
-        menus.notice = 'Peer disconnected';
-        if (menus.screen === 'lobby') show();
-      }
-      if (msg.t === 'event' && msg.kind === 'peer-open' && session.role === 'host') {
-        for (const m of hostContentMessages(
-          JSON.stringify({ maxHp: settings.maxHp, firstTo: settings.firstTo }),
-          JSON.stringify(sim?.ctx.level ?? { id: 'host-level' }),
-        )) {
-          session.send(m, true);
-        }
-        if (sim) {
-          session.send(lateJoinSnapshotMessage(sim.snapshot()), true);
-          drainChangeTrackers(sim.ecs);
-        }
-      }
-      if (msg.t === 'hello' && session.role === 'host') {
-        let slot = slotByName.get(msg.name);
-        if (slot == null) {
-          nextGuestSlot = Math.min(3, nextGuestSlot + 1);
-          slot = nextGuestSlot;
-          slotByName.set(msg.name, slot);
-        }
-        session.send({ t: 'event', kind: 'slot', payload: `${msg.name}:${slot}` }, true);
-        for (const m of hostContentMessages(
-          JSON.stringify({ maxHp: settings.maxHp, firstTo: settings.firstTo }),
-          JSON.stringify(sim?.ctx.level ?? { id: 'host-level' }),
-        )) {
-          session.send(m, true);
-        }
-        if (sim) {
-          sim.ensureSeat(slot);
-          session.send(lateJoinSnapshotMessage(sim.snapshot()), true);
-          drainChangeTrackers(sim.ecs);
-        }
-      }
-    });
-  }
-
-  async function connectLobby(role: 'host' | 'client'): Promise<void> {
-    if (role === 'host' && !menus.roomCode) {
-      menus.roomCode = Math.random().toString(36).slice(2, 8).toUpperCase();
-    }
-    menus.roomCode = (menus.roomCode || 'JOINME').toUpperCase();
-    menus.netRole = role;
-    menus.netState = 'connecting';
-    menus.notice = role === 'host' ? `Hosting ${menus.roomCode}…` : `Joining ${menus.roomCode}…`;
-    show();
-    if (role === 'host') {
-      settings.maxHp = menus.maxHp;
-      settings.firstTo = menus.firstTo;
-      saveSettings(settings);
-    }
-    try {
-      const session = await createWebRtcSession(signalingUrlFromLocation(), menus.roomCode, role);
-      attachNet(session);
-      menus.netState = 'up';
-      menus.chat.push(
-        role === 'host'
-          ? `* hosted room ${menus.roomCode} (WebRTC, HP ${menus.maxHp})`
-          : `* joined ${menus.roomCode} (WebRTC)`,
-      );
-      if (role === 'client') {
-        netName = `g${Math.random().toString(36).slice(2, 6)}`;
-        session.send({ t: 'hello', name: netName }, true);
-      }
-      if (role === 'host') {
-        nextGuestSlot = 0;
-        slotByName.clear();
-        for (const msg of hostContentMessages(
-          JSON.stringify({ maxHp: settings.maxHp, firstTo: settings.firstTo }),
-          JSON.stringify(sim?.ctx.level ?? { id: 'host-level' }),
-        )) {
-          session.send(msg);
-        }
-      }
-    } catch {
-      menus.netState = 'error';
-      menus.notice = 'Signaling failed — run npm run server (loopback still works locally).';
-      attachNet(createLocalLoopback());
-    }
-    show();
-  }
-
-  function connectedPadIds(): string[] {
-    return pollGamepads()
-      .filter((p): p is Gamepad => Boolean(p?.id))
-      .map((p) => p.id);
-  }
-
-  function claimVisiblePads(): void {
-    claimConnectedPadIds(menus.seats, connectedPadIds(), menus.padMemory, {
-      replaceKeyboard: menus.bots > 0,
-    });
-  }
-
-  /** A Start already down when play begins must not immediately pause (PLAN 4.12). */
-  function seedPauseHeldFromPads(): void {
-    const down = pollGamepads().map((pad) =>
-      pad ? buttonOn(pad.buttons[joinStartIndex(padMapFor(pad.id))]) : false,
-    );
-    seedHeldFromDown(pauseHeld, down);
-    seedHeldFromDown(joinStartHeld, down);
   }
 
   function startIfReady() {
-    if (menus.bots > 0) claimVisiblePads();
     if (!canStartMatch(menus.seats)) {
       menus.notice = 'Join and press A / Space again to ready, then Start.';
       show();
@@ -701,56 +476,51 @@ export function createGame(root: HTMLElement): Game {
     void beginMatch();
   }
 
-  function syncClientLevelChrome(): void {
-    if (!clientView) return;
-    const id = clientView.sim.ctx.level.id;
-    if (id === lastClientLevelId) return;
-    lastClientLevelId = id;
-    cam = createCamera(clientView.sim.ctx.level.bounds);
-    clearFx(fx);
-    decalLayer = createDecalLayer(clientView.sim.ctx.level.bounds);
+  function deviceLabel(device: string): string {
+    if (device === 'keyboard') return 'Keyboard';
+    const pad = pollGamepads()[padIndexOf(device)];
+    return pad ? padLabel(pad) : 'Pad';
   }
 
-  function requestPause(actor: string): void {
-    if (menus.screen !== 'play' || paused) return;
-    paused = true;
-    pausedBy = actor;
-    menus.screen = 'pause';
-    show();
+  function matchIsOver(): boolean {
+    return !!sim && menus.screen === 'play' && sim.ecs.get(RoundState)?.phase === RoundPhase.MatchOver;
   }
 
-  function requestResume(actor: string): void {
-    if (!paused || menus.screen !== 'pause') return;
-    if (!canResumePause(actor, pausedBy, menus.seats)) return;
-    paused = false;
-    pausedBy = null;
-    menus.screen = 'play';
-    show();
+  /** Same seats, same rules, fresh arena and seed: the "play again" the match-over card promises. */
+  function rematch() {
+    if (!sim) return;
+    const bots = sim.players().filter((p) => p.has(Bot)).length;
+    const ms = sim.ecs.get(MatchState);
+    const colors = sim.players().map((p) => p.get(Player)?.color ?? 0);
+    const pool = matchLevelPool(settings.enabledLevels, extraLevels);
+    const level = settings.rotation === 'ordered' ? (pool[0] ?? gymLevel) : (pool[Math.floor(Math.random() * pool.length)] ?? gymLevel);
+    startSim(level, { playerCount: humanCount, bots, maxHp: ms?.maxHp, firstTo: ms?.firstTo, devices: slotDevices, colors });
   }
 
-  function startSim(
-    level: LevelDef,
-    opts: {
-      playerCount: number;
-      bots: number;
-      maxHp?: number;
-      firstTo?: number;
-      seats?: { slot: number; color: number; inputIndex: number }[];
-    },
-  ) {
-    mixer.stopMusic();
+  type StartOpts = {
+    playerCount: number;
+    bots: number;
+    maxHp?: number;
+    firstTo?: number;
+    seed?: number;
+    /** Input device per human slot; omitted for editor / debug launches (slot k <- pad k, or the keyboard). */
+    devices?: string[];
+    colors?: number[];
+  };
+
+  function startSim(level: LevelDef, opts: StartOpts) {
     mixer.resume();
     mixer.startMusic();
-    const seed = (Math.random() * 1e9) | 0;
+    const seed = opts.seed ?? (Math.random() * 1e9) | 0;
+    humanCount = opts.playerCount;
+    slotDevices = opts.devices ? opts.devices.slice(0, opts.playerCount) : [];
     recorder = createRecorder(seed, level.id);
-    liveFistsApplied = false;
-    scoreboardTicksSeen = 0;
-    routeByJoinSeats = Boolean(opts.seats?.length);
+    stopDemo();
+    sim?.destroy();
     sim = createSimWorld({
       level,
       seed,
       extraLevels,
-      seats: opts.seats,
       settings: {
         playerCount: opts.playerCount,
         bots: opts.bots,
@@ -760,373 +530,510 @@ export function createGame(root: HTMLElement): Game {
         enabledLevels: settings.enabledLevels,
         rotation: settings.rotation,
         showWins: settings.showWins,
-        physicsArms: settings.physicsArms,
+        colors: opts.colors,
       },
-      boxes: 0,
     });
+    if (opts.bots > 0) {
+      const botSlots: number[] = [];
+      sim.ecs.query(Player).updateEach(([p]) => {
+        if (p.slot >= opts.playerCount) botSlots.push(p.slot);
+      });
+      attachBots(sim.ecs, botSlots);
+    }
     cam = createCamera(level.bounds);
-    clearFx(fx);
-    decalLayer = createDecalLayer(level.bounds);
+    particles.clear();
+    decals.length = 0;
+    decalPool.release(decalLayer);
+    decalLayer = decalPool.acquire(level.bounds);
+    renderedLevel = level;
+    resetBanner();
     menus.screen = 'play';
-    seedPauseHeldFromPads();
     show();
-    net.send({ t: 'level', json: JSON.stringify(level) });
     net.send(lateJoinSnapshotMessage(sim.snapshot()));
-    drainChangeTrackers(sim.ecs);
   }
 
-  /** PLAN M9 stretch: seed + input tape, local only. */
-  function loadReplayTape(raw: string): boolean {
-    try {
-      const replay = parseReplay(raw);
-      const level = getLevel(replay.levelId);
-      recorder = createRecorder(replay.seed, replay.levelId);
-      sim = createSimWorld({
-        level,
-        seed: replay.seed,
-        extraLevels,
-        settings: {
-          playerCount: 2,
-          bots: 0,
-          maxHp: settings.maxHp,
-          firstTo: 0,
-          enabledWeapons: settings.enabledWeapons,
-          enabledLevels: settings.enabledLevels,
-          rotation: settings.rotation,
-          showWins: settings.showWins,
-          physicsArms: settings.physicsArms,
-        },
-      });
-      for (const tickInputs of replay.inputs) {
-        recorder.push(tickInputs);
-        sim.step(tickInputs);
-      }
-      replayLoaded = true;
-      cam = createCamera(level.bounds);
-      clearFx(fx);
-      decalLayer = createDecalLayer(level.bounds);
-      menus.screen = 'play';
-      paused = true;
-      show();
-      publishDebug('', sim.getTick(), 0, 0, 0, sim.ecs.get(RoundState)?.phase ?? 0);
-      return true;
-    } catch {
-      replayLoaded = false;
-      return false;
-    }
+  // Debug/automation: per-slot input overrides that hold for a number of sim ticks, so browser
+  // tests can drive a fighter deterministically regardless of frame pacing.
+  const scripted: { input: Partial<PlayerInput>; ticks: number }[] = [];
+  function applyScriptedInputs(live: PlayerInput[]): PlayerInput[] {
+    if (!scripted.some((s) => s && s.ticks > 0)) return live;
+    return live.map((input, slot) => {
+      const s = scripted[slot];
+      if (!s || s.ticks <= 0) return input;
+      s.ticks -= 1;
+      return { ...input, ...s.input };
+    });
   }
+
+  // Inspection surface for browser tests and the console. Built once; the live fields are getters
+  // that read the sim on demand, so an idle page does not pay for entity queries every frame.
+  const debugApi: FloppyDebug = {
+    get rendererKind() {
+      return rendererKind;
+    },
+    get lastHash() {
+      return sim?.hash() ?? '';
+    },
+    get tick() {
+      return sim?.ctx.tick ?? 0;
+    },
+    get countdown() {
+      return lastFrame?.hud.countdown ?? 0;
+    },
+    get physicsMs() {
+      return sim?.ctx.lastPhysicsMs ?? 0;
+    },
+    get gpuMs() {
+      return renderer?.lastGpuMs ?? 0;
+    },
+    get resolution() {
+      return { w: renderer?.canvas.width ?? 0, h: renderer?.canvas.height ?? 0, scale: renderer?.resolutionScale ?? 1 };
+    },
+    get phase() {
+      return sim?.ecs.get(RoundState)?.phase ?? 0;
+    },
+    get players() {
+      if (!sim) return [];
+      const ecs = sim.ecs;
+      const viewW = canvas.clientWidth || 1280;
+      const viewH = canvas.clientHeight || 720;
+      return sim.players().map((e) => {
+        const t = e.get(Transform) ?? { x: 0, y: 0, angle: 0 };
+        const s = worldToScreen(cam, t.x, t.y, viewW, viewH);
+        let weapon: string | null = null;
+        for (const w of ecs.query(Weapon, Held)) {
+          if (w.targetFor(HeldBy) === e) weapon = weaponByIndex(w.get(Weapon)!.defId).id;
+        }
+        const bot = e.get(Bot);
+        return {
+          slot: e.get(Player)?.slot ?? 0,
+          color: e.get(Player)?.color ?? 0,
+          x: t.x,
+          y: t.y,
+          sx: s.x,
+          sy: s.y,
+          hp: e.get(Health)?.hp ?? 0,
+          dead: e.has(Dead),
+          blocking: e.get(Combat)?.blocking ?? false,
+          weapon,
+          bot: bot ? { mode: bot.mode, target: bot.target, surf: bot.surf, detour: bot.detour, timer: bot.timer } : null,
+        };
+      });
+    },
+    get loose() {
+      if (!sim) return [];
+      return sim.ecs.query(Weapon, Loose, Transform).map((w) => {
+        const wt = w.get(Transform)!;
+        const wep = w.get(Weapon)!;
+        return { x: wt.x, y: wt.y, id: weaponByIndex(wep.defId).id, cooldown: wep.pickupCooldown };
+      });
+    },
+    forceLastStand: () => {
+      if (!sim) return;
+      sim.players().forEach((p) => {
+        const slot = p.get(Player)?.slot ?? 0;
+        if (slot !== 0) p.set(Health, { hp: 0, maxHp: p.get(Health)?.maxHp ?? 100 });
+      });
+    },
+    giveWeapon: (slot, id) => {
+      if (!sim) return;
+      const p = sim.players().find((e) => e.get(Player)?.slot === slot);
+      const t = p?.get(Transform);
+      if (!p || !t) return;
+      for (const w of sim.ecs.query(Weapon, Held)) {
+        if (w.targetFor(HeldBy) === p) sim.ctx.pendingDestroy.push(w);
+      }
+      spawnWeapon(sim.ecs, id, t.x, t.y, false).add(Held(), HeldBy(p));
+    },
+    freeze: (on) => {
+      frozen = on;
+      frozenSteps = 0;
+    },
+    stepTicks: (n) => {
+      frozenSteps += Math.max(0, n | 0);
+    },
+    perf: () => profiler.stats(),
+    get longFrames() {
+      return longFrames;
+    },
+    longFrameLog,
+    rotationLog,
+    lastFrame: () => lastFrame,
+    stress: (target) => {
+      stressTarget = Math.max(0, target | 0);
+    },
+  };
+  window.__floppy = debugApi;
+
+  window.__floppyLaunch = {
+    scriptInput: (slot, input, ticks) => {
+      scripted[slot] = { input, ticks: Math.max(0, ticks | 0) };
+    },
+    startMatch: (opts = {}) => {
+      const pool = matchLevelPool(settings.enabledLevels, extraLevels);
+      const level = pool.find((l) => l.id === opts.level) ?? (opts.level === 'gym' ? gymLevel : null) ?? pool[0] ?? gymLevel;
+      startSim(level, { playerCount: opts.humans ?? 1, bots: opts.bots ?? 3, seed: opts.seed ?? 1, firstTo: opts.firstTo });
+      return level.id;
+    },
+    spawnWeapon: (id, x, y) => {
+      if (!sim || !WEAPON_BY_ID.has(id)) return false;
+      const p1 = sim.players()[0]?.get(Transform);
+      spawnWeapon(sim.ecs, id, x ?? (p1?.x ?? 0) + 1, y ?? (p1?.y ?? 0) + 1);
+      return true;
+    },
+    giveWeapon: (slot, id) => {
+      if (!sim || !WEAPON_BY_ID.has(id)) return false;
+      const owner = sim.players().find((e) => e.get(Player)?.slot === slot);
+      const at = owner?.get(Transform);
+      if (!owner || !at) return false;
+      for (const w of sim.ecs.query(Weapon, Held)) {
+        if (w.targetFor(HeldBy) === owner) sim.ctx.pendingDestroy.push(w);
+      }
+      const gun = spawnWeapon(sim.ecs, id, at.x, at.y, false);
+      gun.add(Held(), HeldBy(owner));
+      sim.ctx.bodies.get(gun)?.setActive(false);
+      return true;
+    },
+    weaponIds: () => [...WEAPON_BY_ID.keys()],
+    teleport: (slot, x, y) => {
+      if (!sim) return false;
+      const who = sim.players().find((e) => e.get(Player)?.slot === slot);
+      const body = who ? sim.ctx.bodies.get(who) : undefined;
+      if (!who || !body) return false;
+      body.setPosition({ x, y });
+      body.setLinearVelocity({ x: 0, y: 0 });
+      who.set(Transform, { x, y, angle: 0 });
+      return true;
+    },
+    projectiles: () => {
+      const out: { kind: number; phase: number; fuse: number; x: number; y: number; defId: number }[] = [];
+      if (!sim) return out;
+      sim.ecs.query(Projectile).updateEach(([p]) => {
+        out.push({ kind: p.kind, phase: p.phase, fuse: p.fuse, x: p.x, y: p.y, defId: p.defId });
+      });
+      return out;
+    },
+    stress: (target) => {
+      stressTarget = Math.max(0, target | 0);
+    },
+  };
 
   function padMapFor(id: string) {
     return maps[id];
   }
 
-  function playerTransformForSlot(slot: number) {
-    const list = sim?.players() ?? [];
-    const found = list.find((e) => e.get(Player)?.slot === slot) ?? list[0];
-    return found?.get(Transform) ?? { x: 8, y: 6 };
+  /** Which device steers a fighter slot right now (see {@link slotDevices}). */
+  function deviceForSlot(slot: number, pads: (Gamepad | null)[]): string {
+    // Seats decided: a pad that never joined steers nobody.
+    if (slotDevices.length) return slotDevices[slot] ?? '';
+    const pad = pads[slot];
+    if (pad) return padKey(pad);
+    return slot === 0 ? 'keyboard' : '';
   }
 
-  function sampleKeyboardFor(slot: number): PlayerInput {
-    const t = playerTransformForSlot(slot);
-    return keys.sample({ x: t.x, y: t.y }, cam, canvas.clientWidth, canvas.clientHeight);
+  function setPaused(on: boolean) {
+    if (!sim || paused === on) return;
+    paused = on;
+    menus.screen = on ? 'pause' : 'play';
+    show();
   }
 
-  function readConnectedPad(pad: Gamepad, apiIndex: number): PlayerInput {
-    const latch = latches[apiIndex] ?? emptyLatch();
-    const aim = lastAim[apiIndex] ?? { x: 1, y: 0 };
-    const input = readPad(pad, latch, aim, padMapFor(pad.id), stickMem[apiIndex]);
-    lastAim[apiIndex] = { x: input.aimX, y: input.aimY };
-    return input;
+  function quitToMenu() {
+    sim?.destroy();
+    sim = null;
+    paused = false;
+    slotDevices = [];
+    resetBanner();
+    menus.screen = 'menu';
+    show();
   }
 
-  function handlePadStart(padId: string): void {
-    if (menus.screen === 'join') {
-      if (padId && padId !== 'keyboard') {
-        const seat = takeOrReadySeat(menus.seats, padId, menus.padMemory, {
-          replaceKeyboard: menus.bots > 0,
-        });
-        if (seat) seat.ready = true;
+  /** Screens whose controls are plain DOM the cursor can walk; the others have bespoke pad handling. */
+  const NAV_SCREENS = new Set(['menu', 'settings', 'lobby', 'pause', 'disconnect', 'scoreboard']);
+
+  function backOut() {
+    if (menus.screen === 'pause') setPaused(false);
+    else if (menus.screen === 'join' || menus.screen === 'settings' || menus.screen === 'lobby') {
+      menus.screen = 'menu';
+      show();
+    }
+  }
+
+  /** Walk the focused menu with a direction / accept / back triple (shared by pads and arrow keys). */
+  function navigateMenu(dir: NavDir | null, accept: boolean, back: boolean) {
+    if (dir) {
+      const cur = focusedIn(menusEl);
+      if (!(cur && nudge(cur, dir))) moveFocus(menusEl, dir);
+    }
+    if (accept) {
+      const cur = focusedIn(menusEl) ?? defaultFocus(menusEl);
+      if (cur) {
+        setFocus(menusEl, cur);
+        activate(cur);
       }
-      startIfReady();
+    }
+    if (back) backOut();
+  }
+
+  function dirOf(e: PadEdges): NavDir | null {
+    return e.up ? 'up' : e.down ? 'down' : e.left ? 'left' : e.right ? 'right' : null;
+  }
+
+  /** One pad's menu presses this frame, applied to whatever screen is up. */
+  function handlePadMenu(pad: Gamepad, e: PadEdges) {
+    if (!(e.a || e.b || e.start || e.select || e.up || e.down || e.left || e.right)) return;
+    applyPadMenu(pad, e);
+    // Landing on a fresh screen: show the cursor straight away so the next press has a target.
+    if (NAV_SCREENS.has(menus.screen) && !focusedIn(menusEl)) setFocus(menusEl, defaultFocus(menusEl));
+  }
+
+  function applyPadMenu(pad: Gamepad, e: PadEdges) {
+    const device = padKey(pad);
+    if (e.a || e.b || e.start || e.select) lastMenuDevice = device;
+    const screen = menus.screen;
+    if (screen === 'play') {
+      if (!sim) return;
+      if (matchIsOver()) {
+        if (e.start) rematch();
+        else if (e.select) quitToMenu();
+      } else if (e.start) {
+        setPaused(true);
+      }
       return;
     }
-    if (menus.screen === 'play') requestPause(padId);
-    else if (menus.screen === 'pause') requestResume(padId);
+    if (screen === 'editor') return;
+    if (screen === 'join') {
+      if (pad.mapping && pad.mapping !== 'standard' && !maps[pad.id]) {
+        menus.notice = `Non-standard pad “${pad.id}” — open Settings to remap.`;
+      }
+      if (e.a) takeOrReadySeat(menus.seats, device, padLabel(pad));
+      if (e.b) {
+        backOut();
+        return;
+      }
+      if (e.start) {
+        startIfReady();
+        return;
+      }
+      const seat = menus.seats.find((s) => s.taken && s.padId === device);
+      if ((e.left || e.right) && seat) cycleSeatColor(seat, e.right ? 1 : -1, menus.seats);
+      if (e.up || e.down) menus.bots = Math.max(0, Math.min(maxBots(menus.seats), menus.bots + (e.up ? 1 : -1)));
+      show();
+      return;
+    }
+    if (screen === 'pause' && (e.start || e.b)) {
+      setPaused(false);
+      return;
+    }
+    navigateMenu(dirOf(e), e.a || e.start, e.b);
   }
 
   function sampleInputs(): PlayerInput[] {
-    if (chatOpen) {
-      lastSampled = blankInputs(4);
-      return lastSampled;
-    }
+    const now = performance.now();
+    const inputs = blankInputs(4);
     const pads = pollGamepads();
-    const padInputs = new Map<string, PlayerInput>();
-    if (menus.screen === 'join') claimVisiblePads();
+    const padInputs: (PlayerInput | undefined)[] = [];
     pads.forEach((pad, i) => {
       if (!pad) return;
-      const latch = latches[i] ?? emptyLatch();
-      if (menus.screen === 'join') {
-        const leftDown = !!pad.buttons[14]?.pressed;
-        const rightDown = !!pad.buttons[15]?.pressed;
-        if (edgePressed(joinLeftHeld[i] ?? false, leftDown)) {
-          const seat = menus.seats.find((s) => s.padId === pad.id);
-          if (seat) {
-            cycleSeatColor(seat, -1, menus.padMemory);
-            show();
-          }
-        }
-        if (edgePressed(joinRightHeld[i] ?? false, rightDown)) {
-          const seat = menus.seats.find((s) => s.padId === pad.id);
-          if (seat) {
-            cycleSeatColor(seat, 1, menus.padMemory);
-            show();
-          }
-        }
-        joinLeftHeld[i] = leftDown;
-        joinRightHeld[i] = rightDown;
-        const aDown = !!(pad.buttons[0]?.pressed || pad.buttons[4]?.pressed);
-        if (aDown && !joinAHeld[i]) {
-          takeOrReadySeat(menus.seats, pad.id, menus.padMemory, {
-            replaceKeyboard: menus.bots > 0,
-          });
-          show();
-        }
-        joinAHeld[i] = aDown;
-        const startDown = buttonOn(pad.buttons[joinStartIndex(padMapFor(pad.id))]);
-        if (startDown && !joinStartHeld[i]) startIfReady();
-        joinStartHeld[i] = startDown;
-      }
-      padInputs.set(pad.id, readConnectedPad(pad, i));
-      const pauseDown = latch.pause;
+      const latch = (latches[i] ??= emptyLatch());
+      const aim = lastAim[i] ?? { x: 0, y: 0 };
+      const map = padMapFor(pad.id);
+      const input = readPad(pad, latch, aim, map);
+      // Start is edge-detected below (menus, pause, rematch); the latch would otherwise re-fire.
       latch.pause = false;
-      if (pauseRisingEdge(pauseHeld[i] ?? false, pauseDown)) {
-        handlePadStart(pad.id);
-      }
-      pauseHeld[i] = pauseDown;
+      padInputs[i] = input;
+      lastAim[i] = { x: input.aimX, y: input.aimY };
+      const tracker = (padEdges[i] ??= createPadEdgeTracker());
+      handlePadMenu(pad, tracker.update(pad, now, (map ?? DEFAULT_MAP).pause));
     });
-    const online = menus.netRole === 'host' || menus.netRole === 'client';
-    if (online || !routeByJoinSeats) {
-      const inputs = blankInputs(4);
-      inputs[0] = samplePrimaryLocal({
-        pads,
-        padInput: (pad) => padInputs.get(pad.id) ?? sampleKeyboardFor(0),
-        keyboard: sampleKeyboardFor(0),
-      });
-      lastSampled = inputs;
-      return inputs;
-    }
-    const kb = keyboardSeatIndex(menus.seats);
-    lastSampled = routeSeatInputs({
-      seats: menus.seats,
-      pads,
-      readPad: (pad) => padInputs.get(pad.id) ?? sampleKeyboardFor(0),
-      keyboard: kb >= 0 ? sampleKeyboardFor(kb) : null,
-    });
-    return lastSampled;
-  }
 
-  function applyLiveFists(sampled: PlayerInput[]): PlayerInput[] {
-    if (!liveFists || !sim || menus.netRole === 'client') return sampled;
-    sim.ctx.settings.enabledWeapons = [];
-    if (!liveFistsApplied) {
-      liveFistsApplied = true;
-      settings.maxHp = 1;
-      menus.maxHp = 1;
-      sim.ctx.settings.maxHp = 1;
-      const ms = sim.ecs.get(MatchState);
-      if (ms) {
-        ms.maxHp = 1;
-        ms.firstTo = 0;
-        sim.ecs.set(MatchState, ms);
+    // Each fighter slot reads the device that took its seat; the keyboard aims with the mouse
+    // relative to its own fighter.
+    for (let slot = 0; slot < inputs.length; slot++) {
+      const device = deviceForSlot(slot, pads);
+      if (!device) continue;
+      if (device === 'keyboard') {
+        const p = sim?.players().find((e) => e.get(Player)?.slot === slot);
+        const t = p?.get(Transform) ?? { x: 8, y: 6 };
+        inputs[slot] = keys.sample({ x: t.x, y: t.y }, cam, view.w, view.h);
+      } else {
+        const input = padInputs[padIndexOf(device)];
+        if (input) inputs[slot] = input;
       }
-      sim.ecs.query(Player).updateEach((_, entity) => {
-        const hp = entity.get(Health);
-        if (hp) entity.set(Health, { hp: Math.min(hp.hp, 1), maxHp: 1 });
-      });
     }
-    const phase = sim.ecs.get(RoundState)?.phase;
-    if (phase !== RoundPhase.Fighting) return sampled;
-    return applyFistDriveAll(sampled, sim.ecs, sim.ctx.tick);
-  }
 
-  function applyPauseHotkey(): void {
-    if (!keys.takePause()) return;
-    if (menus.screen === 'play') requestPause('keyboard');
-    else if (menus.screen === 'pause') requestResume('keyboard');
+    const pauseTap = keys.takePause();
+    if (pauseTap && sim && (menus.screen === 'play' || menus.screen === 'pause' || menus.screen === 'disconnect')) setPaused(menus.screen === 'play');
+    return inputs;
   }
 
   function rumble(kind: 'hit' | 'boom') {
-    if (typeof navigator === 'undefined' || !navigator.getGamepads) return;
-    playRumble([...navigator.getGamepads()], kind, settings.haptics);
+    if (!settings.haptics || typeof navigator === 'undefined' || !navigator.getGamepads) return;
+    for (const pad of navigator.getGamepads()) {
+      const actuator = pad?.vibrationActuator;
+      if (!actuator?.playEffect) continue;
+      void actuator.playEffect('dual-rumble', {
+        duration: kind === 'boom' ? 180 : 60,
+        strongMagnitude: kind === 'boom' ? 0.8 : 0.35,
+        weakMagnitude: 0.4,
+      });
+    }
   }
 
+  let lastFrameError = '';
   function tick(now: number) {
-    const dt = Math.min(0.05, (now - last) / 1000);
-    last = now;
-    retryClientHello();
-    applyPauseHotkey();
-    // PLAN 4.12: join A/color/Start and pause Start are sampled even when the sim is idle.
-    if (menus.screen === 'join' || menus.screen === 'pause') {
-      sampleInputs();
-      latches.forEach(consumeLatch);
-      keys.consume();
-    }
-    if (renderer) renderer.resize(canvas.clientWidth || 1280, canvas.clientHeight || 720);
-    const viewSim = menus.netRole === 'client' && clientView ? clientView.sim : sim;
-    if (viewSim && menus.screen === 'play' && !paused) {
-      if (clientView && menus.netRole === 'client') {
-        clientView.apply(performance.now());
-        syncClientLevelChrome();
-        const sampled = sampleInputs();
-        const mine = heldNetInput ?? sampled[0];
-        if (mine && netSlot > 0) {
-          inputHist.push(mine);
-          if (inputHist.length > 8) inputHist.splice(0, inputHist.length - 3);
-          inputSeq += 1;
-          net.send(
-            {
-              t: 'input',
-              tick: inputSeq,
-              slot: netSlot,
-              bundle: bundleInputs(inputHist),
-            },
-            false,
-          );
-        }
-        stepFxParticles(fx, dt);
-        const frame = buildFrame(
-          clientView.sim,
-          cam,
-          clientView.alpha,
-          canvas.clientWidth || 1280,
-          canvas.clientHeight || 720,
-          settings.reduceBlood ? [] : listParticles(fx),
-          {
-            debug: debugDraw,
-            freezeCamera: freezeCam,
-            colorblind: settings.colorblind,
-            decalLayer,
-            flash: hitStop,
-            fxWorld: fx,
-          },
-        );
-        frame.hud.hash = clientView.sim.hash();
-        frame.hud.gpuMs = renderer?.lastGpuMs ?? 0;
-        const frameSample = sampleRenderFrame(frame);
-        lastFrameGroups = frameSample.groups;
-        lastFrameColored = frameSample.colored;
-        renderer?.render(frame);
-        drawHud(frame);
-        publishDebug(
-          frame.hud.hash ?? '',
-          frame.hud.tick ?? 0,
-          frame.hud.countdown,
-          frame.hud.physicsMs ?? 0,
-          frame.hud.gpuMs ?? 0,
-          frame.hud.phase ?? 0,
-        );
-        raf = requestAnimationFrame(tick);
-        return;
+    try {
+      frame(now);
+    } catch (err) {
+      // One bad frame must not take the whole game down: keep the loop alive and shout once per fault.
+      const msg = err instanceof Error ? err.message : String(err);
+      if (msg !== lastFrameError) {
+        lastFrameError = msg;
+        console.error('frame error', err);
       }
-      const scale =
-        viewSim.ecs.get(RoundState)?.phase === RoundPhase.LastKill ? tuning.lastKillSlowmo : 1;
-      const steps = loop.consume(dt, scale);
-      let sampled = sampleInputs();
-      if (menus.netRole === 'host') sampled = applyRemoteInboxes(sampled, remoteInboxes);
-      sampled = applyLiveFists(sampled);
+    }
+    raf = requestAnimationFrame(tick);
+  }
+
+  function frame(now: number) {
+    const dt = Math.min(0.05, (now - last) / 1000);
+    let t = profiler.begin();
+    profiler.sample('interval', now - last);
+    // A 120 Hz frame is 8.3 ms; anything past 12 ms between rAF callbacks means a missed one. The
+    // frame before it is what ran long, so that is the one logged.
+    const heapNow = usedHeapMb();
+    if (sim && menus.screen === 'play' && now - last > 12) {
+      longFrames += 1;
+      if (longFrameLog.length < 64) {
+        // A heap that shrank across the gap points at a major GC rather than at our own frame work.
+        longFrameLog.push({ at: Math.round(now), interval: +(now - last).toFixed(1), tick: sim.ctx.tick, before: profiler.last(), heapBefore: lastHeap, heapAfter: heapNow });
+      }
+    }
+    lastHeap = heapNow;
+    last = now;
+    // Without a ResizeObserver the size has to be read each frame (a layout read). A DPR change
+    // (window dragged to another display) keeps the CSS size, so it is checked here.
+    if (!sizeObserver) measureCanvas();
+    if (window.devicePixelRatio !== lastDpr) {
+      lastDpr = window.devicePixelRatio;
+      viewDirty = true;
+    }
+    if (renderer && viewDirty) {
+      renderer.resize(view.w, view.h);
+      viewDirty = false;
+    }
+    // Pads and keys are read every frame: they drive the join screen and pause toggling, not just the fight.
+    const live = sampleInputs();
+    t = profiler.lap('input', t);
+    // The match stays on screen (still) behind the pause and disconnect cards.
+    const showMatch = !!sim && (menus.screen === 'play' || menus.screen === 'pause' || menus.screen === 'disconnect');
+    if (hudShown !== showMatch) {
+      hudShown = showMatch;
+      hudEl.classList.toggle('hidden', !showMatch);
+    }
+    if (sim && showMatch) {
+      const running = menus.screen === 'play' && !paused;
+      const scale = sim.ecs.get(RoundState)?.phase === RoundPhase.LastKill ? tuning.lastKillSlowmo : 1;
+      let steps = running ? loop.consume(dt, scale) : 0;
+      if (frozen) {
+        steps = frozenSteps;
+        frozenSteps = 0;
+      }
+      if (!running) {
+        // Paused: drop the presses so a jump latched behind the menu does not fire on resume.
+        latches.forEach(consumeLatch);
+        keys.consume();
+      }
       for (let i = 0; i < steps; i++) {
         if (hitStop > 0) {
           hitStop -= 1;
           continue;
         }
+        const sampled = applyScriptedInputs(live);
         recorder.push(sampled);
-        const events = viewSim.step(sampled);
-        if (viewSim.ecs.get(RoundState)?.phase === RoundPhase.Scoreboard) scoreboardTicksSeen += 1;
-        const fists = events.some((e) => e.type === 'shot' && e.weaponId === 'fists');
-        if (fists) fistKills += events.filter((e) => e.type === 'kill').length;
+        const events = sim.step(sampled);
+        if (sim.ctx.level !== renderedLevel) {
+          // The sim rotated to the next arena: last round's blood and embers must not carry over.
+          renderedLevel = sim.ctx.level;
+          rotatedThisFrame = true;
+          particles.clear();
+          decals.length = 0;
+          decalPool.release(decalLayer);
+          decalLayer = decalPool.acquire(renderedLevel.bounds);
+        }
         mixer.handle(events);
-        emitIntoWorld(events, fx);
-        stampFxDecals(fx, decalLayer, (d) => !settings.reduceBlood || d.kind === 'scorch');
+        emitFromEvents(events, particles, decals);
+        if (stressTarget > 0) {
+          if (sim.ctx.tick % 30 === 0) armFighters(sim, stressRng);
+          if (particles.count < stressTarget) emitFromEvents(stressEvents(sim, stressRng), particles, decals);
+        }
+        const world = sim.ecs;
+        decalLayer.stampNew(decals, (d) => (!settings.reduceBlood || d.kind === 'scorch') && snapDecalToSurface(world, d));
+        // Once stamped into the texture the decal records are dead weight; keeping them for the whole
+        // round only grew the old generation (a long stress round piles up tens of thousands).
+        decals.length = 0;
+        decalLayer.consumed = 0;
         if (events.some((e) => e.type === 'kill')) {
           hitStop = 3;
           recordKos(events.filter((e) => e.type === 'kill').length);
+        } else if (events.some((e) => e.type === 'hit' && e.damage >= 15) || events.some((e) => e.type === 'clash')) {
+          // A frame of freeze on a solid hit sells the impact (punches, headshots, clashes), like the kill stop.
+          hitStop = 1;
         }
         if (events.some((e) => e.type === 'round-phase' && e.phase === 'match-over')) {
-          const ms = viewSim.ecs.get(MatchState);
-          const need = ms?.firstTo ?? 0;
-          stats = recordMatch(need > 0 && (ms?.wins0 ?? 0) >= need);
+          const ms = sim.ecs.get(MatchState);
+          stats = recordMatch((ms?.wins0 ?? 0) >= (ms?.firstTo || 1));
         }
-        if (
-          events.some((e) => e.type === 'explosion' || e.type === 'kill') &&
-          !settings.reduceShake
-        ) {
-          addShake(cam, events.some((e) => e.type === 'explosion') ? 10 : 5);
+        if (!settings.reduceShake) {
+          if (events.some((e) => e.type === 'explosion' || e.type === 'kill')) addShake(cam, events.some((e) => e.type === 'explosion') ? 16 : 9);
+          else if (events.some((e) => e.type === 'hit' && e.damage >= 15)) addShake(cam, 4);
+          else if (events.some((e) => e.type === 'clash')) addShake(cam, 3);
         }
         if (events.some((e) => e.type === 'explosion')) rumble('boom');
         else if (events.some((e) => e.type === 'hit')) rumble('hit');
-        if (menus.netRole === 'host') {
-          for (const ev of events) {
-            if (ev.type === 'round-phase') {
-              net.send({ t: 'event', kind: 'round-phase', payload: ev.phase });
-              if (ev.phase === 'countdown' || ev.phase === 'loading') {
-                for (const m of hostContentMessages(
-                  JSON.stringify({ maxHp: settings.maxHp, firstTo: settings.firstTo }),
-                  JSON.stringify(viewSim.ctx.level),
-                )) {
-                  net.send(m, true);
-                }
-                net.send(lateJoinSnapshotMessage(viewSim.snapshot()), true);
-                drainChangeTrackers(viewSim.ecs);
-              }
-            }
-            if (ev.type === 'spawn' || ev.type === 'despawn' || ev.type === 'shot') {
-              net.send({ t: 'event', kind: ev.type, payload: JSON.stringify(ev) });
-            }
-          }
-        }
         latches.forEach(consumeLatch);
         keys.consume();
-        if (menus.netRole === 'host' && viewSim.ctx.tick % 3 === 0) {
-          if (viewSim.ctx.tick % 60 === 0) {
-            net.send(lateJoinSnapshotMessage(viewSim.snapshot()), false);
-            drainChangeTrackers(viewSim.ecs);
-          } else {
-            net.send({ t: 'snapshot', snap: viewSim.snapshotDelta() }, false);
-          }
-        }
       }
-      stepFxParticles(fx, dt);
+      profiler.sample('steps', steps);
+      t = profiler.lap('sim', t);
+      stepParticles(particles, dt);
+      profiler.sample('particles', particles.count);
+      t = profiler.lap('fx', t);
       const frame = buildFrame(
-        viewSim,
+        sim,
         cam,
         interpolationAlpha(loop),
-        canvas.clientWidth || 1280,
-        canvas.clientHeight || 720,
-        settings.reduceBlood ? [] : listParticles(fx),
+        view.w,
+        view.h,
+        settings.reduceBlood ? null : particles,
         {
           debug: debugDraw,
           freezeCamera: freezeCam,
           colorblind: settings.colorblind,
           decalLayer,
           flash: hitStop,
-          fxWorld: fx,
+          // Limbs swing in the sim's time: slowed with the last-kill replay, held while paused.
+          dt: running ? dt * scale : 0,
         },
       );
-      frame.hud.hash = viewSim.hash();
+      // Hashing walks every networked entity; it is only ever read from the F3 overlay (which hashes
+      // when it refreshes) and lazily through window.__floppy.lastHash, so ordinary frames skip it.
       frame.hud.gpuMs = renderer?.lastGpuMs ?? 0;
-      const frameSample = sampleRenderFrame(frame);
-      lastFrameGroups = frameSample.groups;
-      lastFrameColored = frameSample.colored;
+      profiler.sample('groups', frame.groups.length);
+      lastFrame = frame;
+      t = profiler.lap('build', t);
       renderer?.render(frame);
+      if (renderer && renderer.gpuPassMs >= 0) profiler.sample('gpu', renderer.gpuPassMs);
+      t = profiler.lap('render', t);
       drawHud(frame);
-      publishDebug(
-        frame.hud.hash ?? '',
-        frame.hud.tick ?? 0,
-        frame.hud.countdown,
-        frame.hud.physicsMs ?? 0,
-        frame.hud.gpuMs ?? 0,
-        frame.hud.phase ?? 0,
-      );
+      profiler.lap('hud', t);
+      profiler.end();
+      if (rotatedThisFrame) {
+        rotatedThisFrame = false;
+        if (rotationLog.length < 64) rotationLog.push({ tick: sim.ctx.tick, level: renderedLevel.id, stages: profiler.last() });
+      }
+    } else if (renderer && !sim && DEMO_SCREENS.has(menus.screen)) {
+      stepDemo(dt);
     } else if (renderer && menus.screen !== 'editor') {
       renderer.render({
         groups: [],
@@ -1135,308 +1042,253 @@ export function createGame(root: HTMLElement): Game {
         hud: { slowmo: false, countdown: 0 },
       });
     }
-    if (menus.screen !== 'play' || paused) {
-      publishDebug('', sim?.getTick() ?? 0, 0, 0, 0, sim?.ecs.get(RoundState)?.phase ?? 0);
-    }
-    raf = requestAnimationFrame(tick);
   }
 
-  function publishDebug(
-    hash: string,
-    tick: number,
-    countdown: number,
-    physicsMs: number,
-    gpuMs: number,
-    phase: number,
-  ): void {
-    const handle = sim ?? clientView?.sim;
-    window.__floppy = {
-      rendererKind,
-      lastHash: hash,
-      tick,
-      countdown,
-      physicsMs,
-      gpuMs,
-      phase: handle?.ecs.get(RoundState)?.phase ?? phase,
-      debugDraw,
-      debugHud,
-      freezeCam,
-      netRole: menus.netRole,
-      netState: menus.netState,
-      netReady: net.ready,
-      lastSnapTick: menus.lastSnapTick,
-      lastSnapBytes,
-      lastSnapBinary,
-      lastSnapWireBytes,
-      lastInputTick,
-      lastInputBundleLen,
-      playerXs: readPlayerXs(handle),
-      playerYs: readPlayerYs(handle),
-      maxHp: handle?.ecs.get(MatchState)?.maxHp ?? settings.maxHp,
-      holdInput: (partial) => {
-        heldNetInput = { ...EMPTY_INPUT, ...partial };
-      },
-      clearInput: () => {
-        heldNetInput = null;
-      },
-      lastLevelId: handle?.ctx.level.id ?? pendingLevel?.id ?? '',
-      pendingLevelId: pendingLevel?.id ?? '',
-      loadLevel: (raw: unknown) => {
-        try {
-          pendingLevel = parseLevel(raw);
-          return pendingLevel.id;
-        } catch {
-          return '';
-        }
-      },
-      sendMatchChat: (text: string) => {
-        const typed = text.trim();
-        if (!typed) return;
-        menus.chat.push(`you: ${typed}`);
-        net.send({ t: 'chat', from: netName || menus.netRole || 'you', text: typed });
-        const log = matchChatEl?.querySelector('#matchchat-log');
-        if (log) log.textContent = menus.chat.slice(-6).join('\n');
-      },
-      forceLastStand: () => {
-        if (!sim) return;
-        sim.players().forEach((p) => {
-          const slot = p.get(Player)?.slot ?? 0;
-          if (slot !== 0) p.set(Health, { hp: 0, maxHp: p.get(Health)?.maxHp ?? 100 });
-        });
-      },
-      armLiveFists: () => {
-        liveFists = true;
-      },
-      disarmLiveFists: () => {
-        liveFists = false;
-        liveFistsApplied = false;
-      },
-      configureMatch: (partial) => {
-        if (partial.maxHp != null) {
-          settings.maxHp = partial.maxHp;
-          menus.maxHp = partial.maxHp;
-          if (sim) {
-            sim.ctx.settings.maxHp = partial.maxHp;
-            const ms = sim.ecs.get(MatchState);
-            if (ms) {
-              ms.maxHp = partial.maxHp;
-              sim.ecs.set(MatchState, ms);
-            }
-            sim.ecs.query(Player).updateEach((_, entity) => {
-              const hp = entity.get(Health);
-              if (hp) entity.set(Health, { hp: Math.min(hp.hp, partial.maxHp!), maxHp: partial.maxHp! });
-            });
-          }
-        }
-        if (partial.enabledWeapons !== undefined) {
-          settings.enabledWeapons = partial.enabledWeapons;
-          if (sim) sim.ctx.settings.enabledWeapons = partial.enabledWeapons;
-        }
-        if (partial.enabledLevels !== undefined) {
-          settings.enabledLevels = partial.enabledLevels;
-          if (sim) sim.ctx.settings.enabledLevels = partial.enabledLevels;
-        }
-        if (partial.rotation !== undefined) {
-          settings.rotation = partial.rotation;
-          if (sim) {
-            sim.ctx.settings.rotation = partial.rotation;
-            const ms = sim.ecs.get(MatchState);
-            if (ms) {
-              ms.rotation = partial.rotation === 'ordered' ? 1 : 0;
-              sim.ecs.set(MatchState, ms);
-            }
-          }
-        }
-      },
-      fistKills,
-      liveFists,
-      speedRounds: () => {
-        if (!sim) return;
-        sim.ctx.tuning.countdownTicks = 3;
-        sim.ctx.tuning.slowmoTicks = 2;
-        // Keep the default scoreboard window so [data-round-over] is observable.
-        sim.ctx.tuning.scoreboardTicks = 90;
-      },
-      matchRound: handle?.ecs.get(MatchState)?.round ?? 0,
-      scoreboardTicksSeen:
-        menus.netRole === 'client' && clientView ? clientView.scoreboardTicksSeen : scoreboardTicksSeen,
-      scoreboardWindow:
-        menus.netRole === 'client' && clientView
-          ? clientView.sim.ctx.tuning.scoreboardTicks
-          : (handle?.ctx.tuning.scoreboardTicks ?? 0),
-      clientViewTick: clientView?.appliedTick ?? 0,
-      clientAppliedX: clientView?.appliedX ?? 0,
-      clientRestored: clientView?.restored ?? false,
-      clientPendingSnaps: pendingClientSnaps.length,
-      weaponCount: countWeapons(),
-      p0Hp: hpOfSlot(handle, 0),
-      p0Dead: deadOfSlot(handle, 0),
-      slowmo: tuning.lastKillSlowmo,
-      rendererSwitches,
-      lastReplayBytes: recorder.lastBytes(),
-      lastReplayName: recorder.lastName(),
-      replayLoaded,
-      loadReplay: loadReplayTape,
-      netPeers: net.peerCount,
-      netSlot,
-      entities: sim?.ctx.bodies.size ?? clientView?.sim.ctx.bodies.size ?? 0,
-      chatOpen,
-      lastChat: menus.chat[menus.chat.length - 1] ?? '',
-      lastFrameGroups,
-      lastFrameColored,
-      gpuPipelineBackend: renderer?.pipelineBackend ?? 'none',
-      gpuPipelineApi: renderer?.pipelineApi ?? '',
-      gpuPipelineResourceType: renderer?.pipelineResourceType ?? '',
-      gpuInitError: getLastGpuInitError(),
-      readFramebuffer: () =>
-        renderer?.readFramebuffer() ?? Promise.resolve(emptyReadback('unavailable', 'no-renderer')),
-      lightingKind: renderer?.lightingKind ?? 'none',
-      jfaBound: renderer?.jfaBound ?? false,
-      jfaError: renderer?.jfaError ?? '',
-      readJfaIdentity: () =>
-        renderer?.readJfaIdentity?.() ??
-        Promise.resolve(emptyJfaIdentityReport('none', 'no-renderer')),
-      inspect:
-        (sim ?? clientView?.sim)
-          ? formatInspect(inspectWorld((sim ?? clientView!.sim).ecs, 12))
-          : '',
-      playerColors: readPlayerColors(handle),
-      pausedBy,
-      playerGrounded: readPlayerGrounded(handle),
-      lastSeatJumps: lastSampled.map((i) => i.jump),
-      padMaps: maps,
-      matchWins: readMatchWins(handle),
+  // The HUD is a handful of persistent DOM nodes; we only touch them when the
+  // underlying value changes so CSS transitions/animations actually play.
+  const hud = (() => {
+    const mk = (cls: string, parent: HTMLElement = hudEl) => {
+      const el = document.createElement('div');
+      el.className = cls;
+      parent.append(el);
+      return el;
     };
-  }
+    const bars = mk('hud-bars');
+    // The score strip: title / fighter cards / verdict. Between rounds the strip itself grows into
+    // the scorecard (CSS keyed on data-card), so the tally you watched all round is the scoreboard.
+    const top = mk('hud-top');
+    const title = mk('hud-title', top);
+    const players = mk('hud-players', top);
+    const sub = mk('hud-sub', top);
+    const count = mk('hud-count');
+    const level = mk('hud-level');
+    const dbg = document.createElement('pre');
+    dbg.className = 'hidden';
+    dbg.style.cssText =
+      'position:absolute;right:12px;top:10px;margin:0;padding:8px;background:rgba(0,0,0,0.55);font:12px/1.4 monospace';
+    hudEl.append(dbg);
+    return {
+      bars,
+      top,
+      title,
+      players,
+      sub,
+      count,
+      level,
+      dbg,
+      lastCount: -1,
+      /** Which fighters (slot/colour) the cards were built for; cards persist so their CSS transitions play. */
+      lastRoster: '',
+      cards: new Map<
+        number,
+        {
+          card: HTMLElement;
+          face: HTMLElement;
+          tally: HTMLElement;
+          wins: HTMLElement;
+          hp: HTMLElement;
+          crown: HTMLElement | null;
+          /** Last values written to the DOM, so unchanged frames write nothing. */
+          alive: string;
+          winner: string;
+          hpPct: number;
+        }
+      >(),
+      lastCardKey: '',
+      lastWins: [0, 0, 0, 0],
+      goUntil: 0,
+      levelUntil: 0,
+      lastLevel: '',
+      slowmo: false,
+      levelShown: false,
+      dbgShown: false,
+      /** When the F3 readout text was last rebuilt (it refreshes at 10 Hz, not per frame). */
+      dbgAt: 0,
+    };
+  })();
 
-  function sampleRenderFrame(frame: ReturnType<typeof buildFrame>): {
-    groups: number;
-    colored: number;
-  } {
-    let colored = 0;
-    for (const g of frame.groups) {
-      for (const p of g.primitives) {
-        if (primitiveSdf(p, { x: p.ax, y: p.ay }) < 0.25) colored += 1;
-      }
-    }
-    return { groups: frame.groups.length, colored };
-  }
-
-  function readPlayerXs(world: SimHandle | null | undefined): number[] {
-    const xs = [0, 0, 0, 0];
-    if (!world) return xs;
-    world.ecs.query(Player, Transform).updateEach(([p, t]) => {
-      if (p.slot >= 0 && p.slot < 4) xs[p.slot] = t.x;
-    });
-    return xs;
-  }
-
-  function hpOfSlot(world: SimHandle | null | undefined, slot: number): number {
-    let hp = 0;
-    if (!world) return hp;
-    world.ecs.query(Player, Health).updateEach(([p, h]) => {
-      if (p.slot === slot) hp = h.hp;
-    });
-    return hp;
-  }
-
-  function deadOfSlot(world: SimHandle | null | undefined, slot: number): boolean {
-    let dead = false;
-    if (!world) return dead;
-    world.ecs.query(Player).updateEach(([p], e) => {
-      if (p.slot === slot) dead = e.has(Dead);
-    });
-    return dead;
-  }
-
-  function readPlayerYs(world: SimHandle | null | undefined): number[] {
-    const ys = [0, 0, 0, 0];
-    if (!world) return ys;
-    world.ecs.query(Player, Transform).updateEach(([p, t]) => {
-      if (p.slot >= 0 && p.slot < 4) ys[p.slot] = t.y;
-    });
-    return ys;
-  }
-
-  function readPlayerColors(world: SimHandle | null | undefined): number[] {
-    const colors = [-1, -1, -1, -1];
-    if (!world) return colors;
-    world.ecs.query(Player).updateEach(([p]) => {
-      if (p.slot >= 0 && p.slot < 4) colors[p.slot] = p.color;
-    });
-    return colors;
-  }
-
-  function readMatchWins(world: SimHandle | null | undefined): number[] {
-    const ms = world?.ecs.get(MatchState);
-    return [ms?.wins0 ?? 0, ms?.wins1 ?? 0, ms?.wins2 ?? 0, ms?.wins3 ?? 0];
-  }
-
-  function readPlayerGrounded(world: SimHandle | null | undefined): boolean[] {
-    const grounded = [false, false, false, false];
-    if (!world) return grounded;
-    world.ecs.query(Player, Controller).updateEach(([p, ctrl]) => {
-      if (p.slot >= 0 && p.slot < 4) grounded[p.slot] = ctrl.grounded;
-    });
-    return grounded;
-  }
-
-  function countWeapons(): number {
-    const w = sim?.ecs ?? clientView?.sim.ecs;
-    if (!w) return 0;
-    let n = 0;
-    w.query(Weapon).updateEach(() => {
-      n += 1;
-    });
-    return n;
+  /** A finished match's scorecard must not linger or flash into the next match. */
+  function resetBanner() {
+    hud.top.dataset.card = '0';
+    delete hud.top.dataset.roundOver;
+    hud.title.innerHTML = '';
+    hud.sub.textContent = '';
+    hud.lastCardKey = '';
+    hud.lastRoster = '';
+    hud.lastWins = [0, 0, 0, 0];
+    hud.players.innerHTML = '';
+    hud.cards.clear();
   }
 
   function drawHud(frame: ReturnType<typeof buildFrame>) {
-    if (matchChatEl && matchChatEl.parentElement === hudEl) matchChatEl.remove();
-    hudEl.innerHTML = '';
-    if (frame.hud.countdown > 0) {
-      const d = document.createElement('div');
-      d.dataset.countdown = String(frame.hud.countdown);
-      d.style.cssText =
-        'position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:96px;font-weight:800';
-      d.textContent = String(frame.hud.countdown);
-      hudEl.append(d);
+    const h = frame.hud;
+    const now = performance.now();
+
+    if (hud.slowmo !== h.slowmo) {
+      hud.slowmo = h.slowmo;
+      hud.bars.classList.toggle('on', h.slowmo);
     }
-    if (frame.hud.showWins && frame.hud.wins) {
-      const bar = document.createElement('div');
-      bar.style.cssText =
-        'position:absolute;top:10px;left:12px;font-weight:700;text-shadow:0 1px 4px #000';
-      const names = ['P1', 'P2', 'P3', 'P4'];
-      bar.textContent =
-        names.map((n, i) => `${n} ${frame.hud.wins![i] ?? 0}`).join('   ') +
-        (frame.hud.firstTo ? `   first to ${frame.hud.firstTo}` : '');
-      hudEl.append(bar);
+
+    // Countdown numbers + GO!
+    if (h.countdown !== hud.lastCount) {
+      hud.count.innerHTML = '';
+      if (h.countdown > 0) {
+        const s = document.createElement('span');
+        s.textContent = String(h.countdown);
+        hud.count.append(s);
+        hud.count.dataset.countdown = String(h.countdown);
+      } else {
+        delete hud.count.dataset.countdown;
+        if (hud.lastCount > 0) {
+          const s = document.createElement('span');
+          s.className = 'go';
+          s.textContent = 'FIGHT';
+          hud.count.append(s);
+          hud.goUntil = now + 700;
+        }
+      }
+      hud.lastCount = h.countdown;
+    } else if (hud.goUntil && now > hud.goUntil) {
+      hud.count.innerHTML = '';
+      hud.goUntil = 0;
     }
-    if (
-      frame.hud.phase === RoundPhase.LastKill ||
-      frame.hud.phase === RoundPhase.Scoreboard ||
-      frame.hud.phase === RoundPhase.MatchOver
-    ) {
-      const title =
-        frame.hud.phase === RoundPhase.MatchOver
-          ? 'Match over'
-          : frame.hud.phase === RoundPhase.LastKill
-            ? 'Last standing'
-            : 'Round over';
-      hudEl.insertAdjacentHTML(
-        'beforeend',
-        scoreboardMarkup({
-          title,
-          wins: frame.hud.wins ?? [0, 0, 0, 0],
-          firstTo: frame.hud.firstTo,
-        }),
-      );
+
+    // Level name: fades in during the countdown, out once the fight starts.
+    if (h.levelName && h.levelName !== hud.lastLevel) {
+      hud.level.textContent = h.levelName;
+      hud.lastLevel = h.levelName;
     }
-    const tip = document.createElement('div');
-    tip.className = 'notice';
-    tip.textContent = rendererKind === 'gpu' ? 'SDF renderer' : 'Canvas fallback';
-    hudEl.append(tip);
-    if (debugHud) {
+    const showLevel = h.countdown > 0 || h.phase === RoundPhase.Scoreboard;
+    if (hud.levelShown !== showLevel) {
+      hud.levelShown = showLevel;
+      hud.level.classList.toggle('show', showLevel);
+    }
+
+    // Fighter cards. Built once per roster and then updated in place, so the strip's morph into the
+    // scorecard (and back) is one continuous CSS transition rather than a rebuild.
+    const plist = h.players ?? [];
+    const wins = h.wins ?? [0, 0, 0, 0];
+    const firstTo = h.firstTo ?? 0;
+    const over = h.phase === RoundPhase.LastKill || h.phase === RoundPhase.Scoreboard || h.phase === RoundPhase.MatchOver;
+    const winnerSlot = !over ? -1 : h.phase === RoundPhase.MatchOver ? (h.matchWinner ?? -1) : (h.roundWinner ?? -1);
+    const roster = plist.map((p) => `${p.slot}:${p.color}`).join('|') + (h.showWins ? 'w' : '');
+    if (roster !== hud.lastRoster) {
+      hud.lastRoster = roster;
+      hud.players.innerHTML = '';
+      hud.cards.clear();
+      for (const p of plist) {
+        const card = document.createElement('div');
+        card.className = 'hud-p';
+        card.style.setProperty('--c', p.color);
+        card.dataset.slot = String(p.slot);
+        const face = document.createElement('div');
+        face.className = 'hud-face';
+        card.append(face);
+        const tally = document.createElement('div');
+        tally.className = 'hud-tally';
+        const winsEl = document.createElement('div');
+        winsEl.className = 'hud-wins';
+        if (h.showWins) card.append(tally, winsEl);
+        const hp = document.createElement('div');
+        hp.className = 'hud-hp';
+        hp.append(document.createElement('i'));
+        card.append(hp);
+        const name = document.createElement('div');
+        name.className = 'hud-name';
+        name.textContent = slotName(p.slot).toUpperCase();
+        card.append(name);
+        hud.players.append(card);
+        hud.cards.set(p.slot, { card, face, tally, wins: winsEl, hp: hp.firstElementChild as HTMLElement, crown: null, alive: '', winner: '', hpPct: -1 });
+      }
+    }
+    // Every write below is guarded by the value it last wrote: the DOM is only touched when a value
+    // changes, so a steady frame costs no style or layout work at all.
+    for (const p of plist) {
+      const c = hud.cards.get(p.slot);
+      if (!c) continue;
+      const alive = p.alive ? '1' : '0';
+      if (c.alive !== alive) c.card.dataset.alive = c.alive = alive;
+      const winner = p.slot === winnerSlot ? '1' : '0';
+      if (c.winner !== winner) c.card.dataset.winner = c.winner = winner;
+      if (p.crown && !c.crown) {
+        c.crown = document.createElement('i');
+        c.crown.className = 'hud-crown';
+        c.face.append(c.crown);
+      } else if (!p.crown && c.crown) {
+        c.crown.remove();
+        c.crown = null;
+      }
+      // Quantised to whole percent so a slowly ticking burn does not restyle every frame.
+      const hpPct = Math.round(Math.max(0, Math.min(1, p.hp / Math.max(1, p.maxHp))) * 100);
+      if (c.hpPct !== hpPct) {
+        c.hpPct = hpPct;
+        c.hp.style.setProperty('--hp', HP_SCALE[hpPct]!);
+      }
+      if (h.showWins) {
+        const w = wins[p.slot] ?? 0;
+        const n = Math.min(Math.max(firstTo, w, 1), 10);
+        const gained = (hud.lastWins[p.slot] ?? 0) < w;
+        if (c.tally.childElementCount !== n || c.wins.textContent !== String(w) || gained) {
+          while (c.tally.childElementCount < n) c.tally.append(document.createElement('i'));
+          while (c.tally.childElementCount > n) c.tally.lastElementChild?.remove();
+          Array.from(c.tally.children).forEach((dot, i) => {
+            dot.classList.toggle('on', i < w);
+            // The freshly earned pip pops; the class stays until the next change so the animation completes.
+            if (gained) dot.classList.toggle('pop', i === w - 1);
+          });
+          c.wins.textContent = String(w);
+        }
+      }
+    }
+    for (let i = 0; i < 4; i++) hud.lastWins[i] = wins[i] ?? 0;
+
+    // Between rounds the strip becomes the scorecard: title above, verdict below, winner ringed.
+    const cardMode = over ? '1' : '0';
+    if (hud.top.dataset.card !== cardMode) {
+      hud.top.dataset.card = cardMode;
+      if (over) hud.top.dataset.roundOver = '1';
+      else delete hud.top.dataset.roundOver;
+    }
+    const cardKey = over ? `${h.phase}:${winnerSlot}:${h.matchWinner ?? -1}` : '';
+    if (cardKey !== hud.lastCardKey) {
+      hud.lastCardKey = cardKey;
+      // Leaving card mode keeps the old text in place: it collapses out of view, no blank box.
+      if (over) {
+        hud.title.innerHTML = '';
+        const winner = plist.find((p) => p.slot === winnerSlot);
+        hud.top.style.setProperty('--c', winner?.color ?? '#f4f1ea');
+        const small = document.createElement('small');
+        small.textContent =
+          h.phase === RoundPhase.MatchOver ? 'Match over' : h.phase === RoundPhase.LastKill ? 'Last one standing' : 'Round over';
+        const big = document.createElement('b');
+        big.textContent = winner
+          ? h.phase === RoundPhase.MatchOver
+            ? `${slotName(winnerSlot)} wins the match`
+            : `${slotName(winnerSlot)} takes it`
+          : h.phase === RoundPhase.MatchOver
+            ? 'Match over'
+            : 'Everybody dies';
+        hud.title.append(small, big);
+        hud.sub.textContent =
+          h.phase === RoundPhase.MatchOver
+            ? isPadKey(slotDevices[0] ?? '')
+              ? 'Start — rematch · Select — menu'
+              : 'Start / Enter — rematch · Esc — menu'
+            : firstTo
+              ? `First to ${firstTo}`
+              : 'Next level incoming';
+      }
+    }
+
+    // Debug readout (F3).
+    if (hud.dbgShown !== debugHud) {
+      hud.dbgShown = debugHud;
+      hud.dbg.classList.toggle('hidden', !debugHud);
+    }
+    // Percentiles over 12 rings and the world hash cost ~0.4 ms; refreshing the readout at 10 Hz keeps
+    // the overlay itself from showing up in the numbers it displays.
+    if (debugHud && now - hud.dbgAt >= 100) {
+      hud.dbgAt = now;
       const players = sim
         ? sim.players().map((e, i) => {
             const slot = e.get(Player)?.slot ?? i;
@@ -1445,50 +1297,23 @@ export function createGame(root: HTMLElement): Game {
             return `P${slot + 1} hp ${hpNow.toFixed(0)}${dead}`;
           })
         : [];
-      const dbg = document.createElement('pre');
-      dbg.style.cssText =
-        'position:absolute;right:12px;top:10px;margin:0;padding:8px;background:rgba(0,0,0,0.55);font:12px/1.4 monospace';
-      dbg.textContent = [
-        `tick ${frame.hud.tick ?? 0}`,
-        `hash ${frame.hud.hash ?? '--------'}`,
-        `phys ${(frame.hud.physicsMs ?? 0).toFixed(2)} ms`,
-        `gpu  ${(frame.hud.gpuMs ?? 0).toFixed(2)} ms`,
-        `ents ${frame.hud.entities ?? 0}`,
-        `weap ${countWeapons()}`,
-        `rend ${rendererKind}`,
-        `phase ${frame.hud.phase ?? 0}`,
-        `peers ${net.peerCount}`,
+      const perf = profiler.stats();
+      const ms = (k: string) => perf[k] ?? { med: 0, p95: 0, p99: 0, max: 0, mean: 0 };
+      hud.dbg.textContent = [
+        `tick ${h.tick ?? 0}`,
+        `hash ${sim?.hash() ?? h.hash ?? '--------'}`,
+        `phys ${(h.physicsMs ?? 0).toFixed(2)} ms`,
+        `enc  ${(h.gpuMs ?? 0).toFixed(2)} ms`,
+        `gpu  ${perf.gpu ? `${perf.gpu.med.toFixed(2)} / p99 ${perf.gpu.p99.toFixed(2)} ms` : 'n/a'}`,
+        `ents ${h.entities ?? 0}`,
+        `rend ${rendererKind} ${renderer?.canvas.width ?? 0}x${renderer?.canvas.height ?? 0} @${(renderer?.resolutionScale ?? 1).toFixed(2)}`,
+        `phase ${h.phase ?? 0}`,
+        `frame ${ms('frame').med.toFixed(2)} / p99 ${ms('frame').p99.toFixed(2)} ms  (rAF ${ms('interval').med.toFixed(1)} ms)`,
+        `parts ${ms('particles').max | 0}  groups ${ms('groups').max | 0}${stressTarget ? `  stress ${stressTarget}` : ''}`,
+        formatStats({ input: ms('input'), sim: ms('sim'), fx: ms('fx'), build: ms('build') }),
+        formatStats({ render: ms('render'), hud: ms('hud'), debug: ms('debug') }),
         ...players,
-        '--- traits ---',
-        sim ? formatInspect(inspectWorld(sim.ecs, 10)) : '',
       ].join('\n');
-      hudEl.append(dbg);
-    }
-    if (menus.netRole === 'host' || menus.netRole === 'client') {
-      if (!matchChatEl) {
-        matchChatEl = document.createElement('div');
-        matchChatEl.id = 'matchchat';
-        matchChatEl.dataset.matchChat = '1';
-        matchChatEl.style.cssText =
-          'position:absolute;left:12px;bottom:12px;min-width:220px;max-width:40%;padding:8px;background:rgba(10,12,16,0.65);border-radius:8px;font:12px/1.4 monospace;white-space:pre-wrap';
-        const log = document.createElement('pre');
-        log.id = 'matchchat-log';
-        log.style.cssText = 'margin:0 0 6px;max-height:120px;overflow:auto';
-        matchChatEl.append(log);
-      }
-      const log = matchChatEl.querySelector('#matchchat-log');
-      if (log) log.textContent = menus.chat.slice(-6).join('\n') || '(chat — Enter to type)';
-      let input = matchChatEl.querySelector('#matchchat-in') as HTMLInputElement | null;
-      if (chatOpen && !input) {
-        input = document.createElement('input');
-        input.id = 'matchchat-in';
-        input.placeholder = 'Message';
-        input.style.cssText = 'width:100%;box-sizing:border-box';
-        matchChatEl.append(input);
-        requestAnimationFrame(() => input?.focus());
-      }
-      if (!chatOpen && input) input.remove();
-      hudEl.append(matchChatEl);
     }
   }
 
@@ -1496,9 +1321,9 @@ export function createGame(root: HTMLElement): Game {
     type PaneUi = { addBinding: (o: object, k: string) => void; hidden: boolean };
     pane = new Pane({ title: 'Tuning' });
     const ui = pane as unknown as PaneUi;
-    for (const key of Object.keys(tuning) as (keyof typeof tuning)[]) {
-      if (typeof tuning[key] === 'number') ui.addBinding(tuning, key);
-    }
+    ui.addBinding(tuning, 'runSpeed');
+    ui.addBinding(tuning, 'jumpSpeed');
+    ui.addBinding(tuning, 'gravity');
     ui.hidden = true;
     window.addEventListener('keydown', (e) => {
       if (e.code === 'F1') debugDraw = !debugDraw;
@@ -1514,69 +1339,56 @@ export function createGame(root: HTMLElement): Game {
       }
       if (e.code === 'F6') {
         freezeCam = false;
-        tuning.lastKillSlowmo = tuning.lastKillSlowmo < 1 ? 1 : 0.25;
+        tuning.lastKillSlowmo = tuning.lastKillSlowmo < 1 ? 1 : 0.3;
       }
       if (e.code === 'F7') freezeCam = !freezeCam;
       if (e.code === 'F8') void switchRenderer();
       if (e.code === 'F9') recorder.download();
-      if (e.code === 'F10') {
-        const picker = document.createElement('input');
-        picker.type = 'file';
-        picker.accept = 'application/json';
-        picker.onchange = () => {
-          void picker.files?.[0]?.text().then((text) => {
-            if (text) loadReplayTape(text);
-          });
-        };
-        picker.click();
-      }
     });
   }
 
-  function replaceGameCanvas(): HTMLCanvasElement {
-    const next = canvas.cloneNode(false) as HTMLCanvasElement;
-    next.id = 'game';
-    canvas.replaceWith(next);
-    canvas = next;
-    return canvas;
+  let gpuAttemptPending = false;
+  function adoptGpu(gpuCanvas: HTMLCanvasElement, gpu: Renderer) {
+    adoptCanvas(gpuCanvas);
+    renderer = gpu;
+    rendererKind = 'gpu';
+    // The normal case needs no label; the notice is for things worth knowing (fallbacks, odd pads).
+    if (menus.notice.startsWith('Canvas fallback')) menus.notice = '';
+    if (menus.screen !== 'play') show();
   }
 
-  /** PLAN §4.11 boot: probe WebGPU/TypeGPU first; Canvas only after a failed probe. */
-  async function attachPreferredRenderer(): Promise<void> {
-    if (settings.renderer !== 'canvas') {
-      const gpu = await tryCreateGpuRenderer(canvas, { lighting: settings.lighting });
-      if (gpu) {
-        renderer = gpu;
-        rendererKind = 'gpu';
-        menus.notice = 'SDF renderer';
-        return;
-      }
+  async function tryAdoptGpu(): Promise<boolean> {
+    // One attempt at a time: a hung adapter request must not be joined by a pile of clones.
+    if (gpuAttemptPending) return false;
+    gpuAttemptPending = true;
+    const gpuCanvas = document.createElement('canvas');
+    const gpu = await tryCreateGpuRenderer(gpuCanvas, { lighting: settings.lighting }, 12_000, (late) => {
+      gpuAttemptPending = false;
+      if (rendererKind === 'canvas' && settings.renderer !== 'canvas') adoptGpu(gpuCanvas, late);
+    });
+    if (gpu) {
+      gpuAttemptPending = false;
+      adoptGpu(gpuCanvas, gpu);
+      return true;
     }
-    renderer = createCanvasRenderer(canvas);
-    rendererKind = 'canvas';
-    menus.notice = 'Canvas fallback';
+    const why = gpuFailureReason();
+    menus.notice = why ? `Canvas fallback — WebGPU ${why}` : 'Canvas fallback';
+    if (menus.screen !== 'play') show();
+    // A timed-out attempt is still in flight and will adopt itself if it ever lands; a hard failure is final.
+    if (why !== 'timed out') gpuAttemptPending = false;
+    return false;
   }
 
   async function switchRenderer() {
-    rendererSwitches += 1;
-    replaceGameCanvas();
-    if (rendererKind === 'gpu' || settings.renderer === 'canvas') {
-      renderer = createCanvasRenderer(canvas);
+    if (rendererKind === 'gpu') {
+      const c = document.createElement('canvas');
+      renderer = createCanvasRenderer(c);
+      adoptCanvas(c);
       rendererKind = 'canvas';
       menus.notice = 'Canvas fallback';
-    } else {
-      const gpu = await tryCreateGpuRenderer(canvas, { lighting: settings.lighting });
-      if (gpu) {
-        renderer = gpu;
-        rendererKind = 'gpu';
-        menus.notice = 'SDF renderer';
-      } else {
-        renderer = createCanvasRenderer(canvas);
-        rendererKind = 'canvas';
-        menus.notice = 'Canvas fallback';
-      }
+    } else if (settings.renderer !== 'canvas') {
+      await tryAdoptGpu();
     }
-    renderer.resize(canvas.clientWidth || 1280, canvas.clientHeight || 720);
     if (menus.screen !== 'play') show();
   }
 
@@ -1586,83 +1398,64 @@ export function createGame(root: HTMLElement): Game {
       window.addEventListener('gamepadconnected', (ev) => {
         const pad = (ev as GamepadEvent).gamepad ?? pollGamepads().find(Boolean);
         if (!pad) return;
-        if (shouldOfferRemap(pad.mapping ?? '', pad.id, maps)) {
-          menus.notice = `Non-standard pad “${pad.id}” — remap offered.`;
-          menus.remapPadId = pad.id;
-          if (shouldOfferRemapOnScreen(menus.screen)) {
-            if (menus.screen !== 'settings') menus.returnScreen = menus.screen;
-            menus.screen = 'settings';
-            show();
-            return;
-          }
+        if (pad.mapping && pad.mapping !== 'standard' && !maps[pad.id]) {
+          menus.notice = `Non-standard pad “${pad.id}” — open Settings to remap.`;
         }
-        const existing = menus.seats.find((s) => s.padId === pad.id);
-        if (existing && menus.screen === 'disconnect') {
-          rememberTakenSeats(menus.seats, menus.padMemory);
-          menus.claimSeat = -1;
-          paused = false;
-          menus.screen = 'play';
-          show();
-          return;
-        }
+        const key = padKey(pad);
         if (menus.screen === 'disconnect') {
-          claimDisconnectedSeat(menus.seats, pad.id, menus.claimSeat, menus.padMemory);
-          menus.claimSeat = -1;
-          paused = false;
-          menus.screen = 'play';
-          show();
+          // The browser usually hands a returning pad its old index; if not, the fighter whose pad
+          // vanished takes the newcomer.
+          const connected = new Set(pollGamepads().filter(Boolean).map((p) => padKey(p!)));
+          const orphan = slotDevices.findIndex((d) => isPadKey(d) && !connected.has(d));
+          if (!slotDevices.includes(key) && orphan >= 0) {
+            const old = slotDevices[orphan]!;
+            slotDevices[orphan] = key;
+            const seat = menus.seats.find((s) => s.padId === old);
+            if (seat) seat.padId = key;
+          }
+          if (slotDevices.includes(key) || slotDevices.every((d) => !isPadKey(d) || connected.has(d))) setPaused(false);
           return;
         }
         if (menus.screen === 'join') {
-          takeSeat(menus.seats, pad.id, menus.padMemory, { replaceKeyboard: menus.bots > 0 });
+          takeSeat(menus.seats, key, padLabel(pad));
           show();
         }
       });
       window.addEventListener('gamepaddisconnected', (ev) => {
         const pad = (ev as GamepadEvent).gamepad;
-        menus.claimSeat = markDisconnectedSeat(menus.seats, pad?.id);
-        if (menus.screen === 'play') {
+        if (pad) padEdges[pad.index]?.reset();
+        // Only a pad that is actually steering a fighter interrupts the match.
+        const inMatch = !pad || slotDevices.includes(padKey(pad)) || (!slotDevices.length && pad.index < humanCount);
+        if (sim && inMatch && (menus.screen === 'play' || menus.screen === 'pause')) {
           paused = true;
           menus.screen = 'disconnect';
           show();
         }
       });
+      const isTextField = (el: Element | null) =>
+        el instanceof HTMLTextAreaElement || (el instanceof HTMLInputElement && !['checkbox', 'range', 'number', 'button'].includes(el.type));
       window.addEventListener('keydown', (e) => {
-        const online = menus.netRole === 'host' || menus.netRole === 'client';
-        if (menus.screen === 'play' && online && (e.code === 'Enter' || e.code === 'Escape')) {
-          if (e.code === 'Enter') {
-            e.preventDefault();
-            if (!chatOpen) {
-              chatOpen = true;
-            } else {
-              const typed = (
-                document.querySelector('#matchchat-in') as HTMLInputElement | null
-              )?.value.trim();
-              if (typed) {
-                menus.chat.push(`you: ${typed}`);
-                net.send({ t: 'chat', from: netName || menus.netRole || 'you', text: typed });
-              }
-              chatOpen = false;
-            }
-            return;
-          }
-          if (e.code === 'Escape' && chatOpen) {
-            e.preventDefault();
-            chatOpen = false;
-            return;
-          }
+        if (e.code === 'Enter' && matchIsOver()) {
+          rematch();
+          return;
         }
         if (menus.screen === 'join') {
+          lastMenuDevice = 'keyboard';
           if (e.code === 'ArrowLeft' || e.code === 'ArrowRight') {
-            const seat = [...menus.seats].reverse().find((s) => s.taken) ?? menus.seats[0];
+            const seat = menus.seats.find((s) => s.taken && s.padId === 'keyboard') ?? [...menus.seats].reverse().find((s) => s.taken);
             if (seat?.taken) {
-              cycleSeatColor(seat, e.code === 'ArrowRight' ? 1 : -1, menus.padMemory);
+              cycleSeatColor(seat, e.code === 'ArrowRight' ? 1 : -1, menus.seats);
               show();
             }
             return;
           }
+          if (e.code === 'ArrowUp' || e.code === 'ArrowDown') {
+            menus.bots = Math.max(0, Math.min(maxBots(menus.seats), menus.bots + (e.code === 'ArrowUp' ? 1 : -1)));
+            show();
+            return;
+          }
           if (e.code === 'Space' || e.code === 'KeyA') {
-            takeOrReadySeat(menus.seats, 'keyboard', menus.padMemory);
+            takeOrReadySeat(menus.seats, 'keyboard', 'Keyboard');
             show();
             return;
           }
@@ -1670,22 +1463,56 @@ export function createGame(root: HTMLElement): Game {
             startIfReady();
             return;
           }
+          if (e.code === 'Escape') {
+            backOut();
+            return;
+          }
+          return;
+        }
+        if (NAV_SCREENS.has(menus.screen)) {
+          lastMenuDevice = 'keyboard';
+          const active = document.activeElement;
+          // Arrow keys walk the menu unless a field that uses them natively (text, select) has focus.
+          const dir: NavDir | null =
+            e.code === 'ArrowUp' ? 'up' : e.code === 'ArrowDown' ? 'down' : e.code === 'ArrowLeft' ? 'left' : e.code === 'ArrowRight' ? 'right' : null;
+          if (dir && !isTextField(active) && !(active instanceof HTMLSelectElement)) {
+            e.preventDefault();
+            navigateMenu(dir, false, false);
+            return;
+          }
+          // Enter with nothing focused takes the screen's primary action (a focused button already clicks itself).
+          if (e.code === 'Enter' && !focusedIn(menusEl)) navigateMenu(null, true, false);
+          if (e.code === 'Escape' && menus.screen !== 'menu') backOut();
         }
       });
-      await attachPreferredRenderer();
-      if (location.hash.startsWith('#l=')) {
-        openEditor();
-      } else if (menus.screen !== 'play' && menus.screen !== 'editor') {
-        show();
-      }
+      // Mouse users steer the cursor themselves: drop the pad ring the moment they take over.
+      menusEl.addEventListener('pointerdown', () => {
+        lastMenuDevice = 'keyboard';
+        for (const el of menusEl.querySelectorAll('.pad-focus')) el.classList.remove('pad-focus');
+      });
+      renderer = createCanvasRenderer(canvas);
       bindDebug();
-      if ('serviceWorker' in navigator) void navigator.serviceWorker.register('/sw.js');
+      // Opening the audio device costs ~200 ms on the main thread; do it behind the title screen
+      // (once the first frames are up) rather than on the first frame of the match.
+      window.setTimeout(() => mixer.warm(), 1000);
+      if ('serviceWorker' in navigator) {
+        if (import.meta.env.PROD) void navigator.serviceWorker.register('/sw.js');
+        else void navigator.serviceWorker.getRegistrations().then((rs) => rs.forEach((r) => void r.unregister()));
+      }
       raf = requestAnimationFrame(tick);
+      if (settings.renderer !== 'canvas') {
+        void tryAdoptGpu()
+          .then((ok) => {
+            if (ok && menus.screen !== 'play') show();
+          })
+          .catch(() => undefined);
+      }
       void net;
       void MatchState;
     },
     stop() {
       cancelAnimationFrame(raf);
+      stopDemo();
     },
   };
 }

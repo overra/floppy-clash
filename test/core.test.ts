@@ -1,7 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { inspectWorld } from '../src/sim/inspect';
-import { add, clamp, length, lerpAngle, normalize, vec2 } from '../src/core/math';
-import { makeSim } from './helpers';
+import { add, clamp, length, normalize, vec2 } from '../src/core/math';
 import { SeededRng } from '../src/core/rng';
 import { fnv1a, hashToHex } from '../src/core/hash';
 
@@ -28,26 +26,10 @@ describe('vec math', () => {
     expect(length(n)).toBeCloseTo(1);
     expect(clamp(12, 0, 10)).toBe(10);
   });
-
-  it('lerpAngle takes the short way around ±π', () => {
-    expect(lerpAngle(3, -3, 0.5)).toBeCloseTo(Math.PI, 5);
-    expect(lerpAngle(-3, 3, 0.5)).toBeCloseTo(-Math.PI, 5);
-    expect(lerpAngle(0.1, 0.5, 0.5)).toBeCloseTo(0.3, 5);
-  });
 });
 
 describe('hash', () => {
   it('is stable', () => {
     expect(hashToHex(fnv1a('floppy'))).toBe(hashToHex(fnv1a('floppy')));
-  });
-});
-
-describe('entity inspector', () => {
-  it('lists net ids and trait names', () => {
-    const sim = makeSim({ settings: { playerCount: 2 } });
-    const rows = inspectWorld(sim.ecs, 16);
-    expect(rows.length).toBeGreaterThan(0);
-    expect(rows.some((r) => r.traits.includes('Player'))).toBe(true);
-    expect(rows.every((r) => r.traits.includes('NetId') || r.netId >= 0)).toBe(true);
   });
 });

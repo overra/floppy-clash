@@ -2,29 +2,24 @@ interface GPUAdapter {
   requestDevice(desc?: unknown): Promise<GPUDevice>;
 }
 interface GPUDevice {
-  destroy(): void;
+  addEventListener?(type: 'uncapturederror', cb: (ev: unknown) => void): void;
+  features: ReadonlySet<string>;
   createShaderModule(desc: { code: string }): GPUShaderModule;
   createRenderPipeline(desc: unknown): GPURenderPipeline;
   createBuffer(desc: { size: number; usage: number }): GPUBuffer;
   createBindGroup(desc: unknown): GPUBindGroup;
   createSampler(desc?: unknown): GPUSampler;
   createTexture(desc: unknown): GPUTexture;
-  createQuerySet?: (desc: unknown) => unknown;
+  createQuerySet(desc: { type: 'timestamp' | 'occlusion'; count: number }): GPUQuerySet;
   createCommandEncoder(): GPUCommandEncoder;
   queue: {
-    writeBuffer(buf: GPUBuffer, off: number, data: BufferSource): void;
-    writeTexture(
-      dest: unknown,
-      data: BufferSource | Uint8ClampedArray,
-      layout: unknown,
-      size: unknown,
-    ): void;
+    writeBuffer(buf: GPUBuffer, off: number, data: BufferSource, dataOffset?: number, size?: number): void;
+    writeTexture(dest: unknown, data: BufferSource | Uint8ClampedArray, layout: unknown, size: unknown): void;
     submit(c: unknown[]): void;
-    onSubmittedWorkDone(): Promise<void>;
   };
 }
 interface GPUShaderModule {
-  dummy?: true;
+  getCompilationInfo?(): Promise<{ messages: { type: string; lineNum: number; linePos: number; message: string }[] }>;
 }
 interface GPURenderPipeline {
   getBindGroupLayout(i: number): unknown;
@@ -33,6 +28,9 @@ interface GPUBuffer {
   mapAsync(mode: number, offset?: number, size?: number): Promise<void>;
   getMappedRange(offset?: number, size?: number): ArrayBuffer;
   unmap(): void;
+}
+interface GPUQuerySet {
+  destroy(): void;
 }
 interface GPUBindGroup {
   dummy?: true;
@@ -46,29 +44,19 @@ interface GPUTexture {
 }
 interface GPUCommandEncoder {
   beginRenderPass(desc: unknown): GPURenderPass;
-  copyBufferToBuffer(
-    source: GPUBuffer,
-    sourceOffset: number,
-    destination: GPUBuffer,
-    destinationOffset: number,
-    size: number,
-  ): void;
-  copyTextureToBuffer(
-    source: { texture: GPUTexture; origin?: { x: number; y: number; z?: number } },
-    destination: { buffer: GPUBuffer; bytesPerRow: number; rowsPerImage?: number },
-    copySize: { width: number; height: number; depthOrArrayLayers?: number },
-  ): void;
+  resolveQuerySet(querySet: GPUQuerySet, firstQuery: number, queryCount: number, destination: GPUBuffer, destinationOffset: number): void;
+  copyBufferToBuffer(source: GPUBuffer, sourceOffset: number, destination: GPUBuffer, destinationOffset: number, size: number): void;
   finish(): unknown;
 }
 interface GPURenderPass {
   setPipeline(p: GPURenderPipeline): void;
   setBindGroup(i: number, g: GPUBindGroup): void;
-  draw(v: number, i?: number): void;
+  draw(v: number, i?: number, firstVertex?: number, firstInstance?: number): void;
   end(): void;
 }
 interface GPUCanvasContext {
-  configure(desc: { device: GPUDevice; format: string; alphaMode?: string; usage?: number }): void;
-  getCurrentTexture(): GPUTexture;
+  configure(desc: unknown): void;
+  getCurrentTexture(): { createView(): unknown };
   canvas?: HTMLCanvasElement;
 }
 type GPUTextureFormat = string;
@@ -88,15 +76,15 @@ declare const GPUBufferUsage: {
   COPY_SRC: number;
   STORAGE: number;
   MAP_READ: number;
-};
-declare const GPUTextureUsage: {
-  TEXTURE_BINDING: number;
-  COPY_DST: number;
-  COPY_SRC: number;
-  RENDER_ATTACHMENT: number;
+  QUERY_RESOLVE: number;
 };
 declare const GPUMapMode: {
   READ: number;
   WRITE: number;
+};
+declare const GPUTextureUsage: {
+  TEXTURE_BINDING: number;
+  COPY_DST: number;
+  RENDER_ATTACHMENT: number;
 };
 type GPUColorDict = { r: number; g: number; b: number; a: number };

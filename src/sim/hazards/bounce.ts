@@ -1,5 +1,4 @@
 import { Vec2 } from 'planck';
-import { authoredHalfWidth } from '../authored';
 import { getContext } from '../context';
 import { HazardKind, Transform } from '../traits';
 import { createStaticBox } from './common';
@@ -14,14 +13,12 @@ export const bounce: HazardModule = {
     if (!pt || !ctrl.grounded) return;
     const dx = Math.abs(pt.x - ht.x);
     const dy = Math.abs(pt.y - ht.y);
-    // param0 is authored full width (default 2). Reach is half-width.
-    // 0 means no pad — do not `|| 1.2` or `dx < param0` (that doubles the box).
-    if (dx < authoredHalfWidth(hz.param0) && dy < 1) {
+    // param0 = half-width, param1 = launch speed
+    if (dx < (hz.param0 || 1.2) + 0.2 && dy < 1.3) {
       const body = getContext(world).bodies.get(player);
-      if (body && hz.param1 !== 0) {
+      if (body) {
         const v = body.getLinearVelocity();
-        // param1 is authored launch speed (default 16). 0 means the pad is frozen.
-        body.setLinearVelocity(new Vec2(v.x, hz.param1));
+        body.setLinearVelocity(new Vec2(v.x, hz.param1 || 18));
       }
     }
   },

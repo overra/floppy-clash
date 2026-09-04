@@ -8,12 +8,15 @@ export const Category = {
   Sensor: 0x0040,
 } as const;
 
+// Loose weapons are pickups: they tumble off terrain and props but never block a fighter
+// (a gun lying against a wall must not wall off the route past it). Thrown-weapon hits are
+// proximity checks, so they need no player contact either.
 export const Mask = {
   Static: Category.Static | Category.Prop | Category.Player | Category.Ragdoll | Category.Weapon | Category.Projectile,
   Prop: Category.Static | Category.Prop | Category.Player | Category.Ragdoll | Category.Weapon | Category.Projectile,
-  Player: Category.Static | Category.Prop | Category.Player | Category.Ragdoll | Category.Weapon | Category.Projectile,
+  Player: Category.Static | Category.Prop | Category.Player | Category.Ragdoll | Category.Projectile,
   Ragdoll: Category.Static | Category.Prop | Category.Player | Category.Ragdoll | Category.Weapon | Category.Projectile,
-  Weapon: Category.Static | Category.Prop | Category.Player | Category.Ragdoll | Category.Weapon | Category.Projectile,
+  Weapon: Category.Static | Category.Prop | Category.Ragdoll | Category.Weapon | Category.Projectile,
   Projectile: Category.Static | Category.Prop | Category.Ragdoll | Category.Weapon,
   Sensor: Category.Player | Category.Ragdoll | Category.Prop,
 } as const;

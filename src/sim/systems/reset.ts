@@ -1,18 +1,18 @@
 import type { Entity, World } from 'koota';
 import { matchLevelPool } from '../../levels/catalog';
 import { getContext } from '../context';
-import { clearLavaTouch } from '../hazards/common';
 import { loadLevel } from '../level/loader';
 import type { LevelDef } from '../level/schema';
+import { spawnPositions } from '../level/spawns';
 import { createPlayerCapsule } from '../physics/bodies';
 import {
+  Bot,
   Combat,
   Controller,
   Dead,
   Hazard,
   Health,
   MatchState,
-  PhysArm,
   Player,
   Projectile,
   RagdollPart,
@@ -31,13 +31,17 @@ export function nextMatchLevel(world: World): void {
   if (!match) return;
   const pool = matchLevelPool(ctx.settings.enabledLevels, ctx.extraLevels);
   if (pool.length === 0) return;
+  // Rotate relative to the arena actually on screen, not whatever index was last stored.
+  const current = pool.findIndex((l) => l.id === ctx.level.id);
   if (match.rotation === 1) {
-    match.levelIndex = (match.levelIndex + 1) % pool.length;
+    match.levelIndex = (current + 1) % pool.length;
   } else {
     let next = ctx.rng.nextInt(pool.length);
-    if (pool.length > 1 && next === match.levelIndex) next = (next + 1) % pool.length;
+    if (pool.length > 1 && next === current) next = (next + 1) % pool.length;
     match.levelIndex = next;
   }
+  // world.get hands out a snapshot: the new index has to be written back or every round re-rolls from stale state.
+  world.set(MatchState, match);
   const level = pool[match.levelIndex]!;
   reloadLevel(world, level);
 }
@@ -55,12 +59,6 @@ export function reloadLevel(world: World, level: LevelDef): void {
   world.query(Player, Dead).updateEach((_, e) => {
     if (!ctx.players.includes(e)) doomed.push(e);
   });
-  // M0 falling boxes (and any other leftover props) have PhysBody but used to
-  // lack Hazard, so they survived reload and pinned live fighters.
-  world.query(PhysBody).updateEach((_, e) => {
-    if (e.has(Player) || e.has(PhysArm) || ctx.players.includes(e)) return;
-    doomed.push(e);
-  });
   const seen = new Set<Entity>();
   for (const entity of doomed) {
     if (seen.has(entity) || !world.has(entity)) continue;
@@ -73,13 +71,12 @@ export function reloadLevel(world: World, level: LevelDef): void {
     entity.destroy();
   }
   ctx.level = level;
-  clearLavaTouch();
   loadLevel(world, level);
 }
 
 export function respawnPlayers(world: World): void {
   const ctx = getContext(world);
-  const order = ctx.rng.shuffle(ctx.level.spawns.slice());
+  const spots = spawnPositions(ctx.level.spawns, ctx.players.length, ctx.rng);
   ctx.players.forEach((player, i) => {
     if (!world.has(player)) return;
     if (player.has(Dead)) player.remove(Dead);
@@ -107,10 +104,13 @@ export function respawnPlayers(world: World): void {
       });
     }
     const status = player.get(Status);
-    if (status) player.set(Status, { burning: 0, slowed: 0, glued: 0, bubbled: 0 });
-    const spawn = order[i % order.length]!;
+    if (status) player.set(Status, { burning: 0, slowed: 0, glued: 0, bubbled: 0, pulled: 0 });
+    // A new arena means a new nav graph: forget the old surface, target and grudges.
+    const bot = player.get(Bot);
+    if (bot) player.set(Bot, { ...bot, mode: 0, timer: 0, target: -1, surf: -1, detour: 0, blocked: 0, shunned: -1, shunTicks: 0 });
+    const spawn = spots[i]!;
     const x = spawn.x;
-    const y = spawn.y + 1;
+    const y = spawn.y;
     let body = ctx.bodies.get(player);
     if (!body) {
       if (player.get(PhysBody)) player.remove(PhysBody);

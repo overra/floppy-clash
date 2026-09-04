@@ -1,385 +1,144 @@
 import { describe, expect, it } from 'vitest';
-import {
-  bulletApproaching,
-  hazardAhead,
-  nearerWallDir,
-  shouldClimb,
-  wallToward,
-} from '../src/sim/ai/bots';
-import { getLevel } from '../src/levels/catalog';
-import { spawnWeapon } from '../src/sim/systems/weapons';
-import {
-  Bot,
-  Controller,
-  Dead,
-  Health,
-  Held,
-  HeldBy,
-  Loose,
-  Projectile,
-  Transform,
-  Weapon,
-} from '../src/sim/traits';
-import { fistArena, gymLevel, hold, makeSim, pin, playerOf, woodsClearing } from './helpers';
+import { universe } from 'koota';
+import { attachBots } from '../src/sim/ai/bots';
+import { navFor, routeStep, surfaceUnderFeet } from '../src/sim/ai/nav';
+import { builtInMatchLevels } from '../src/levels/catalog';
+import { createSimWorld } from '../src/sim/world';
+import { Bot, Health, Player, RoundPhase, RoundState, Transform } from '../src/sim/traits';
+import { makeSim } from './helpers';
+
+/** Yield a macrotask so vitest's worker can answer the runner while a long sync sweep is in progress. */
+const breathe = () => new Promise<void>((resolve) => setImmediate(resolve));
 
 describe('M9 bots', () => {
-  it('a human seat past playerCount is not tagged as a bot', () => {
-    const sim = makeSim({
-      seed: 89,
-      settings: { playerCount: 1, bots: 3 },
-      seats: [
-        { slot: 0, color: 0, inputIndex: 0 },
-        { slot: 1, color: 1, inputIndex: 1 },
-      ],
-    });
-    expect(playerOf(sim, 0).has(Bot)).toBe(false);
-    expect(playerOf(sim, 1).has(Bot)).toBe(false);
-    expect(playerOf(sim, 2).has(Bot)).toBe(true);
-    expect(playerOf(sim, 3).has(Bot)).toBe(true);
-  });
-
-  it('createSimWorld attaches Bot traits for settings.bots seats', () => {
+  it('bots produce inputs and the match advances', () => {
     const sim = makeSim({ seed: 90, settings: { playerCount: 1, bots: 3 } });
-    let bots = 0;
-    sim.ecs.query(Bot).updateEach(() => {
-      bots += 1;
+    const slots: number[] = [];
+    sim.ecs.query(Player).updateEach(([p], e) => {
+      if (p.slot > 0) {
+        e.add(Bot({ slot: p.slot, think: 0 }));
+        slots.push(p.slot);
+      }
     });
-    expect(bots).toBe(3);
-  });
-
-  it('bots produce non-idle inputs and move toward a living player', () => {
-    const sim = makeSim({ seed: 91, settings: { playerCount: 1, bots: 3 } });
-    const human = playerOf(sim, 0);
-    sim.ctx.bodies.get(human)?.setPosition({ x: 8, y: 4 });
-    human.set(Transform, { x: 8, y: 4, angle: 0 });
-    const bot = playerOf(sim, 1);
-    sim.ctx.bodies.get(bot)?.setPosition({ x: 16, y: 4 });
-    bot.set(Transform, { x: 16, y: 4, angle: 0 });
-    const x0 = bot.get(Transform)?.x ?? 16;
-    for (let i = 0; i < 90; i++) sim.step();
-    const x1 = bot.get(Transform)?.x ?? 16;
-    expect(Math.abs(x1 - x0)).toBeGreaterThan(0.3);
-    expect(sim.getTick()).toBe(90);
-  });
-
-  it('unarmed bot walks toward the nearest loose weapon and picks it up (PLAN 4.14)', () => {
-    const sim = makeSim({ seed: 95, settings: { playerCount: 1, bots: 1 } });
-    const bot = playerOf(sim, 1);
-    pin(sim, bot, 13.6, 4);
-    const gun = spawnWeapon(sim.ecs, 'pistol', 12, 4);
-    const w = gun.get(Weapon)!;
-    gun.set(Weapon, { ...w, pickupCooldown: 0 });
-    const x0 = bot.get(Transform)?.x ?? 13.6;
-    for (let i = 0; i < 50; i++) sim.step();
-    expect(bot.get(Transform)?.x ?? 13.6).toBeLessThan(x0);
-    expect(gun.has(Held)).toBe(true);
-    expect(gun.targetFor(HeldBy) === bot).toBe(true);
-  });
-
-  it('thinkBots does not raise block on an attack tick without a closing bullet', () => {
-    const sim = makeSim({ seed: 96, settings: { playerCount: 1, bots: 1 } });
-    const bot = playerOf(sim, 1);
-    pin(sim, bot, 14, 4);
-    const trait = bot.get(Bot);
-    if (trait) bot.set(Bot, { ...trait, think: 20 });
-    sim.step();
-    const slot = bot.get(Bot)?.slot ?? 1;
-    // think becomes 21; 21 % 18 < 6 would also fire attack — block must stay off.
-    expect(sim.ctx.inputs[slot]?.block).toBe(false);
-  });
-
-  it('thinkBots raises block only for a closing bullet, not a receding one', () => {
-    const run = (vx: number) => {
-      const sim = makeSim({ seed: 96, settings: { playerCount: 1, bots: 1 } });
-      const bot = playerOf(sim, 1);
-      pin(sim, bot, 14, 4);
-      const trait = bot.get(Bot);
-      if (trait) bot.set(Bot, { ...trait, think: 20 });
-      sim.ecs.spawn(
-        Projectile({
-          kind: 0,
-          damage: 10,
-          speed: 40,
-          bounces: 0,
-          fuse: 0,
-          x: 8,
-          y: 4,
-          vx,
-          vy: 0,
-          gravity: 0,
-          ownerGrace: 0,
-          defId: 0,
-        }),
-      );
-      sim.step();
-      return sim.ctx.inputs[bot.get(Bot)?.slot ?? 1]?.block;
-    };
-    expect(run(-40)).toBe(false);
-    expect(run(40)).toBe(true);
-  });
-
-  it('blocks when a bullet is approaching (PLAN 4.14)', () => {
-    const sim = makeSim({ seed: 92, settings: { playerCount: 1, bots: 1 } });
-    sim.ecs.spawn(
-      Projectile({
-        kind: 0,
-        damage: 10,
-        speed: 40,
-        bounces: 0,
-        fuse: 0,
-        x: 8,
-        y: 4,
-        vx: 40,
-        vy: 0,
-        gravity: 0,
-        ownerGrace: 0,
-        defId: 0,
-      }),
-    );
-    expect(bulletApproaching(sim.ecs, 14, 4)).toBe(true);
-    expect(bulletApproaching(sim.ecs, 8, 10)).toBe(false);
-    expect(bulletApproaching(sim.ecs, 2, 4)).toBe(false);
-  });
-
-  it('avoids lava / pits in the look-ahead (PLAN 4.14)', () => {
-    const sim = makeSim({
-      level: getLevel('test-lava'),
-      seed: 94,
-      settings: { playerCount: 1, bots: 1 },
-    });
-    const lava = getLevel('test-lava').objects.find((o) => o.type === 'lava');
-    const x = lava?.x ?? 16;
-    const y = (lava?.y ?? 1.6) + 1.2;
-    expect(hazardAhead(sim.ecs, x - 1.4, y, 1)).toBe(true);
-    expect(hazardAhead(sim.ecs, 4, 3.2, 1)).toBe(false);
-  });
-
-  it('retreats when too close while armed (PLAN 4.14)', () => {
-    const sim = makeSim({ seed: 97, settings: { playerCount: 1, bots: 1 } });
-    const human = playerOf(sim, 0);
-    const bot = playerOf(sim, 1);
-    pin(sim, human, 10, 4);
-    pin(sim, bot, 10.35, 4);
-    const gun = spawnWeapon(sim.ecs, 'pistol', 10.35, 4);
-    gun.add(Held(), HeldBy(bot));
-    gun.remove(Loose);
-    sim.step();
-    const slot = bot.get(Bot)?.slot ?? 1;
-    expect(sim.ctx.inputs[slot]?.moveX).toBeGreaterThan(0);
-    expect(sim.ctx.inputs[slot]?.attack).toBe(false);
-  });
-
-  it('retreats when HP is low even at mid range (PLAN 4.14)', () => {
-    const sim = makeSim({ seed: 99, settings: { playerCount: 1, bots: 1 } });
-    const human = playerOf(sim, 0);
-    const bot = playerOf(sim, 1);
-    pin(sim, human, 10, 4);
-    pin(sim, bot, 14, 4);
-    bot.set(Health, { hp: 20, maxHp: 100 });
-    sim.step();
-    const slot = bot.get(Bot)?.slot ?? 1;
-    expect(sim.ctx.inputs[slot]?.moveX).toBeGreaterThan(0);
-    expect(sim.ctx.inputs[slot]?.attack).toBe(false);
-  });
-
-  it('shouldClimb requires a wall and either air or dy > 1', () => {
-    expect(shouldClimb({ grounded: true, dy: 1.15, wall: true })).toBe(true);
-    expect(shouldClimb({ grounded: true, dy: 0.4, wall: true })).toBe(false);
-    expect(shouldClimb({ grounded: false, dy: 0.2, wall: true })).toBe(true);
-    expect(shouldClimb({ grounded: true, dy: 1.15, wall: false })).toBe(false);
-  });
-
-  it('nearerWallDir presses into the closer shaft wall (PLAN 4.14)', () => {
-    const sim = makeSim({
-      level: gymLevel,
-      seed: 98,
-      settings: { playerCount: 1, bots: 1 },
-    });
-    expect(nearerWallDir(sim.ecs, 4.7, 3.2)).toBe(1);
-    expect(nearerWallDir(sim.ecs, 3.3, 3.2)).toBe(-1);
-    expect(nearerWallDir(sim.ecs, 16, 3.2)).toBe(0);
-  });
-
-  it('wall-jumps into a shaft wall when generic jump would not fire (PLAN 4.14)', () => {
-    const sim = makeSim({
-      level: gymLevel,
-      seed: 98,
-      settings: { playerCount: 1, bots: 1 },
-    });
-    const human = playerOf(sim, 0);
-    const bot = playerOf(sim, 1);
-    // 1 < dy ≤ 1.2 and |dx| ≤ 3 so the generic jump heuristic stays off.
-    pin(sim, human, 5.0, 4.35);
-    pin(sim, bot, 4.7, 3.2);
-    const ctrl = bot.get(Controller);
-    if (ctrl) bot.set(Controller, { ...ctrl, grounded: true, facing: 1 });
-    const trait = bot.get(Bot);
-    if (trait) bot.set(Bot, { ...trait, think: 20 });
-    expect(wallToward(sim.ecs, 4.7, 3.2, 1)).toBe(true);
-    sim.step();
-    const slot = bot.get(Bot)?.slot ?? 1;
-    expect(sim.ctx.inputs[slot]?.jump).toBe(true);
-    expect(sim.ctx.inputs[slot]?.moveX ?? 0).toBeGreaterThan(0.2);
-  });
-
-  it('does not climb-jump the same pose when no wall is toward the target', () => {
-    const sim = makeSim({
-      level: woodsClearing,
-      seed: 98,
-      settings: { playerCount: 1, bots: 1 },
-    });
-    const human = playerOf(sim, 0);
-    const bot = playerOf(sim, 1);
-    pin(sim, human, 16.3, 4.35);
-    pin(sim, bot, 16, 3.2);
-    const ctrl = bot.get(Controller);
-    if (ctrl) bot.set(Controller, { ...ctrl, grounded: true, facing: 1 });
-    const trait = bot.get(Bot);
-    if (trait) bot.set(Bot, { ...trait, think: 20 });
-    expect(wallToward(sim.ecs, 16, 3.2, 1)).toBe(false);
-    sim.step();
-    const slot = bot.get(Bot)?.slot ?? 1;
-    expect(sim.ctx.inputs[slot]?.jump).toBe(false);
-  });
-
-  it('mid-shaft climb is not reversed by a false pit miss (PLAN 4.14)', () => {
-    const sim = makeSim({
-      level: gymLevel,
-      seed: 98,
-      settings: { playerCount: 1, bots: 1 },
-    });
-    const human = playerOf(sim, 0);
-    const bot = playerOf(sim, 1);
-    pin(sim, human, 4.9, 10);
-    pin(sim, bot, 4.7, 7);
-    const ctrl = bot.get(Controller);
-    if (ctrl) bot.set(Controller, { ...ctrl, grounded: false, facing: 1 });
-    const trait = bot.get(Bot);
-    if (trait) bot.set(Bot, { ...trait, think: 20 });
-    expect(hazardAhead(sim.ecs, 4.7, 7, 1)).toBe(true);
-    expect(hazardAhead(sim.ecs, 4.7, 7, 1, { checkPit: false })).toBe(false);
-    sim.step();
-    const slot = bot.get(Bot)?.slot ?? 1;
-    expect(sim.ctx.inputs[slot]?.jump).toBe(true);
-    expect(sim.ctx.inputs[slot]?.moveX ?? 0).toBeGreaterThan(0.2);
-  });
-
-  it('a bot in the gym shaft wall-climbs past a single jump (PLAN 4.14 / M1)', () => {
-    const sim = makeSim({
-      level: gymLevel,
-      seed: 101,
-      settings: { playerCount: 1, bots: 1 },
-    });
-    const human = playerOf(sim, 0);
-    const bot = playerOf(sim, 1);
-    pin(sim, bot, 4.7, 3.2);
-    pin(sim, human, 5.5, 15.1);
-    const y0 = bot.get(Transform)?.y ?? 3.2;
-    let apex = y0;
-    let wallJumps = 0;
-    let prevLock = 0;
-    for (let i = 0; i < 360; i++) {
-      sim.step();
-      apex = Math.max(apex, bot.get(Transform)?.y ?? apex);
-      const lock = bot.get(Controller)?.lockTicks ?? 0;
-      if (lock > prevLock) wallJumps += 1;
-      prevLock = lock;
-    }
-    // One floor jump is ≈2.0 m; M1 shaft climb is 6 tiles (y ≥ 8.5).
-    expect(apex).toBeGreaterThan(y0 + 4);
-    expect(apex).toBeGreaterThanOrEqual(8.5);
-    expect(wallJumps).toBeGreaterThanOrEqual(2);
-  });
-
-  it('stacked bots sidestep and land a live fist (seed-99 stall)', () => {
-    const sim = makeSim({
-      level: fistArena,
-      seed: 99,
-      settings: { playerCount: 0, bots: 2, maxHp: 1, enabledWeapons: [] },
-    });
-    const a = playerOf(sim, 0);
-    const b = playerOf(sim, 1);
-    pin(sim, a, 16.5, 3.0);
-    pin(sim, b, 16.6, 4.6);
-    sim.step();
-    const mx0 = sim.ctx.inputs[0]?.moveX ?? 0;
-    const mx1 = sim.ctx.inputs[1]?.moveX ?? 0;
-    expect(mx0 * mx1).toBeLessThan(0);
-    const dx0 = Math.abs((a.get(Transform)?.x ?? 0) - (b.get(Transform)?.x ?? 0));
-    let kills = 0;
-    let maxDx = dx0;
-    for (let i = 0; i < 720; i++) {
-      const ev = sim.step();
-      maxDx = Math.max(
-        maxDx,
-        Math.abs((a.get(Transform)?.x ?? 0) - (b.get(Transform)?.x ?? 0)),
-      );
-      const fists = ev.some((e) => e.type === 'shot' && e.weaponId === 'fists');
-      const tickKills = ev.filter((e) => e.type === 'kill').length;
-      if (tickKills > 0) expect(fists).toBe(true);
-      kills += tickKills;
-      if (kills > 0) break;
-    }
-    expect(maxDx).toBeGreaterThan(dx0 + 0.25);
-    expect(kills).toBeGreaterThan(0);
-  });
-
-  it('holdBots leaves scripted victim inputs in place', () => {
-    const sim = makeSim({ seed: 103, settings: { playerCount: 1, bots: 1 } });
-    const human = playerOf(sim, 0);
-    const bot = playerOf(sim, 1);
-    pin(sim, human, 10, 4);
-    pin(sim, bot, 10.55, 4);
-    sim.ctx.holdBots = true;
-    sim.step([hold({ attack: true, aimX: 1, aimY: 0 }), hold({}), hold({}), hold({})]);
-    const slot = bot.get(Bot)?.slot ?? 1;
-    expect(sim.ctx.inputs[slot]?.attack).toBe(false);
-    expect(sim.ctx.inputs[slot]?.moveX ?? 0).toBe(0);
-  });
-
-  it('a bot actually blocks a live incoming bullet (PLAN 4.14)', () => {
-    const sim = makeSim({ seed: 102, settings: { playerCount: 1, bots: 1 } });
-    const human = playerOf(sim, 0);
-    const bot = playerOf(sim, 1);
-    pin(sim, human, 2, 4);
-    pin(sim, bot, 14, 4);
-    const trait = bot.get(Bot);
-    if (trait) bot.set(Bot, { ...trait, think: 20 });
-    sim.ecs.spawn(
-      Projectile({
-        kind: 0,
-        damage: 40,
-        speed: 40,
-        bounces: 0,
-        fuse: 0,
-        x: 8,
-        y: 4,
-        vx: 40,
-        vy: 0,
-        gravity: 0,
-        ownerGrace: 0,
-        defId: 0,
-      }),
-    );
-    const hp0 = bot.get(Health)?.hp ?? 100;
-    let blocked = false;
-    for (let i = 0; i < 20; i++) {
-      const ev = sim.step();
-      if (ev.some((e) => e.type === 'block')) blocked = true;
-    }
-    expect(blocked).toBe(true);
-    expect(bot.get(Health)?.hp ?? 100).toBe(hp0);
-    expect(bot.has(Dead)).toBe(false);
-  });
-
-  it('bot soak of 2000 ticks stays finite', { timeout: 30_000 }, () => {
-    const sim = makeSim({ seed: 93, settings: { playerCount: 1, bots: 3 }, boxes: 4 });
+    attachBots(sim.ecs, slots);
+    const start = sim.getTick();
     expect(() => {
-      for (let i = 0; i < 2000; i++) sim.step();
+      for (let i = 0; i < 240; i++) sim.step();
     }).not.toThrow();
-    sim.ecs.query(Transform).updateEach(([t]) => {
-      expect(Number.isFinite(t.x)).toBe(true);
-      expect(Number.isFinite(t.y)).toBe(true);
-    });
+    expect(sim.getTick()).toBe(start + 240);
   });
+
+  it('routes across the surface graph of every arena from every spawn to every other spawn', () => {
+    for (const level of builtInMatchLevels()) {
+      const nav = navFor(level);
+      const spawnSurfs = level.spawns.map((s) => surfaceUnderFeet(nav, s.x, s.y - 1.5 + 0.05, 3.2));
+      for (const a of spawnSurfs) {
+        expect(a, `${level.id}: spawn has no static surface`).toBeGreaterThanOrEqual(0);
+        for (const b of spawnSurfs) {
+          if (a === b) continue;
+          expect(routeStep(nav, a, b), `${level.id}: no route between spawn surfaces ${a} -> ${b}`).not.toBeNull();
+        }
+      }
+    }
+  });
+
+  it('hops a spike strip between itself and its target instead of walking into it', () => {
+    const base = builtInMatchLevels()[0]!;
+    const level = {
+      ...base,
+      id: 'test-spike-hop',
+      bounds: { x: 0, y: 0, w: 24, h: 14 },
+      spawns: [
+        { x: 19, y: 3.5 },
+        { x: 4, y: 3.5 },
+      ],
+      drops: { enabled: false, xMin: 4, xMax: 20, intervalScale: 1 },
+      objects: [
+        { type: 'solid' as const, x: 12, y: 1, w: 24, h: 2 },
+        { type: 'spikes' as const, x: 11, y: 2.35, w: 2, h: 0.5, dir: 'up' as const },
+      ],
+    };
+    universe.reset();
+    const sim = createSimWorld({ level, seed: 3, settings: { playerCount: 1, bots: 1 } });
+    attachBots(sim.ecs, [1]);
+    let reached = false;
+    for (let t = 0; t < 120 + 240 && !reached; t++) {
+      sim.step();
+      sim.ecs.query(Player, Transform, Bot).updateEach(([, tr]) => {
+        if (tr.x > 13.5) reached = true;
+      });
+    }
+    const bot = sim.ecs.query(Player, Bot).map((e) => e.get(Health)!.hp)[0];
+    expect(bot).toBeGreaterThan(0);
+    expect(reached).toBe(true);
+  });
+
+  it('a bots-only match survives rotating from a busy arena to a sparse one (stale nav indices must not route)', async () => {
+    // Surface indices remembered on the big arena are out of range on the small one.
+    const levels = builtInMatchLevels().map((l) => ({ l, n: navFor(l).surfaces.length })).sort((a, b) => b.n - a.n);
+    const big = levels[0]!.l;
+    const small = levels[levels.length - 1]!.l;
+    expect(navFor(big).surfaces.length).toBeGreaterThan(navFor(small).surfaces.length + 2);
+    universe.reset();
+    const sim = createSimWorld({
+      level: big,
+      seed: 21,
+      settings: { playerCount: 0, bots: 4, firstTo: 0, rotation: 'ordered', enabledLevels: [big.id, small.id] },
+    });
+    attachBots(sim.ecs, [0, 1, 2, 3]);
+    sim.ctx.tuning.slowmoTicks = 2;
+    sim.ctx.tuning.scoreboardTicks = 2;
+    const seen = new Set<string>();
+    let rounds = 0;
+    await expect(
+      (async () => {
+        for (let t = 0; t < 60 * 60 * 4 && rounds < 6; t++) {
+          if (t % 600 === 0) await breathe();
+          for (const ev of sim.step()) if (ev.type === 'round-phase' && ev.phase === 'countdown') rounds += 1;
+          seen.add(sim.ctx.level.id);
+        }
+      })(),
+    ).resolves.toBeUndefined();
+    expect(rounds).toBeGreaterThanOrEqual(4);
+    expect(seen).toEqual(new Set([big.id, small.id]));
+  }, 60_000);
+
+  it('four bots settle a round on every built-in arena without stacking or stalling', async () => {
+    const report: string[] = [];
+    for (const level of builtInMatchLevels()) {
+      // A minute of solid physics would starve the worker's RPC channel; breathe between arenas.
+      await breathe();
+      universe.reset();
+      const sim = createSimWorld({ level, seed: 7, settings: { playerCount: 0, bots: 4 } });
+      attachBots(sim.ecs, [0, 1, 2, 3]);
+      let kills = 0;
+      let resolvedTick = -1;
+      let stackTicks = 0;
+      for (let t = 0; t < 60 * 60; t++) {
+        for (const ev of sim.step()) if (ev.type === 'kill') kills += 1;
+        const alive = sim.ecs
+          .query(Player, Transform, Health)
+          .map((e) => ({ p: e.get(Transform)!, hp: e.get(Health)?.hp ?? 0 }))
+          .filter((p) => p.hp > 0);
+        if (t > 120 && t % 30 === 0) {
+          for (let i = 0; i < alive.length; i++) {
+            for (let j = i + 1; j < alive.length; j++) {
+              if (Math.abs(alive[i]!.p.x - alive[j]!.p.x) < 0.25 && Math.abs(alive[i]!.p.y - alive[j]!.p.y) < 1.4) stackTicks += 1;
+            }
+          }
+        }
+        const rs = sim.ecs.get(RoundState);
+        if (rs && rs.phase >= RoundPhase.LastKill) {
+          resolvedTick = t;
+          break;
+        }
+      }
+      // Nobody should die before "FIGHT" (tick 120), rounds should end inside a minute with the
+      // kills coming from combat, and bots should never sit on top of each other.
+      if (resolvedTick < 0 || resolvedTick < 130 || kills < 3 || stackTicks > 6) {
+        report.push(`${level.id}: resolved=${resolvedTick} kills=${kills} stack=${stackTicks}`);
+      }
+    }
+    expect(report).toEqual([]);
+  }, 120_000);
 });

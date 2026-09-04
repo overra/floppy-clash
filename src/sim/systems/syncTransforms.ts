@@ -20,7 +20,6 @@ export function syncTransforms(world: World): void {
 
 export function physicsStep(world: World): void {
   const ctx = getContext(world);
-  ctx.onIce.clear();
   const t0 = typeof performance !== 'undefined' ? performance.now() : Date.now();
   ctx.physics.step(1 / ctx.tuning.tickRate, ctx.tuning.velocityIterations, ctx.tuning.positionIterations);
   ctx.physics.clearForces();

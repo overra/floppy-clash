@@ -9,8 +9,8 @@ export interface MatchSettings {
   enabledLevels: string[] | 'all';
   playerCount: number;
   bots: number;
-  /** PLAN 4.6 opt-in: motor-driven physics arms tracking aim. */
-  physicsArms: boolean;
+  /** Palette index per slot (humans pick theirs on the join screen); slots past the end use their index. */
+  colors?: number[];
 }
 
 export const DEFAULT_SETTINGS: MatchSettings = {
@@ -22,7 +22,6 @@ export const DEFAULT_SETTINGS: MatchSettings = {
   enabledLevels: 'all',
   playerCount: 2,
   bots: 0,
-  physicsArms: false,
 };
 
 export function mergeSettings(partial?: Partial<MatchSettings>): MatchSettings {

@@ -9,15 +9,10 @@ Numbers are from `src/sim/tuning.ts` and pinned by `test/movement.test.ts` (±10
 | Block punch jump | ≈ 2.5–3× | Hold block while punch-jumping |
 | Wall climb | 6-tile shaft in ≤ 4 wall jumps | Gym shaft interior x=3–5, walls to y≈14 |
 | Run | 30 m in ≈ 4 s | Dedicated `run-track` (60 m floor), `runSpeed` 8 |
-| Punch slam | Fast descent | Hold `down` while airborne punching (`punchSlamImpulse`) |
-
-Held weapons are re-posed after `syncTransforms` (this tick's hand, deactivated body + Transform). Sword / spear `recoil.forward` is along aim, including Y (Appendix C lunge). Melee uses a short forward arc (not a disk), including at overlapping range.
-
-GPU pass (4) blits the scene through `warpPostUvGpu` (black-hole UV). Canvas warps world samples in `worldToScreen`. Chain hung decks are dynamic bodies on a revolute joint.
 
 Live tuning: **F2** opens Tweakpane bound to `tuning.ts`.
 
-Debug (PLAN 4.16): **F1** physics overlay, **F3** tick/hash/ms HUD, **F4** spawn pistol, **F5** kill P1, **F6** toggle slow-mo scale, **F7** freeze camera, **F8** GPU ↔ Canvas, **F9** download replay JSON, **F10** load a local replay tape.
+Debug (PLAN 4.16): **F1** physics overlay, **F3** tick/hash/ms HUD, **F4** spawn pistol, **F5** kill P1, **F6** toggle slow-mo scale, **F7** freeze camera, **F8** GPU ↔ Canvas, **F9** download replay JSON.
 
 ## Hardware sign-off (not claimed)
 

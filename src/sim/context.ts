@@ -27,17 +27,9 @@ export type SimContext = {
   pendingDestroy: Entity[];
   tick: number;
   fireCd: Map<number, number>;
-  /** Remaining shots in an M16-style burst (PLAN Appendix C). */
-  burstLeft: Map<number, number>;
-  /** Players whose last physics contacts included an ice fixture. */
-  onIce: Set<number>;
   contactHits: Set<number>;
   lastPhysicsMs: number;
   extraLevels: LevelDef[];
-  /** Debug stand-in: thinkBots leaves scripted inputs alone. */
-  holdBots: boolean;
-  /** Debug stand-in: hazard kills no-op; kinematics still run. */
-  holdHazards: boolean;
 };
 
 const contexts = new WeakMap<World, SimContext>();
@@ -81,12 +73,8 @@ export function makeContext(
     pendingDestroy: [],
     tick: 0,
     fireCd: new Map(),
-    burstLeft: new Map(),
-    onIce: new Set(),
     contactHits: new Set(),
     lastPhysicsMs: 0,
     extraLevels: [],
-    holdBots: false,
-    holdHazards: false,
   };
 }
