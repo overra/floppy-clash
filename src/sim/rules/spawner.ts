@@ -1,8 +1,9 @@
 import { type World } from 'koota';
 import { getContext } from '../context';
 import { raycastClosest } from '../physics/queries';
-import { DropState, Loose, RoundPhase, RoundState, Weapon } from '../traits';
-import { droppableWeapons } from '../weapons/defs';
+import { DropState, Hazard, HazardKind, Loose, RoundPhase, RoundState, Weapon } from '../traits';
+import { spawnSurgeOrb } from '../hazards';
+import { droppableWeapons } from '../weapons/resolve';
 import { spawnWeapon } from '../weapons/systems';
 
 /** Ticks between the guns of the opening volley: a quick sweep across the arena, not one big clatter. */
@@ -13,14 +14,21 @@ const WAVE_GAP_TICKS = 8;
  * before anyone can move is a free win), and the first thing to fall is a volley of one gun per
  * fighter, each over its own slice of the arena, so nobody starts the round as the only one armed.
  */
+/** `low` items: no opening volley, and every wait between drops is this many times longer. */
+const LOW_ITEMS_SLOWDOWN = 3;
+/** A drop has this chance of being a Surge Orb, and orbs come no closer together than this. */
+const SURGE_ORB_CHANCE = 0.12;
+const SURGE_ORB_SPACING_TICKS = 1500;
+
 export function openDrops(world: World): void {
   const ctx = getContext(world);
   const drop = world.get(DropState);
   if (!drop) return;
-  const size = Math.min(ctx.players.length, ctx.tuning.maxLooseWeapons);
+  const items = ctx.settings.items;
+  const size = items === 'normal' ? Math.min(ctx.players.length, ctx.tuning.maxLooseWeapons) : 0;
   world.set(DropState, {
     ...drop,
-    nextDrop: ctx.tick + ctx.tuning.firstDropDelayTicks,
+    nextDrop: ctx.tick + ctx.tuning.firstDropDelayTicks * (items === 'low' ? LOW_ITEMS_SLOWDOWN : 1),
     wave: size,
     waveSize: size,
   });
@@ -30,7 +38,7 @@ export function spawner(world: World): void {
   const ctx = getContext(world);
   const round = world.get(RoundState);
   const drop = world.get(DropState);
-  if (!round || !drop || !ctx.level.drops?.enabled) return;
+  if (!round || !drop || !ctx.level.drops?.enabled || ctx.settings.items === 'off') return;
   if (round.phase !== RoundPhase.Fighting) return;
 
   let loose = 0;
@@ -44,7 +52,7 @@ export function spawner(world: World): void {
   }
   if (loose >= ctx.tuning.maxLooseWeapons) return;
 
-  const pool = droppableWeapons(ctx.settings.enabledWeapons);
+  const pool = droppableWeapons(ctx.weapons, ctx.settings.enabledWeapons, ctx.settings.mode);
   if (pool.length === 0) return;
   const weights = pool.map((w) => w.dropWeight);
   const total = weights.reduce((a, b) => a + b, 0);
@@ -76,7 +84,18 @@ export function spawner(world: World): void {
       break;
     }
   }
-  spawnWeapon(world, def.id, x, y);
+  // Now and then the sky sends a Surge Orb instead of a gun: one at a time, well spaced, never in the opening volley.
+  let orbs = 0;
+  world.query(Hazard).updateEach(([hz]) => {
+    if (hz.kind === HazardKind.SurgeOrb) orbs += 1;
+  });
+  const orbDue = !inWave && orbs === 0 && ctx.tick - drop.lastOrb >= SURGE_ORB_SPACING_TICKS && ctx.rng.next() < SURGE_ORB_CHANCE;
+  if (orbDue) {
+    spawnSurgeOrb(world, x, bounds.y + bounds.h * 0.7);
+    drop.lastOrb = ctx.tick;
+  } else {
+    spawnWeapon(world, def.id, x, y);
+  }
   if (inWave) {
     drop.wave -= 1;
   }
@@ -85,7 +104,7 @@ export function spawner(world: World): void {
   } else {
     // More fighters burn through more guns: tighten the cadence as the lobby grows.
     const crowd = 1 + 0.15 * Math.max(0, ctx.players.length - 2);
-    const scale = (ctx.level.drops.intervalScale ?? 1) / crowd;
+    const scale = ((ctx.level.drops.intervalScale ?? 1) / crowd) * (ctx.settings.items === 'low' ? LOW_ITEMS_SLOWDOWN : 1);
     drop.nextDrop =
       ctx.tick +
       Math.floor(ctx.rng.range(ctx.tuning.dropIntervalMinTicks, ctx.tuning.dropIntervalMaxTicks) * scale);

@@ -23,8 +23,8 @@ browser (host) ── WebSocket ──▶ RoomDO (one Durable Object per room co
 ## A match
 
 1. The host presses Start. It picks the arena and a seed and sends `start` with the seed, level id,
-   the slot list (peer or bot per fighter), the rules (HP, first-to, weapon/level toggles, rotation)
-   and its custom levels. Everyone, host included, calls `createSimWorld` with exactly that.
+   the slot list (peer or bot per fighter), the rules (mode, HP, stocks, first-to, items, hazards,
+   fixed spawns, weapon/level toggles, rotation) and its custom levels. Everyone, host included, calls `createSimWorld` with exactly that.
 2. Each tick the host steps with: its own input (quantized to what the wire carries), the latest input
    each remote fighter sent (`createRemoteInputs`), and nothing for bots (they think inside the sim).
    The packed inputs it stepped are appended to a `frames` message, flushed once per render frame.

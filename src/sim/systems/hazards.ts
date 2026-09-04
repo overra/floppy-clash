@@ -1,6 +1,6 @@
 import { createQuery, Not, type World } from 'koota';
 import { getContext } from '../context';
-import { moduleForKind } from '../hazards';
+import { grantSurge, moduleForKind } from '../hazards';
 import { Controller, Dead, Destructible, Hazard, HazardKind, Player, Shape, Transform } from '../traits';
 import { detonate } from '../weapons/projectiles';
 
@@ -40,9 +40,11 @@ export function hazardsStep(world: World): void {
   world.query(Destructible).updateEach(([d], entity) => {
     if (d.hp > 0) return;
     // A broken barrel goes off: the blast wounds neighbouring barrels too, so a cluster chains
-    // (each is destroyed at end of tick, so nothing detonates twice).
+    // (each is destroyed at end of tick, so nothing detonates twice). A broken orb hands out its super.
     const t = entity.get(Transform);
-    if (t && entity.get(Hazard)?.kind === HazardKind.Barrel) detonate(world, t.x, t.y, BARREL_BLAST_RADIUS, BARREL_BLAST_DAMAGE, BARREL_BLAST_IMPULSE);
+    const kind = entity.get(Hazard)?.kind;
+    if (t && kind === HazardKind.Barrel) detonate(world, t.x, t.y, BARREL_BLAST_RADIUS, BARREL_BLAST_DAMAGE, BARREL_BLAST_IMPULSE);
+    if (kind === HazardKind.SurgeOrb) grantSurge(world, entity);
     ctx.pendingDestroy.push(entity);
   });
 }

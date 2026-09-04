@@ -1,6 +1,6 @@
 import type { PlayerInput } from '../sim/input';
 import type { LevelDef } from '../sim/level/schema';
-import type { MatchSettings } from '../sim/rules/settings';
+import type { MatchMode, MatchSettings } from '../sim/rules/settings';
 import type { WorldSnapshot } from '../sim/snapshot';
 
 /**
@@ -20,7 +20,7 @@ export type MatchSlot = { peer: number | null; name: string; color: number };
 /** The rules every peer must create its sim with, so the mirrors agree. */
 export type MatchRules = Pick<
   MatchSettings,
-  'maxHp' | 'firstTo' | 'showWins' | 'rotation' | 'enabledWeapons' | 'enabledLevels'
+  'mode' | 'maxHp' | 'stocks' | 'firstTo' | 'showWins' | 'rotation' | 'items' | 'hazards' | 'fixedSpawns' | 'enabledWeapons' | 'enabledLevels'
 >;
 
 export type LobbyPeerState = { id: number; name: string; slot: number; color: number };
@@ -30,7 +30,9 @@ export type NetMessage =
   | {
       t: 'lobby';
       peers: LobbyPeerState[];
+      mode: MatchMode;
       maxHp: number;
+      stocks: number;
       firstTo: number;
       bots: number;
       inMatch: boolean;
@@ -75,6 +77,7 @@ const B_DOWN = 2;
 const B_ATTACK = 4;
 const B_BLOCK = 8;
 const B_THROW = 16;
+const B_KICK = 32;
 
 function clamp(v: number, lo: number, hi: number): number {
   return Number.isFinite(v) ? Math.max(lo, Math.min(hi, v)) : 0;
@@ -100,7 +103,8 @@ export function packInput(input: PlayerInput): PackedInput {
     (input.down ? B_DOWN : 0) |
     (input.attack ? B_ATTACK : 0) |
     (input.block ? B_BLOCK : 0) |
-    (input.throw ? B_THROW : 0);
+    (input.throw ? B_THROW : 0) |
+    (input.kick ? B_KICK : 0);
   return [
     Math.round(clamp(input.moveX, -1, 1) * AXIS_Q),
     Math.round(ax * AXIS_Q),
@@ -120,6 +124,7 @@ export function unpackInput(p: PackedInput): PlayerInput {
     attack: (bits & B_ATTACK) !== 0,
     block: (bits & B_BLOCK) !== 0,
     throw: (bits & B_THROW) !== 0,
+    kick: (bits & B_KICK) !== 0,
   };
 }
 

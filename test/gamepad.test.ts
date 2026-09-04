@@ -122,7 +122,7 @@ describe('gamepad mapping', () => {
       id: 'custom',
       buttons: [false, false, true],
     });
-    const input = readPad(pad, latch, { x: 1, y: 0 }, { jump: 2, attack: 7, block: 6, throw: 3, pause: 9 });
+    const input = readPad(pad, latch, { x: 1, y: 0 }, { jump: 2, attack: 7, kick: 5, block: 6, throw: 3, pause: 9 });
     expect(input.jump).toBe(true);
   });
 });

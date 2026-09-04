@@ -9,12 +9,14 @@ import {
   Crown,
   Dead,
   Destructible,
+  EffectKind,
   Hazard,
   HazardKind,
   Health,
   Held,
   HeldBy,
   MatchState,
+  Modifiers,
   OwnedBy,
   PartOf,
   Player,
@@ -29,12 +31,16 @@ import {
   ShapeKind,
   Snake,
   Status,
+  Stocks,
+  StrikeKind,
   Transform,
   Weapon,
 } from '../sim/traits';
+import { isKick, isRear } from '../sim/player/strikes';
 import type { LightEmitter } from './gpu/lighting';
 import { weaponByIndex } from '../sim/weapons/defs';
 import { SWING_TICKS } from '../sim/weapons/projectiles';
+import { CHARGE_MAX_TICKS } from '../sim/weapons/systems';
 import type { SimHandle } from '../sim/world';
 import { updateCamera, type CameraState } from './camera';
 import { decorForLevel, decorGroups } from './decor';
@@ -147,11 +153,16 @@ export function buildFrame(
     const sec = secondaryFromVelocity(limbs.get(e) ?? emptyLimbState(), ctrl.vx, ctrl.vy, ctrl.grounded, opts.dt ?? 1 / 60);
     limbs.set(e, sec);
     const hp = e.get(Health);
-    const hurtState = hurt.get(e) ?? { hp: hp?.hp ?? 0, until: -1 };
-    if (hp && hp.hp < hurtState.hp) hurtState.until = tick + 8;
-    hurtState.hp = hp?.hp ?? hurtState.hp;
+    // Damage shows as hp going down or (launch mode) percent going up; one falling number covers both.
+    const wound = hp ? hp.hp - hp.percent : 0;
+    const hurtState = hurt.get(e) ?? { hp: wound, until: -1 };
+    if (hp && wound < hurtState.hp) hurtState.until = tick + 8;
+    hurtState.hp = hp ? wound : hurtState.hp;
     hurt.set(e, hurtState);
     const hurtTicks = hurtState.until > tick ? hurtState.until - tick : 0;
+    const status = e.get(Status);
+    // Respawn / ledge immunity reads as a steady blink.
+    const ghosted = (status?.invuln ?? 0) > 0 && (tick >> 2) % 2 === 0;
 
     const wep = heldWeapons.get(e as unknown as number);
     const held = wep ? weaponByIndex(wep.defId) : null;
@@ -169,7 +180,12 @@ export function buildFrame(
         vy: ctrl.vy,
         aimX: aim.x,
         aimY: aim.y,
-        punching: combat.punchActive > 0,
+        punching: combat.strikeActive > 0 && !isKick(combat.strike),
+        kicking: combat.strikeActive > 0 && isKick(combat.strike),
+        strikeRear: isRear(combat.strike),
+        strikeWindup: combat.strikePending > 0 && combat.strike !== StrikeKind.Jab,
+        hanging: ctrl.hangDir !== 0,
+        hangDir: ctrl.hangDir,
         blocking: combat.blocking,
         dead,
         phase: tick / 60,
@@ -178,10 +194,28 @@ export function buildFrame(
       },
       sec,
     );
-    const bodyColor = hurtTicks > 5 ? shade(color, 0.45) : color;
+    const mods = e.get(Modifiers);
+    const effect = mods && mods.ticks > 0 ? mods.kind : EffectKind.None;
+    const bodyColor = hurtTicks > 5 ? shade(color, 0.45) : ghosted ? withAlpha(color, 0.45) : effect === EffectKind.Lead ? shade(color, 0.7) : color;
     groups.push(group(fig.body, bodyColor, Layer.Players, { blend: 'smoothUnion', smoothK: FIGURE.smoothK, style: 'shaded', pad: 0.4 }));
-    groups.push(group(fig.eyes, INK, Layer.Players, { style: 'flat', pad: 0.1 }));
+    groups.push(group(fig.eyes, ghosted ? withAlpha(INK, 0.45) : INK, Layer.Players, { style: 'flat', pad: 0.1 }));
     anchors.set(e, fig.weaponAnchor);
+
+    if (effect !== EffectKind.None && !dead) {
+      // Pickup auras: a mirror sheen for the Mirror Pin, a warm trail-glow for the Sprint Charm, a
+      // dull iron ring for the Lead Coat; all fade in the last second so the wearer sees it coming.
+      const left = Math.min(1, (mods?.ticks ?? 0) / 60);
+      const pulse = 0.5 + 0.5 * Math.sin(time * 6);
+      if (effect === EffectKind.Mirror) {
+        groups.push(group([disk(x, y, 1.05 + 0.04 * pulse)], withAlpha('#c9f5ff', (0.35 + 0.3 * pulse) * left), Layer.Overlay, { style: 'outline', fx: 'glow', glow: 0.35 }));
+      } else if (effect === EffectKind.Sprint) {
+        groups.push(group([disk(x, y - 0.6, 0.5 + 0.1 * pulse)], withAlpha('#ffd447', 0.22 * left), Layer.Overlay, { style: 'flat', fx: 'glow', glow: 0.5 }));
+      } else if (effect === EffectKind.Lead) {
+        groups.push(group([disk(x, y, 0.95)], withAlpha('#9aa3b2', 0.3 * left), Layer.Overlay, { style: 'outline', pad: 0.2 }));
+      } else if (effect === EffectKind.Surge) {
+        groups.push(group([disk(x, y, 1.1 + 0.08 * pulse)], withAlpha('#ffffff', (0.4 + 0.4 * pulse) * left), Layer.Overlay, { style: 'outline', fx: 'glow', glow: 0.6 }));
+      }
+    }
 
     if (combat.stun > 0 && !dead) {
       // Seeing stars: a few sparks circling the head while the fighter is staggered.
@@ -195,7 +229,6 @@ export function buildFrame(
       groups.push(group(stars, withAlpha('#fff4aa', 0.9), Layer.Overlay, { style: 'flat', fx: 'glow', glow: 0.2 }));
     }
 
-    const status = e.get(Status);
     if (status && status.burning > 0 && !dead) {
       // On fire: tongues of flame licking up the torso, guttering as the burn runs out.
       const strength = Math.min(1, status.burning / 30);
@@ -265,6 +298,8 @@ export function buildFrame(
       crown: e.has(Crown),
       hp: hp?.hp ?? 0,
       maxHp: hp?.maxHp ?? 100,
+      percent: hp?.percent ?? 0,
+      stocks: e.get(Stocks)?.left ?? 0,
     });
   }
   hudPlayers.sort((a, b) => a.slot - b.slot);
@@ -299,6 +334,11 @@ export function buildFrame(
     }
     groups.push(group(placedBody, WEAPON_INK, Layer.Weapons, { blend: 'smoothUnion', smoothK: 0.04, style: 'shaded', pad: 0.2 }));
     if (placedAccent.length) groups.push(group(placedAccent, look.accentColor, Layer.Weapons, { style: 'flat', pad: 0.2, fx: look.glow ? 'glow' : undefined, glow: 0.25 }));
+    if (w.charge > 0 && placedAccent.length) {
+      // A charging swing: the business end heats up from a faint glow to white-hot at full charge.
+      const level = Math.min(1, w.charge / CHARGE_MAX_TICKS);
+      groups.push(group(placedAccent, withAlpha(level > 0.95 ? '#ffffff' : '#ffb347', 0.25 + 0.6 * level), Layer.Weapons, { style: 'flat', pad: 0.3, fx: 'glow', glow: 0.2 + 0.5 * level }));
+    }
   });
 
   // Projectiles.
@@ -357,9 +397,11 @@ export function buildFrame(
           const ey = sy + aim.y * 40;
           const isLava = def.category === 'lava';
           const core = isLava ? '#fff1c0' : '#e8fdff';
-          const glow = isLava ? '#ff7a1a' : '#39f2ff';
-          groups.push(group([cap(sx, sy, ex, ey, 0.16 + 0.03 * Math.sin(time * 50))], withAlpha(glow, 0.7), Layer.Projectiles, { style: 'flat', fx: 'glow', glow: 0.7 }));
-          groups.push(group([cap(sx, sy, ex, ey, 0.05)], core, Layer.Projectiles, { style: 'flat', pad: 0.2 }));
+          const glow = def.oneShot ? '#ffffff' : isLava ? '#ff7a1a' : '#39f2ff';
+          // A super's beam is a wall of light, not a line.
+          const girth = def.oneShot ? def.projectile.radius : 0.16;
+          groups.push(group([cap(sx, sy, ex, ey, girth + 0.03 * Math.sin(time * 50))], withAlpha(glow, 0.7), Layer.Projectiles, { style: 'flat', fx: 'glow', glow: def.oneShot ? 1.2 : 0.7 }));
+          groups.push(group([cap(sx, sy, ex, ey, def.oneShot ? girth * 0.4 : 0.05)], core, Layer.Projectiles, { style: 'flat', pad: 0.2 }));
         }
         break;
       }
@@ -440,6 +482,17 @@ export function buildFrame(
     const x = lerp(prev.x, t.x, alpha);
     const y = lerp(prev.y, t.y, alpha);
     const dir = Math.sign(t.x - prev.x) || 1;
+    if (snake.bomb) {
+      // Walker Mine: a squat shell on two scuttling legs, its fuse spark blinking faster as it runs down.
+      const step = Math.sin(time * 16);
+      groups.push(group([disk(x, y + 0.04, 0.2), cap(x - 0.1, y - 0.1, x - 0.14 + step * 0.06, y - 0.24, 0.035), cap(x + 0.1, y - 0.1, x + 0.14 - step * 0.06, y - 0.24, 0.035)], '#3a3f47', Layer.Projectiles, { blend: 'smoothUnion', smoothK: 0.05, style: 'shaded', pad: 0.3 }));
+      groups.push(group([disk(x + dir * 0.09, y + 0.07, 0.035)], '#ffd447', Layer.Projectiles, { style: 'flat', pad: 0.1 }));
+      const period = snake.fuse < 60 ? 4 : 10;
+      if (Math.floor(tick / period) % 2 === 0) {
+        groups.push(group([disk(x, y + 0.3, 0.05)], '#ff3b30', Layer.Projectiles, { style: 'flat', fx: 'glow', glow: 0.3 }));
+      }
+      return;
+    }
     const s = snake.giant ? 1.8 : 1;
     const segs: Primitive[] = [];
     let px = x;
@@ -547,6 +600,8 @@ export function buildFrame(
       wins: winsArr,
       firstTo: ms?.firstTo ?? 0,
       showWins: (ms?.showWins ?? 1) === 1,
+      mode: ms?.mode ?? 0,
+      stockLimit: ms?.stocks ?? 0,
       phase: rs?.phase ?? 0,
       tick: ctx.tick,
       physicsMs: ctx.lastPhysicsMs,

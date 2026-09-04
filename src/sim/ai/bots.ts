@@ -3,7 +3,7 @@ import { getContext, type SimContext } from '../context';
 import { cloneInput, EMPTY_INPUT, type PlayerInput } from '../input';
 import { raycastClosest, type RayHit } from '../physics/queries';
 import { combatAllowed } from '../rules/rounds';
-import { weaponByIndex } from '../weapons/defs';
+import { weaponDef } from '../weapons/resolve';
 import type { WeaponDef } from '../weapons/schema';
 import {
   Aim,
@@ -58,11 +58,12 @@ export function attachBots(world: World, slots: number[], skill = 0.75): void {
 }
 
 function heldWeapon(world: World, player: Entity): { def: WeaponDef; ammo: number } | null {
+  const weapons = getContext(world).weapons;
   for (const weapon of world.query(Weapon, Held)) {
     if (weapon.targetFor(HeldBy) !== player) continue;
     const w = weapon.get(Weapon);
     if (!w) return null;
-    return { def: weaponByIndex(w.defId), ammo: w.ammo };
+    return { def: weaponDef(weapons, w.defId), ammo: w.ammo };
   }
   return null;
 }
@@ -135,7 +136,7 @@ function collect(world: World, ctx: SimContext, nav: NavGraph) {
   const pickups: Pickup[] = [];
   world.query(looseWeapons).updateEach(([w, tr], e) => {
     if (w.pickupCooldown > 0) return;
-    pickups.push({ e, x: tr.x, y: tr.y, def: weaponByIndex(w.defId), surf: surfaceBelow(nav, tr.x, tr.y - 0.2, 2.5) });
+    pickups.push({ e, x: tr.x, y: tr.y, def: weaponDef(ctx.weapons, w.defId), surf: surfaceBelow(nav, tr.x, tr.y - 0.2, 2.5) });
   });
   const shots: Shot[] = [];
   world.query(Projectile).updateEach(([p], e) => {
@@ -354,9 +355,19 @@ export function thinkBots(world: World): void {
 
       if (live) {
         if (!ranged) {
-          const reach = def ? rangeBand(def).max + 0.4 : t.punchRange + 0.55;
+          const reach = def ? rangeBand(def).max + 0.4 : Math.max(t.punchRange, t.kickRange) + 0.55;
           const cadence = def ? Math.max(6, def.fireIntervalTicks) : Math.max(6, t.punchCooldownTicks);
-          if (dist < reach && bot.think % cadence < 2) attack = true;
+          if (dist < reach && bot.think % cadence < 2) {
+            if (def) {
+              attack = true;
+            } else {
+              // Bare hands: a kick when they are turtling or just past punching range, and every third swing anyway.
+              const tc = target.e.get(Combat);
+              const kick = !!tc?.blocking || dist > t.punchRange + 0.5 || bot.think % 3 === 0;
+              if (kick) input.kick = true;
+              else attack = true;
+            }
+          }
         } else if (def && !outOfAmmo && dist < band.max * 1.4 && los) {
           const semi = def.fireMode === 'semi' || def.fireMode === 'burst';
           const interval = Math.max(semi ? 6 : 1, def.fireIntervalTicks);
@@ -523,7 +534,7 @@ export function thinkBots(world: World): void {
       }
     } else if (target && !ranged && Math.hypot(target.x - px, target.y - py) < 1.6) {
       const tc = target.e.get(Combat);
-      if (tc?.punchActive && rng.next() < 0.3) bot.blockTicks = 8;
+      if (tc?.strikeActive && rng.next() < 0.3) bot.blockTicks = 8;
     }
 
     // --- Emit the frame's input. Jumps are pulsed so the controller sees rising edges; airborne

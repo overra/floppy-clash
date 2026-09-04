@@ -7,11 +7,12 @@ export type SpawnPos = { x: number; y: number };
  * same corner; when a level has fewer spawns than players, the extras fan out sideways so
  * nobody starts stacked inside another body.
  */
-export function spawnPositions(spawns: readonly SpawnPos[], count: number, rng: SeededRng): SpawnPos[] {
+export function spawnPositions(spawns: readonly SpawnPos[], count: number, rng: SeededRng, fixed = false): SpawnPos[] {
   if (spawns.length === 0) {
     return Array.from({ length: count }, (_, i) => ({ x: 6 + i * 2, y: 7 }));
   }
-  const order = rng.shuffle(spawns.slice());
+  // Fixed spawns: slot k always takes point k, so nothing about the opening depends on the seed.
+  const order = fixed ? spawns.slice() : rng.shuffle(spawns.slice());
   const out: SpawnPos[] = [];
   for (let i = 0; i < count; i++) {
     const s = order[i % order.length]!;

@@ -3,15 +3,19 @@ import { Vec2 } from 'planck';
 import { emit, getContext } from '../context';
 import { rising } from '../input';
 import { createBoxBody, registerBody, assignNetId } from '../physics/bodies';
-import { Aim, Combat, Controller, Dead, Held, HeldBy, Loose, OwnedBy, Player, Projectile, ProjectileKind, Transform, Weapon } from '../traits';
+import { Aim, Combat, Controller, Dead, EffectKind, Held, HeldBy, Loose, Modifiers, OwnedBy, Player, Projectile, ProjectileKind, Status, Transform, Weapon } from '../traits';
 import type { WeaponDef } from './schema';
-import { weaponByIndex, weaponIndex } from './defs';
+import { consume, NO_EFFECT } from './consumables';
+import { weaponIndex } from './defs';
+import { weaponDef } from './resolve';
 import { SWING_TICKS } from './projectiles';
 import { raycastClosest } from '../physics/queries';
 import { combatAllowed } from '../rules/rounds';
 
 /** Blink dagger: hop this far along the aim, stopping short of the first wall in the way. */
 const BLINK_DISTANCE = 4;
+/** Charge weapons: a full wind-up takes this long and swings on its own when it gets there. */
+export const CHARGE_MAX_TICKS = 60;
 
 const holders = createQuery(Player, Aim, Combat, Transform);
 const looseWeapons = createQuery(Weapon, Loose, Transform);
@@ -50,6 +54,7 @@ function spawnBullet(
   dirX: number,
   dirY: number,
   extraSpread = 0,
+  charge: { power: number; damageScale: number } = { power: 1, damageScale: 1 },
 ): void {
   const ctx = getContext(world);
   const spread = ((def.projectile.spreadDeg + extraSpread) * Math.PI) / 180;
@@ -60,7 +65,8 @@ function spawnBullet(
   const proj = world.spawn(
     Projectile({
       kind: kindId(def.projectile.kind),
-      damage: def.projectile.damage,
+      damage: def.projectile.damage * charge.damageScale,
+      power: charge.power,
       speed,
       bounces: def.projectile.bounce,
       fuse: def.projectile.kind === 'melee' ? SWING_TICKS : def.projectile.kind === 'rocket' && def.projectile.fuse === 0 ? 180 : def.projectile.fuse,
@@ -104,7 +110,7 @@ function spawnBullet(
 
 export function spawnWeapon(world: World, defId: string, x: number, y: number, loose = true): Entity {
   const ctx = getContext(world);
-  const def = weaponByIndex(weaponIndex(defId));
+  const def = weaponDef(ctx.weapons, weaponIndex(defId));
   const entity = world.spawn(
     Weapon({
       defId: weaponIndex(def.id),
@@ -150,16 +156,29 @@ export function weapons(world: World): void {
     if (!input) return;
 
     let held = heldWeapon(world, entity);
+    // Consumables are taken on touch whatever is in hand: the effect lands and the item is gone.
+    world.query(looseWeapons).updateEach(([wep, wt], weaponEntity) => {
+      if (wep.pickupCooldown > 0) return;
+      const def = weaponDef(ctx.weapons, wep.defId);
+      if (def.category !== 'consumable') return;
+      const dx = wt.x - transform.x;
+      const dy = wt.y - transform.y;
+      if (dx * dx + dy * dy < 0.85 * 0.85 && consume(world, entity, def)) {
+        wep.pickupCooldown = 999999;
+        ctx.pendingDestroy.push(weaponEntity);
+      }
+    });
     if (!held) {
       world.query(looseWeapons).updateEach(([wep, wt], weaponEntity) => {
         if (held) return;
         if (wep.pickupCooldown > 0) return;
+        if (weaponDef(ctx.weapons, wep.defId).category === 'consumable') return;
         const dx = wt.x - transform.x;
         const dy = wt.y - transform.y;
         if (dx * dx + dy * dy < 0.85 * 0.85) {
           weaponEntity.remove(Loose);
           weaponEntity.add(Held(), HeldBy(entity));
-          const def = weaponByIndex(wep.defId);
+          const def = weaponDef(ctx.weapons, wep.defId);
           // Mutate the updateEach view so Koota writeback keeps the refill.
           wep.ammo = ctx.tuning.refillOnPickup ? def.ammo : wep.ammo;
           wep.thrown = false;
@@ -176,14 +195,23 @@ export function weapons(world: World): void {
     if (!held) return;
     const wep = held.get(Weapon);
     if (!wep) return;
-    const def = weaponByIndex(wep.defId);
+    const def = weaponDef(ctx.weapons, wep.defId);
     const body = ctx.bodies.get(entity);
     if (!body) return;
+
+    // Lugging a forced swinger: the controller keeps the wall-kick off while this is refreshed.
+    if (def.lockGuard) {
+      const status = entity.get(Status);
+      if (status) entity.set(Status, { encumbered: 2 });
+    }
 
     if (rising(prev?.throw ?? false, input.throw)) {
       held.remove(Held);
       held.add(Loose());
       held.remove(HeldBy('*'));
+      // The thrower owns the throw: it is released inside their own hit radius and must not count on them.
+      held.remove(OwnedBy('*'));
+      held.add(OwnedBy(entity));
       held.set(Weapon, {
         ...wep,
         thrown: true,
@@ -206,14 +234,38 @@ export function weapons(world: World): void {
     if (combat.blocking || combat.stun > 0 || !live) return;
     const fireEdge = rising(prev?.attack ?? false, input.attack);
     const fireHeld = input.attack;
+    const cd = ctx.fireCd.get(entity) ?? 0;
+    if (cd > 0) ctx.fireCd.set(entity, cd - 1);
+    const cooling = (ctx.fireCd.get(entity) ?? 0) > 0;
+
+    // Charge weapons wind up while the trigger is held and swing when it is released, or on their
+    // own once fully charged; the longer the wind-up, the harder the hit.
+    let charge = { power: 1, damageScale: 1 };
+    if (def.fireMode === 'charge') {
+      if (cooling) return;
+      let level = wep.charge;
+      if (fireHeld) {
+        level = Math.min(CHARGE_MAX_TICKS, wep.charge + 1);
+        if (level < CHARGE_MAX_TICKS) {
+          held.set(Weapon, { ...wep, charge: level });
+          return;
+        }
+      } else if (level === 0) {
+        return;
+      }
+      const frac = level / CHARGE_MAX_TICKS;
+      charge = { power: 0.6 + 1.4 * frac, damageScale: 0.5 + 0.5 * frac };
+      held.set(Weapon, { ...wep, charge: 0 });
+    }
+
     const canFire =
+      def.fireMode === 'charge' ||
+      def.fireMode === 'forced' ||
       (def.fireMode === 'semi' && fireEdge) ||
       (def.fireMode === 'auto' && fireHeld) ||
       (def.fireMode === 'burst' && fireEdge) ||
       (def.fireMode === 'hold' && fireHeld);
-    const cd = ctx.fireCd.get(entity) ?? 0;
-    if (cd > 0) ctx.fireCd.set(entity, cd - 1);
-    if (!canFire || (ctx.fireCd.get(entity) ?? 0) > 0) return;
+    if (!canFire || cooling) return;
     if (!def.infiniteAmmo && wep.ammo <= 0) {
       if (ctx.tuning.flingWhenEmpty) {
         held.remove(Held);
@@ -244,14 +296,22 @@ export function weapons(world: World): void {
     const muzzleX = transform.x + aim.x * (0.45 + def.shape.length * 0.5);
     const muzzleY = transform.y + aim.y * (0.45 + def.shape.length * 0.5);
     for (let i = 0; i < shots; i++) {
-      spawnBullet(world, entity, def, muzzleX, muzzleY, aim.x, aim.y);
+      spawnBullet(world, entity, def, muzzleX, muzzleY, aim.x, aim.y, 0, charge);
     }
     if (!def.infiniteAmmo) {
-      held.set(Weapon, { ...wep, ammo: wep.ammo - 1 });
+      const now = held.get(Weapon) ?? wep;
+      held.set(Weapon, { ...now, ammo: now.ammo - 1 });
+    }
+    if (def.oneShot) {
+      // Spent the moment it fires: nothing to refill, nothing to pass on. The aura goes with it.
+      ctx.pendingDestroy.push(held);
+      if (entity.get(Modifiers)?.kind === EffectKind.Surge) entity.set(Modifiers, NO_EFFECT);
     }
     const vel = body.getLinearVelocity();
+    // A charged swing lunges with its power; guns recoil as authored.
+    const forward = def.recoil.forward * charge.power;
     body.setLinearVelocity(
-      new Vec2(vel.x - aim.x * def.recoil.back + aim.x * def.recoil.forward, vel.y + def.recoil.up - aim.y * def.recoil.back),
+      new Vec2(vel.x - aim.x * def.recoil.back + aim.x * forward, vel.y + def.recoil.up - aim.y * def.recoil.back),
     );
     emit(world, { type: 'shot', source: entity, weaponId: def.id, x: muzzleX, y: muzzleY, aimX: aim.x, aimY: aim.y });
     void Controller;

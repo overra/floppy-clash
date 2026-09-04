@@ -17,7 +17,9 @@ import { disappearingPlatform } from './platform-disappearing';
 import { momentumPlatform } from './platform-momentum';
 import { movingPlatform } from './platform-moving';
 import { rotatingPlatform } from './platform-rotating';
+import { repulsor } from './repulsor';
 import { saw } from './saw';
+import { surgeOrb } from './surge-orb';
 import { solid } from './solid';
 import { spikeball } from './spikeball';
 import { spikes } from './spikes';
@@ -48,6 +50,8 @@ export const HAZARD_MODULES: HazardModule[] = [
   crusher,
   triggerDrop,
   voidHazard,
+  repulsor,
+  surgeOrb,
 ];
 
 export const APPENDIX_D_TYPE_IDS = [
@@ -72,6 +76,8 @@ export const APPENDIX_D_TYPE_IDS = [
   'crusher',
   'trigger.drop',
   'void',
+  'repulsor',
+  'surge.orb',
 ] as const;
 
 export const HAZARDS_BY_TYPE = new Map(HAZARD_MODULES.map((m) => [m.typeId, m]));
@@ -92,3 +98,5 @@ export function createHazard(world: World, obj: LevelObject): Entity | undefined
 }
 
 export type { HazardModule, HazardView } from './types';
+export { REPULSOR_TICKS } from './repulsor';
+export { SURGE_ORB_HP, grantSurge, spawnSurgeOrb } from './surge-orb';

@@ -3,7 +3,12 @@ import { Vec2 } from 'planck';
 import { emit, getContext, type SimContext } from '../context';
 import { applyExplosion, queryBodiesInRadius, raycastClosest } from '../physics/queries';
 import { takeDamage, hitZoneAt } from '../player/health';
+import { launchHit } from '../player/knockback';
 import { shieldBlocks } from '../player/combat';
+import { woundDestructible } from '../hazards/common';
+import { plantRepulsor } from '../hazards/repulsor';
+import { isLaunch } from '../rules/mode';
+import { reflects } from './consumables';
 import { assignNetId, createBoxBody, registerBody } from '../physics/bodies';
 import {
   Aim,
@@ -22,7 +27,7 @@ import {
   Transform,
   Weapon,
 } from '../traits';
-import { weaponByIndex } from './defs';
+import { weaponDef } from './resolve';
 import type { WeaponDef } from './schema';
 import type { FixtureUserData } from '../physics/categories';
 
@@ -77,11 +82,8 @@ function applyStatus(target: Entity, status: string, ticks: number): void {
 }
 
 function shove(ctx: SimContext, target: Entity, dirX: number, dirY: number, amount: number, lift = 0): void {
-  const tb = ctx.bodies.get(target);
-  if (!tb) return;
-  const v = tb.getLinearVelocity();
   const len = Math.hypot(dirX, dirY) || 1;
-  tb.setLinearVelocity(new Vec2(v.x + (dirX / len) * amount, v.y + (dirY / len) * amount + lift));
+  launchHit(ctx.ecs, target, dirX / len, dirY / len, amount, lift);
 }
 
 /**
@@ -90,31 +92,36 @@ function shove(ctx: SimContext, target: Entity, dirX: number, dirY: number, amou
  */
 export function detonate(world: World, x: number, y: number, radius: number, damage: number, impulse: number, owner?: Entity, status = 'none'): void {
   emit(world, { type: 'explosion', x, y, radius, damage });
-  applyExplosion(world, x, y, radius, impulse, (body, falloff) => {
-    const data = body.getUserData() as FixtureUserData | undefined;
-    if (!data) return;
-    const target = data.entity as Entity;
-    if (!world.has(target)) return;
-    if (target.has(Player) && !target.has(Dead)) {
-      takeDamage(world, target, damage * falloff, 'body', owner ?? -1, x, y);
-      if (status !== 'none') applyStatus(target, status, Math.round(BURN_TICKS * Math.max(0.4, falloff)));
-    }
-    if (target.has(Snake)) {
-      const h = target.get(Health);
-      if (h) target.set(Health, { hp: h.hp - damage * falloff, maxHp: h.maxHp });
-    }
-    if (target.has(Destructible)) {
-      const d = target.get(Destructible);
-      if (d) {
-        const hp = d.hp - damage * falloff;
-        target.set(Destructible, { hp, maxHp: d.maxHp });
+  // Launch mode routes fighters through launchHit (percent scaling, DI, hitstun) instead of the raw impulse.
+  const launch = isLaunch(world);
+  applyExplosion(
+    world,
+    x,
+    y,
+    radius,
+    impulse,
+    (body, falloff, nx, ny) => {
+      const data = body.getUserData() as FixtureUserData | undefined;
+      if (!data) return;
+      const target = data.entity as Entity;
+      if (!world.has(target)) return;
+      if (target.has(Player) && !target.has(Dead)) {
+        takeDamage(world, target, damage * falloff, 'body', owner ?? -1, x, y);
+        if (launch) launchHit(world, target, nx, ny, impulse * falloff, 0.15 * impulse * falloff);
+        if (status !== 'none') applyStatus(target, status, Math.round(BURN_TICKS * Math.max(0.4, falloff)));
       }
-    }
-  });
+      if (target.has(Snake)) {
+        const h = target.get(Health);
+        if (h) target.set(Health, { hp: h.hp - damage * falloff, maxHp: h.maxHp });
+      }
+      if (target.has(Destructible)) woundDestructible(target, damage * falloff, owner);
+    },
+    { skipPlayers: launch },
+  );
 }
 
 function explode(world: World, x: number, y: number, defId: number, owner?: Entity): void {
-  const def = weaponByIndex(defId);
+  const def = weaponDef(getContext(world).weapons, defId);
   const radius = def.projectile.radius || 2;
   const damage = def.projectile.explodeDamage || def.projectile.damage;
   detonate(world, x, y, radius, damage, def.projectile.explodeImpulse || 8, owner, def.projectile.status);
@@ -149,6 +156,39 @@ function spawnSnake(world: World, x: number, y: number, owner: Entity | undefine
   body.setLinearVelocity(new Vec2(vx, vy));
   if (flying) body.setGravityScale(0);
   registerBody(world, snake, body);
+}
+
+/** Walker Mine: hit points, walking speed and the fuse it lights on landing. */
+const WALKER_HP = 30;
+const WALKER_SPEED = 3;
+const WALKER_FUSE_TICKS = 240;
+const WALKER_BLAST_RADIUS = 1.8;
+
+/** A mine on legs: the creature pipeline with a fuse, walking at the nearest fighter until it goes off. */
+function spawnWalker(world: World, x: number, y: number, owner: Entity | undefined, defId: number, vx = 0, vy = 0): void {
+  const ctx = getContext(world);
+  const walker = world.spawn(
+    Snake({ hp: WALKER_HP, giant: 0, flying: 0, biteCooldown: 0, grace: SNAKE_GRACE_TICKS, bomb: 1, fuse: WALKER_FUSE_TICKS }),
+    Health({ hp: WALKER_HP, maxHp: WALKER_HP }),
+    Projectile({ kind: ProjectileKind.Creature, defId, damage: 0 }),
+    Transform({ x, y, angle: 0 }),
+    PrevTransform({ x, y, angle: 0 }),
+  );
+  if (owner) walker.add(OwnedBy(owner));
+  assignNetId(world, walker);
+  const body = createBoxBody(ctx.physics, walker, 'projectile', x, y, 0.2, 0.2, 'dynamic', {
+    density: 0.6,
+    friction: 0.5,
+    fixedRotation: true,
+  });
+  body.setLinearVelocity(new Vec2(vx, vy));
+  registerBody(world, walker, body);
+}
+
+function walkerBlast(world: World, ctx: SimContext, entity: Entity, x: number, y: number, owner: Entity | undefined): void {
+  const def = weaponDef(ctx.weapons, entity.get(Projectile)?.defId ?? 0);
+  detonate(world, x, y, WALKER_BLAST_RADIUS, def.projectile.explodeDamage || 40, def.projectile.explodeImpulse || 12, owner);
+  ctx.pendingDestroy.push(entity);
 }
 
 function playerCentre(ctx: SimContext, entity: Entity, fallback: { x: number; y: number }): { x: number; y: number } {
@@ -202,7 +242,7 @@ function stepSwing(world: World, ctx: SimContext, entity: Entity, proj: Projecti
     const block = shieldBlocks(world, other, ot.x, ot.y);
     if (block !== 'none') {
       emit(world, { type: 'block', player: other, reflected: false, x: c.x, y: c.y });
-      shove(ctx, other, aim.x, aim.y, def.knockback * 0.5);
+      shove(ctx, other, aim.x, aim.y, def.knockback * 0.5 * proj.power);
       // A parried lunge stops the attacker cold.
       const ob = ctx.bodies.get(owner);
       if (ob) ob.setLinearVelocity(new Vec2(0, ob.getLinearVelocity().y));
@@ -211,7 +251,7 @@ function stepSwing(world: World, ctx: SimContext, entity: Entity, proj: Projecti
     const duck = other.get(Controller)?.ducking ?? false;
     const zone = hitZoneAt(tipY - c.y, ctx.tuning.height, duck);
     takeDamage(world, other, proj.damage, zone, owner, c.x, c.y);
-    shove(ctx, other, aim.x, aim.y, def.knockback, 1.5);
+    shove(ctx, other, aim.x, aim.y, def.knockback * proj.power, 1.5 * proj.power);
   });
 
   world.query(Snake, Transform, Health).updateEach(([, st, h], snake) => {
@@ -223,9 +263,7 @@ function stepSwing(world: World, ctx: SimContext, entity: Entity, proj: Projecti
     const hit = raycastClosest(world, ot.x, ot.y, tipX, tipY, (h) => h.entity === owner || h.kind === 'player' || h.kind === 'projectile' || h.kind === 'sensor' || h.kind === 'weapon');
     if (hit && world.has(hit.entity as Entity) && (hit.entity as Entity).has(Destructible)) {
       proj.hitMask |= 1 << 31;
-      const target = hit.entity as Entity;
-      const d = target.get(Destructible);
-      if (d) target.set(Destructible, { hp: d.hp - proj.damage, maxHp: d.maxHp });
+      woundDestructible(hit.entity as Entity, proj.damage, owner);
     }
   }
 
@@ -270,13 +308,15 @@ function stepBullet(
     const target = hit.entity as Entity;
     if (world.has(target) && target.has(Player) && !target.has(Dead)) {
       const block = shieldBlocks(world, target, hit.x, hit.y);
-      if (block === 'reflect') {
+      // A perfect block, or a Mirror Pin, sends the shot back where it came from as the target's own.
+      if (block === 'reflect' || reflects(target)) {
         proj.vx *= -1;
         proj.vy *= -1;
         proj.x = hit.x + proj.vx * dt;
         proj.y = hit.y + proj.vy * dt;
         if (owner !== undefined) entity.remove(OwnedBy('*'));
         entity.add(OwnedBy(target));
+        proj.ownerGrace = 4;
         emit(world, { type: 'block', player: target, reflected: true, x: hit.x, y: hit.y });
         return;
       }
@@ -296,8 +336,7 @@ function stepBullet(
       if (h) target.set(Health, { hp: h.hp - proj.damage, maxHp: h.maxHp });
       emit(world, { type: 'blood', x: hit.x, y: hit.y, amount: 6 });
     } else if (world.has(target) && target.has(Destructible)) {
-      const d = target.get(Destructible);
-      if (d) target.set(Destructible, { hp: d.hp - proj.damage, maxHp: d.maxHp });
+      woundDestructible(target, proj.damage, owner);
     }
     if (proj.bounces > 0) {
       proj.bounces -= 1;
@@ -462,6 +501,18 @@ function stepExplosive(world: World, ctx: SimContext, entity: Entity, proj: Proj
   const body = ctx.bodies.get(entity);
   const reach = 0.85 + (def.projectile.radius > 1 ? 0.5 : 0);
   const touched = touchingPlayer(world, ctx, proj.x, proj.y, reach, owner, proj.ownerGrace);
+  // A Mirror Pin turns a shell around before it can go off, and makes it the wearer's.
+  if (touched && reflects(touched) && body) {
+    const v = body.getLinearVelocity();
+    body.setLinearVelocity(new Vec2(-v.x, -v.y));
+    proj.vx = -v.x;
+    proj.vy = -v.y;
+    if (owner !== undefined) entity.remove(OwnedBy('*'));
+    entity.add(OwnedBy(touched));
+    proj.ownerGrace = 12;
+    emit(world, { type: 'block', player: touched, reflected: true, x: proj.x, y: proj.y });
+    return;
+  }
   let hitSurface = ctx.contactHits.has(entity as unknown as number);
   if (!hitSurface && body) {
     const ahead = raycastClosest(world, proj.x, proj.y, proj.x + proj.vx * dt * 2, proj.y + proj.vy * dt * 2, (h) => h.entity === owner || h.entity === entity || h.kind === 'player' || h.kind === 'projectile' || h.kind === 'sensor');
@@ -474,6 +525,10 @@ function stepExplosive(world: World, ctx: SimContext, entity: Entity, proj: Proj
     proj.kind === ProjectileKind.BurstInto ||
     (proj.kind === ProjectileKind.Grenade && (touched !== null || def.projectile.bounce === 0));
   if ((touched !== null || hitSurface) && contactExplode) {
+    if (def.deploy !== 'none') {
+      deploy(world, ctx, entity, proj, def);
+      return;
+    }
     if (proj.kind === ProjectileKind.BurstInto) burst(world, proj, def, owner);
     explode(world, proj.x, proj.y, proj.defId, owner);
     ctx.pendingDestroy.push(entity);
@@ -487,6 +542,10 @@ function stepExplosive(world: World, ctx: SimContext, entity: Entity, proj: Proj
   if (proj.fuse > 0) {
     proj.fuse -= 1;
     if (proj.fuse <= 0) {
+      if (def.deploy !== 'none') {
+        deploy(world, ctx, entity, proj, def);
+        return;
+      }
       if (proj.kind === ProjectileKind.BurstInto) burst(world, proj, def, owner);
       explode(world, proj.x, proj.y, proj.defId, owner);
       ctx.pendingDestroy.push(entity);
@@ -494,10 +553,31 @@ function stepExplosive(world: World, ctx: SimContext, entity: Entity, proj: Proj
   }
 }
 
+/** A shell that plants something where it settles instead of going off. */
+function deploy(world: World, ctx: SimContext, entity: Entity, proj: ProjectileState, def: WeaponDef): void {
+  if (def.deploy === 'repulsor') plantRepulsor(world, proj.x, proj.y);
+  emit(world, { type: 'explosion', x: proj.x, y: proj.y, radius: 0.5, damage: 0 });
+  ctx.pendingDestroy.push(entity);
+}
+
 function stepBeam(world: World, ctx: SimContext, entity: Entity, proj: ProjectileState, def: WeaponDef, owner: Entity | undefined): void {
   const aim = owner ? owner.get(Aim) : undefined;
   const ot = owner ? owner.get(Transform) : undefined;
-  if (aim && ot) {
+  if (aim && ot && def.oneShot) {
+    // A super sweeps: everyone along the line to the first wall is hurt and shoved down the beam.
+    const wall = raycastClosest(world, ot.x, ot.y, ot.x + aim.x * 40, ot.y + aim.y * 40, (h) => h.kind !== 'solid' && h.kind !== 'prop');
+    const reach = wall ? wall.fraction * 40 : 40;
+    const ex = ot.x + aim.x * reach;
+    const ey = ot.y + aim.y * reach;
+    world.query(livePlayers).updateEach(([, pt], other) => {
+      if (other === owner) return;
+      const c = playerCentre(ctx, other, pt);
+      if (segmentDistance(ot.x, ot.y, ex, ey, c.x, c.y) > def.projectile.radius + 0.35) return;
+      takeDamage(world, other, proj.damage, 'body', owner ?? -1, c.x, c.y);
+      shove(ctx, other, aim.x, aim.y, def.knockback, 0.4);
+    });
+    if (wall && world.has(wall.entity as Entity) && (wall.entity as Entity).has(Destructible)) woundDestructible(wall.entity as Entity, proj.damage, owner);
+  } else if (aim && ot) {
     const hit = raycastClosest(world, ot.x, ot.y, ot.x + aim.x * 40, ot.y + aim.y * 40, (h) => h.entity === owner || h.kind === 'projectile' || h.kind === 'sensor');
     if (hit && world.has(hit.entity as Entity) && (hit.entity as Entity).has(Player)) {
       takeDamage(world, hit.entity as Entity, proj.damage, 'body', owner ?? -1, hit.x, hit.y);
@@ -523,14 +603,14 @@ export function projectiles(world: World): void {
     const ot = owner?.get(Transform);
     const aim = owner?.get(Aim);
     if (!owner || !ot || !aim) return;
-    const reach = SWING_BASE_REACH + weaponByIndex(proj.defId).projectile.radius;
+    const reach = SWING_BASE_REACH + weaponDef(ctx.weapons, proj.defId).projectile.radius;
     swings.push({ owner, ox: ot.x, oy: ot.y, tx: ot.x + aim.x * reach, ty: ot.y + aim.y * reach });
   });
 
   world.query(bullets).updateEach(([proj], entity) => {
     if (entity.has(Snake)) return;
     const owner = ownerOf(entity);
-    const def = weaponByIndex(proj.defId);
+    const def = weaponDef(ctx.weapons, proj.defId);
     const body = ctx.bodies.get(entity);
 
     if (proj.kind === ProjectileKind.Bullet || proj.kind === ProjectileKind.Pellet) {
@@ -572,7 +652,8 @@ export function projectiles(world: World): void {
         return;
       case ProjectileKind.Creature:
         // The shell hatches on its first tick, keeping the muzzle velocity so snakes actually fly.
-        spawnSnake(world, proj.x, proj.y, owner, def.id.includes('launcher'), def.id.includes('flying'), proj.vx, proj.vy);
+        if (def.id === 'walker-mine') spawnWalker(world, proj.x, proj.y, owner, proj.defId, proj.vx, proj.vy);
+        else spawnSnake(world, proj.x, proj.y, owner, def.id.includes('launcher'), def.id.includes('flying'), proj.vx, proj.vy);
         ctx.pendingDestroy.push(entity);
         return;
       default:
@@ -598,21 +679,42 @@ export function projectiles(world: World): void {
           wep.thrownHit = true;
           return;
         }
-        takeDamage(world, other, ctx.tuning.thrownDamage, 'body', thrower ?? -1, pt.x, pt.y);
+        // Launch mode: a thrown gun is a shove first (item throws finish stocks), with capped damage.
+        if (isLaunch(world)) {
+          const def = weaponDef(ctx.weapons, wep.defId);
+          takeDamage(world, other, Math.min(def.thrownDamage, ctx.tuning.thrownDamage), 'body', thrower ?? -1, pt.x, pt.y);
+          const wv = ctx.bodies.get(entity)?.getLinearVelocity();
+          const dirX = wv && Math.hypot(wv.x, wv.y) > 0.5 ? wv.x : dx;
+          const dirY = wv && Math.hypot(wv.x, wv.y) > 0.5 ? wv.y : dy;
+          shove(ctx, other, dirX, dirY, ctx.tuning.thrownKnockback, 2);
+        } else {
+          takeDamage(world, other, ctx.tuning.thrownDamage, 'body', thrower ?? -1, pt.x, pt.y);
+        }
         wep.thrownHit = true;
       }
     });
   });
 
   world.query(Snake, Transform, Health).updateEach(([snake, st, health], entity) => {
+    const owner = ownerOf(entity);
     if (health.hp <= 0) {
-      emit(world, { type: 'blood', x: st.x, y: st.y, amount: 12 });
-      ctx.pendingDestroy.push(entity);
+      // A shot mine goes off where it stands; a shot snake just dies.
+      if (snake.bomb) walkerBlast(world, ctx, entity, st.x, st.y, owner);
+      else {
+        emit(world, { type: 'blood', x: st.x, y: st.y, amount: 12 });
+        ctx.pendingDestroy.push(entity);
+      }
       return;
     }
     if (snake.biteCooldown > 0) snake.biteCooldown -= 1;
     if (snake.grace > 0) snake.grace -= 1;
-    const owner = ownerOf(entity);
+    if (snake.bomb) {
+      snake.fuse -= 1;
+      if (snake.fuse <= 0) {
+        walkerBlast(world, ctx, entity, st.x, st.y, owner);
+        return;
+      }
+    }
     const body = ctx.bodies.get(entity);
     if (!body) return;
     const v = body.getLinearVelocity();
@@ -632,7 +734,7 @@ export function projectiles(world: World): void {
     const dirx = n.x - st.x;
     const diry = n.y - st.y;
     const len = Math.hypot(dirx, diry) || 1;
-    const speed = snake.flying ? 6 : snake.giant ? 3.5 : 4.5;
+    const speed = snake.flying ? 6 : snake.bomb ? WALKER_SPEED : snake.giant ? 3.5 : 4.5;
     if (snake.flying) {
       body.setLinearVelocity(new Vec2((dirx / len) * speed, (diry / len) * speed));
     } else {
@@ -640,6 +742,11 @@ export function projectiles(world: World): void {
       // Slither toward the target; hop when it is above us or now and then for the wriggle.
       const hop = resting && (diry > 0.6 || (n.d > 1.2 && ctx.rng.next() < 0.03));
       body.setLinearVelocity(new Vec2(Math.sign(dirx) * Math.min(speed, Math.abs(dirx) * 4), hop ? 6.5 : v.y));
+    }
+    if (snake.bomb) {
+      // Contact: the mine goes off (its own grace protects whoever lobbed it while it is still close).
+      if (n.d < 0.7) walkerBlast(world, ctx, entity, st.x, st.y, owner);
+      return;
     }
     if (n.d < 0.55 && snake.biteCooldown <= 0) {
       takeDamage(world, n.e, snake.giant ? 25 : 5, 'body', owner ?? entity, n.x, n.y);

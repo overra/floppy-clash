@@ -1,7 +1,8 @@
 import { createQuery, type World } from 'koota';
 import { emit, getContext } from '../context';
-import { Crown, Dead, MatchState, Player, RoundPhase, RoundState } from '../traits';
-import { nextMatchLevel, respawnPlayers } from '../systems/reset';
+import { Crown, Dead, MatchState, Player, RoundPhase, RoundState, Stocks } from '../traits';
+import { nextMatchLevel, respawnOne, respawnPlayers } from '../systems/reset';
+import { isLaunch } from './mode';
 import { openDrops } from './spawner';
 
 const playersQ = createQuery(Player);
@@ -11,13 +12,19 @@ export function rules(world: World): void {
   const round = world.get(RoundState);
   const match = world.get(MatchState);
   if (!round || !match) return;
+  const launch = isLaunch(world);
 
+  // Who is still in the round: on their feet, or (launch mode) down but with a stock to come back on.
   const living: number[] = [];
   world.query(playersQ).updateEach(([p], e) => {
-    if (!e.has(Dead) && ctx.players.includes(e)) living.push(p.slot);
+    if (!ctx.players.includes(e)) return;
+    const alive = !e.has(Dead);
+    if (alive || (launch && (e.get(Stocks)?.left ?? 0) > 0)) living.push(p.slot);
   });
   round.aliveMask = living.reduce((m, s) => m | (1 << s), 0);
   round.ticks += 1;
+
+  if (launch && round.phase !== RoundPhase.Loading) tickRespawns(world);
 
   if (round.phase === RoundPhase.Loading) {
     if (round.ticks <= 1 && match.round > 0) {
@@ -78,6 +85,19 @@ export function rules(world: World): void {
 
   world.set(RoundState, round);
   world.set(MatchState, match);
+}
+
+/** Fallen fighters with a stock left count down and drop back in (the level is still up until Loading). */
+function tickRespawns(world: World): void {
+  for (const player of getContext(world).players) {
+    const stocks = player.get(Stocks);
+    if (!stocks || stocks.respawnIn <= 0 || !player.has(Dead)) continue;
+    if (stocks.respawnIn > 1) {
+      player.set(Stocks, { ...stocks, respawnIn: stocks.respawnIn - 1 });
+    } else {
+      respawnOne(world, player);
+    }
+  }
 }
 
 /** Players may move during the countdown but nobody can hurt anybody until "FIGHT". */

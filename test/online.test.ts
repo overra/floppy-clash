@@ -34,6 +34,7 @@ describe('online protocol: input packing', () => {
         jump: rng.next() < 0.3,
         down: rng.next() < 0.3,
         attack: rng.next() < 0.3,
+        kick: rng.next() < 0.3,
         block: rng.next() < 0.3,
         throw: rng.next() < 0.3,
       };
@@ -45,7 +46,7 @@ describe('online protocol: input packing', () => {
       expect(wireInput(raw)).toEqual(host);
       expect(Math.abs(host.moveX)).toBeLessThanOrEqual(1);
       expect(Math.hypot(host.aimX, host.aimY)).toBeCloseTo(1, 2);
-      for (const k of ['jump', 'down', 'attack', 'block', 'throw'] as const)
+      for (const k of ['jump', 'down', 'attack', 'kick', 'block', 'throw'] as const)
         expect(host[k]).toBe(raw[k]);
     }
   });
@@ -222,6 +223,7 @@ describe('online: host and client mirrors agree', () => {
             jump: rng.next() < 0.2,
             down: rng.next() < 0.1,
             attack: rng.next() < 0.4,
+            kick: rng.next() < 0.2,
             block: rng.next() < 0.1,
             throw: rng.next() < 0.05,
           }),

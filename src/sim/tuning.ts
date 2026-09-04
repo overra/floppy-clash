@@ -28,6 +28,20 @@ export const tuning = {
   mantleReach: 0.9,
   mantleProbe: 0.25,
   mantleSpeed: 2.5,
+  // Ledge grab: falling past a lip that sits between ledgeGrabLow and ledgeGrabHigh above the body
+  // centre (hands' reach above the head) catches it. The fighter hangs with the capsule top level
+  // with the lip for at most maxHangTicks, then lets go; another grab needs regrabLockTicks. Jump
+  // hops off with ledgeJumpX toward the stage. Launch mode grants ledgeInvulnTicks on the grab.
+  ledgeGrabLow: 0.3,
+  ledgeGrabHigh: 1.3,
+  ledgeGrabMaxRise: 3,
+  // Without the stick toward the lip, a grab only happens when no floor lies this far below the feet.
+  ledgeAutoGrabDrop: 2.5,
+  hangGraceTicks: 4,
+  maxHangTicks: 150,
+  regrabLockTicks: 40,
+  ledgeJumpX: 2.5,
+  ledgeInvulnTicks: 30,
   maxFallSpeed: 28,
   maxHorizontalSpeed: 40,
 
@@ -41,6 +55,27 @@ export const tuning = {
   punchRadius: 0.45,
   punchActiveTicks: 4,
   punchCooldownTicks: 20,
+
+  // Kicks: slower and longer than a punch, mostly sideways, and each one blocked eats a chunk of the
+  // guard meter (guardDrain) so a turtle eventually has to move. Stepping into a strike (left stick
+  // held the way the fighter faces) throws the rear-limb version: rearWindupTicks more wind-up for
+  // rearDamageScale / rearKnockbackScale more hurt and a longer recovery.
+  kickWindupTicks: 5,
+  kickActiveTicks: 5,
+  kickCooldownTicks: 30,
+  kickDamage: 26,
+  kickKnockback: 11,
+  kickKnockbackUp: 3,
+  kickRange: 1.2,
+  kickRadius: 0.5,
+  kickSelfImpulse: 3,
+  kickGuardDrain: 0.4,
+  rearWindupTicks: 2,
+  rearDamageScale: 1.35,
+  rearKnockbackScale: 1.25,
+  rearCooldownScale: 1.3,
+  rearReachBonus: 0.1,
+  guardBreakStunTicks: 24,
 
   blockArcDeg: 120,
   blockMeterDrainTicks: 72,
@@ -56,6 +91,8 @@ export const tuning = {
 
   throwSpeed: 18,
   thrownDamage: 55,
+  // Launch mode only: a thrown weapon shoves this hard (its damage is capped by the weapon overlay).
+  thrownKnockback: 7,
   pickupCooldownTicks: 30,
   refillOnPickup: true,
   flingWhenEmpty: true,
@@ -68,6 +105,19 @@ export const tuning = {
 
   lavaDamage: 35,
   lavaCooldownTicks: 30,
+
+  // Launch mode. A hit's shove is the weapon's knockback times (base + percent/100 * perPercent),
+  // capped; hitstun grows with the launch speed; the stick held at the moment of the hit steers the
+  // launch angle by up to diMaxDeg (directional influence). Fallen fighters drop back in after
+  // respawnDelayTicks with respawnInvulnTicks of immunity.
+  launchBaseScale: 0.6,
+  launchPercentScale: 1.4,
+  launchMaxScale: 4,
+  hitstunPerSpeed: 1.5,
+  hitstunMaxTicks: 45,
+  diMaxDeg: 18,
+  respawnDelayTicks: 90,
+  respawnInvulnTicks: 120,
 
   // Between rounds: ~2 s of slow-mo on the last kill (36 ticks at 0.3x), 0.75 s with the scorecard
   // up at full speed, then a 1.5 s 3-2-1. About 4 s door to door; rounds against bots can be short,

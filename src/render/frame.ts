@@ -78,8 +78,11 @@ export type RenderFrame = {
     gpuMs?: number;
     entities?: number;
     flash?: number;
-    /** Seated players this round, with their palette color and alive flag. */
-    players?: { slot: number; color: string; alive: boolean; crown: boolean; hp: number; maxHp: number }[];
+    /** Seated players this round, with their palette color and alive flag. Launch mode: percent and stocks left. */
+    players?: { slot: number; color: string; alive: boolean; crown: boolean; hp: number; maxHp: number; percent: number; stocks: number }[];
+    /** MatchModeIndex (0 standing, 1 launch) and the stocks a launch round starts with. */
+    mode?: number;
+    stockLimit?: number;
     /** Slot of the round winner while the scoreboard shows, or -1 for a draw. */
     roundWinner?: number;
     matchWinner?: number;

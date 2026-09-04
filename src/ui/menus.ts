@@ -1,8 +1,31 @@
 import { builtInMatchLevels } from '../levels/catalog';
 import { DEFAULT_MAP, type PadMap } from '../input/remap';
 import { cleanPeerName, isRoomCode, normalizeRoomCode } from '../net/relay';
+import type { ItemRate, MatchMode } from '../sim/rules/settings';
 import { WEAPON_DEFS, weaponDisplayName } from '../sim/weapons/defs';
 import { DEFAULT_USER_SETTINGS, type UserSettings } from './settingsStore';
+
+const MODES: { id: MatchMode; label: string; blurb: string }[] = [
+  { id: 'standing', label: 'Last standing', blurb: 'HP drains; the last fighter on their feet takes the round.' },
+  { id: 'launch', label: 'Launch', blurb: 'Damage builds a percent that scales knockback; only the blast zone kills; stocks per round.' },
+];
+const ITEM_RATES: { id: ItemRate; label: string }[] = [
+  { id: 'normal', label: 'Normal' },
+  { id: 'low', label: 'Low' },
+  { id: 'off', label: 'Off' },
+];
+
+function options<T extends string>(list: { id: T; label: string }[], current: T): string {
+  return list.map((o) => `<option value="${o.id}" ${o.id === current ? 'selected' : ''}>${o.label}</option>`).join('');
+}
+
+function asMode(v: string): MatchMode {
+  return v === 'launch' ? 'launch' : 'standing';
+}
+
+function asItemRate(v: string): ItemRate {
+  return v === 'off' || v === 'low' ? v : 'normal';
+}
 
 export type Screen = 'menu' | 'join' | 'settings' | 'pause' | 'scoreboard' | 'lobby' | 'editor' | 'play' | 'disconnect';
 
@@ -27,7 +50,9 @@ export type LobbyState = {
   inMatch: boolean;
   shareUrl: string;
   /** Rules as the host has them, mirrored to clients so the lobby reads the same everywhere. */
+  mode: MatchMode;
   maxHp: number;
+  stocks: number;
   firstTo: number;
   bots: number;
 };
@@ -38,6 +63,8 @@ export type MenuState = {
   notice: string;
   firstTo: number;
   maxHp: number;
+  mode: MatchMode;
+  stocks: number;
   bots: number;
   roomCode: string;
   chat: string[];
@@ -52,7 +79,7 @@ export type MenuActions = {
 };
 
 export function createLobbyState(): LobbyState {
-  return { phase: 'idle', role: 'client', name: '', peers: [], ping: 0, inMatch: false, shareUrl: '', maxHp: 100, firstTo: 0, bots: 0 };
+  return { phase: 'idle', role: 'client', name: '', peers: [], ping: 0, inMatch: false, shareUrl: '', mode: 'standing', maxHp: 100, stocks: 3, firstTo: 0, bots: 0 };
 }
 
 export function createMenuState(): MenuState {
@@ -62,6 +89,8 @@ export function createMenuState(): MenuState {
     notice: '',
     firstTo: 0,
     maxHp: 100,
+    mode: 'standing',
+    stocks: 3,
     bots: 0,
     roomCode: '',
     chat: [],
@@ -180,6 +209,8 @@ export function collectSettings(card: HTMLElement, menus: MenuState, settings: U
   };
   menus.maxHp = num('hp', menus.maxHp);
   menus.firstTo = num('ft', menus.firstTo);
+  menus.mode = asMode(sel('mode', menus.mode));
+  menus.stocks = Math.max(1, Math.min(10, Math.round(num('stocks', menus.stocks)) || 1));
   menus.bots = num('bots', menus.bots);
   const weapons = WEAPON_DEFS.filter((d) => d.dropWeight > 0);
   const enabledW = weapons.filter((d) => chk(`w-${d.id}`, true)).map((d) => d.id);
@@ -187,8 +218,13 @@ export function collectSettings(card: HTMLElement, menus: MenuState, settings: U
   const enabledL = levels.filter((l) => chk(`l-${l.id}`, true)).map((l) => l.id);
   return {
     ...settings,
+    mode: menus.mode,
     maxHp: menus.maxHp,
+    stocks: menus.stocks,
     firstTo: menus.firstTo,
+    items: asItemRate(sel('items', settings.items)),
+    hazards: chk('haz', settings.hazards),
+    fixedSpawns: chk('fs', settings.fixedSpawns),
     showWins: chk('wins', settings.showWins),
     haptics: chk('hap', settings.haptics),
     colorblind: chk('cb', settings.colorblind),
@@ -217,6 +253,7 @@ export function collectPadMap(card: HTMLElement): { padId: string; map: PadMap }
     map: {
       jump: n('map-jump', DEFAULT_MAP.jump),
       attack: n('map-attack', DEFAULT_MAP.attack),
+      kick: n('map-kick', DEFAULT_MAP.kick),
       block: n('map-block', DEFAULT_MAP.block),
       throw: n('map-throw', DEFAULT_MAP.throw),
       pause: n('map-pause', DEFAULT_MAP.pause),
@@ -364,6 +401,15 @@ function renderSettings(
   const lastId = Object.keys(maps)[0] ?? '';
   const check = (id: string, label: string, on: boolean) => `<label class="row"><span>${label}</span><input id="${id}" type="checkbox" ${on ? 'checked' : ''}></label>`;
   card.innerHTML = `<h2>Settings</h2>
+      <h3>Rules</h3>
+      <div class="form-grid">
+        <label class="row"><span>Mode</span><select id="mode">${options(MODES, state.mode)}</select></label>
+        <label class="row"><span>Stocks <small>(launch)</small></span><input id="stocks" type="number" min="1" max="10" value="${state.stocks}"></label>
+        <label class="row"><span>Items</span><select id="items">${options(ITEM_RATES, settings.items)}</select></label>
+        ${check('haz', 'Hazards', settings.hazards)}
+        ${check('fs', 'Fixed spawns', settings.fixedSpawns)}
+      </div>
+      <p class="dim">${MODES.map((m) => `<b>${m.label}</b>: ${m.blurb}`).join(' ')} Items off and hazards off make a neutral stage.</p>
       <h3>Match</h3>
       <div class="form-grid">
         <label class="row"><span>HP</span><input id="hp" type="number" min="1" value="${state.maxHp}"></label>
@@ -413,6 +459,7 @@ function renderSettings(
         <label class="row wide"><span>Pad id</span><input id="padid" value="${lastId}" placeholder="Xbox / DualSense id string"></label>
         <label class="row"><span>Jump</span><input id="map-jump" type="number" value="${lastMap.jump}"></label>
         <label class="row"><span>Attack</span><input id="map-attack" type="number" value="${lastMap.attack}"></label>
+        <label class="row"><span>Kick</span><input id="map-kick" type="number" value="${lastMap.kick}"></label>
         <label class="row"><span>Block</span><input id="map-block" type="number" value="${lastMap.block}"></label>
         <label class="row"><span>Throw</span><input id="map-throw" type="number" value="${lastMap.throw}"></label>
         <label class="row"><span>Pause</span><input id="map-pause" type="number" value="${lastMap.pause}"></label>
@@ -449,6 +496,10 @@ export function syncLobbyFields(card: HTMLElement, state: MenuState): void {
   if (hp) state.lobby.maxHp = Math.max(1, Number(hp.value) || state.lobby.maxHp);
   const ft = card.querySelector('#ft') as HTMLInputElement | null;
   if (ft) state.lobby.firstTo = Math.max(0, Number(ft.value) || 0);
+  const mode = card.querySelector('#mode') as HTMLSelectElement | null;
+  if (mode) state.lobby.mode = asMode(mode.value);
+  const stocks = card.querySelector('#stocks') as HTMLInputElement | null;
+  if (stocks) state.lobby.stocks = Math.max(1, Math.min(10, Math.round(Number(stocks.value)) || state.lobby.stocks));
 }
 
 function esc(text: string): string {
@@ -563,10 +614,12 @@ function renderLobby(card: HTMLElement, state: MenuState, _settings: UserSetting
     const grid = document.createElement('div');
     grid.className = 'form-grid';
     grid.innerHTML = `
+      <label class="row"><span>Mode</span><select id="mode">${options(MODES, lobby.mode)}</select></label>
       <label class="row"><span>HP</span><input id="hp" type="number" min="1" value="${lobby.maxHp}"></label>
+      <label class="row"><span>Stocks <small>(launch)</small></span><input id="stocks" type="number" min="1" max="10" value="${lobby.stocks}"></label>
       <label class="row"><span>First to <small>(0 = endless)</small></span><input id="ft" type="number" min="0" value="${lobby.firstTo}"></label>`;
     card.append(grid);
-    for (const id of ['#hp', '#ft']) {
+    for (const id of ['#mode', '#hp', '#stocks', '#ft']) {
       grid.querySelector(id)?.addEventListener('change', () => {
         syncLobbyFields(card, state);
         actions.lobbyChanged?.();
@@ -575,7 +628,8 @@ function renderLobby(card: HTMLElement, state: MenuState, _settings: UserSetting
   } else {
     const rules = document.createElement('p');
     rules.className = 'dim';
-    rules.textContent = `HP ${lobby.maxHp} · first to ${lobby.firstTo || 'endless'} · ${bots} bot${bots === 1 ? '' : 's'} · ${hostPeer ? `${hostPeer.name} starts the match` : 'waiting for the host'}`;
+    const ruleset = lobby.mode === 'launch' ? `Launch · ${lobby.stocks} stock${lobby.stocks === 1 ? '' : 's'}` : `HP ${lobby.maxHp}`;
+    rules.textContent = `${ruleset} · first to ${lobby.firstTo || 'endless'} · ${bots} bot${bots === 1 ? '' : 's'} · ${hostPeer ? `${hostPeer.name} starts the match` : 'waiting for the host'}`;
     card.append(rules);
   }
 

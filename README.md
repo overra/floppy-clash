@@ -20,16 +20,32 @@ v1 is gamepad-first. Connect 2–4 pads (Xbox / DualSense / Switch Pro, W3C `sta
 - Move: left stick
 - Jump: A / Cross (also LB)
 - Aim: right stick
-- Attack: RT (also RB)
+- Attack (punch / fire): RT (also X / Square)
+- Kick: RB
 - Block: LT
 - Throw: Y / Triangle
 - Pause: Start
 
-Pads only appear after you press a button. Keyboard/mouse is a development fallback that can fill one seat (WASD, mouse aim, LMB/RMB, F to throw).
+Falling past a ledge with the stick toward it (or with nothing below to land on) catches the lip: jump hops up, toward climbs, down or away lets go, and attack is a get-up strike. A hang lasts a couple of seconds at most and a fresh grab needs a moment. In launch mode the grab comes with brief immunity.
+
+Unarmed fighting has four strikes on two buttons: punch is the quick jab, kick is slower with more reach and knockback and wears down a raised guard (a few blocked kicks break it). Step into the target while pressing either and you throw the rear-limb version, a cross or a roundhouse: more wind-up, more hurt, longer recovery. A perfect block still stops anything.
+
+Pads only appear after you press a button. Keyboard/mouse is a development fallback that can fill one seat (WASD, mouse aim, LMB punch, middle button or X/L kick, RMB block, F to throw).
 
 ### Solo
 
 **Solo vs Bots** starts a match against three utility bots from the main menu.
+
+### Modes
+
+- **Last standing** (default): HP drains, the last fighter on their feet takes the round.
+- **Launch**: damage builds a percentage that scales knockback, only the blast zone kills, and every fighter has a stock of lives per round. Hold the stick as a hit lands to steer the launch (DI). Rotation prefers the open-air island stages (Skyhold, Floe, Perch) unless you pick levels yourself. Weapons play by a launch balance table (`src/sim/weapons/launch.ts`): rapid fire and scatter shove less, single shots and melee more, thrown guns shove for capped damage, and the default drop list leaves out attrition weapons.
+
+Rules also cover **Items** (normal / low / off), **Hazards** (off strips arenas to ground and moving platforms) and **Fixed spawns**; items off plus hazards off is a neutral stage. Online, the host picks the mode and stocks in the lobby and every peer's mirror of the match is created with the same rules.
+
+### Items
+
+Alongside the guns, the sky drops pickups: the **Slugger** (hold to wind up, let go to swing; a full charge swings on its own), the **Walker Mine** (a mine on legs that hunts the nearest fighter), the **Mallet** (swings itself, no guard or wall-kick while you carry it), the **Repulsor Puck** (plants a bumper that bats fighters away) and four consumables taken on touch: **Mend Kit** (heals, or wipes percent in launch mode), **Lead Coat** (heavy: shoves land soft, jumps low), **Sprint Charm** (quick) and **Mirror Pin** (bullets and shells bounce back). Now and then a **Surge Orb** drifts in; break it and you are handed the Surge Cannon, one sweeping beam that hits everyone in its line.
 
 ### Online
 

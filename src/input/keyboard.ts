@@ -4,6 +4,7 @@ import { worldToScreen, type CameraState } from '../render/camera';
 export type KeyLatch = {
   jump: boolean;
   attack: boolean;
+  kick: boolean;
   block: boolean;
   throw: boolean;
   pause: boolean;
@@ -19,11 +20,12 @@ export function createKeyboardFallback(): {
 } {
   const down = new Set<string>();
   const mouse = { x: 0, y: 0 };
-  const latch: KeyLatch = { jump: false, attack: false, block: false, throw: false, pause: false };
+  const latch: KeyLatch = { jump: false, attack: false, kick: false, block: false, throw: false, pause: false };
   window.addEventListener('keydown', (e) => {
     down.add(e.code);
     if (e.code === 'Space' || e.code === 'KeyW') latch.jump = true;
     if (e.code === 'KeyC' || e.code === 'KeyK') latch.attack = true;
+    if (e.code === 'KeyX' || e.code === 'KeyL') latch.kick = true;
     if (e.code === 'KeyV') latch.block = true;
     if (e.code === 'KeyF') latch.throw = true;
     if (e.code === 'Escape' || e.code === 'KeyP') latch.pause = true;
@@ -31,6 +33,7 @@ export function createKeyboardFallback(): {
   window.addEventListener('keyup', (e) => down.delete(e.code));
   window.addEventListener('mousedown', (e) => {
     if (e.button === 0) latch.attack = true;
+    if (e.button === 1) latch.kick = true;
     if (e.button === 2) latch.block = true;
   });
   window.addEventListener('mousemove', (e) => {
@@ -55,6 +58,7 @@ export function createKeyboardFallback(): {
         jump: latch.jump || down.has('Space') || down.has('KeyW'),
         down: duck,
         attack: latch.attack || down.has('KeyC'),
+        kick: latch.kick || down.has('KeyX'),
         block: latch.block || down.has('KeyV'),
         throw: latch.throw || down.has('KeyF'),
         aimX: aimX / len,
@@ -64,6 +68,7 @@ export function createKeyboardFallback(): {
     consume() {
       latch.jump = false;
       latch.attack = false;
+      latch.kick = false;
       latch.block = false;
       latch.throw = false;
     },

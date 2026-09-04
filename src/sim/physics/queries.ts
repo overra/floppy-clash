@@ -56,18 +56,24 @@ export function queryBodiesInRadius(world: World, x: number, y: number, radius: 
   return found;
 }
 
+/**
+ * Blast every body within `radius` away from (x, y) with linear falloff. `onBody` sees each body with
+ * its falloff and the outward unit direction; `skipPlayers` leaves fighters' bodies untouched so the
+ * caller can shove them its own way (launch mode).
+ */
 export function applyExplosion(
   world: World,
   x: number,
   y: number,
   radius: number,
   impulse: number,
-  onBody?: (body: Body, falloff: number) => void,
+  onBody?: (body: Body, falloff: number, nx: number, ny: number) => void,
+  opts: { skipPlayers?: boolean } = {},
 ): void {
   const bodies = queryBodiesInRadius(world, x, y, radius);
   for (const body of bodies) {
     if (body.getType() === 'static') {
-      onBody?.(body, 1);
+      onBody?.(body, 1, 0, 0);
       continue;
     }
     const p = body.getPosition();
@@ -77,8 +83,11 @@ export function applyExplosion(
     const falloff = Math.max(0, 1 - dist / radius);
     const nx = dx / dist;
     const ny = dy / dist;
-    const mag = impulse * falloff * body.getMass();
-    body.applyLinearImpulse({ x: nx * mag, y: ny * mag + 0.15 * mag }, p);
-    onBody?.(body, falloff);
+    const isPlayer = (body.getUserData() as FixtureUserData | undefined)?.kind === 'player';
+    if (!(opts.skipPlayers && isPlayer)) {
+      const mag = impulse * falloff * body.getMass();
+      body.applyLinearImpulse({ x: nx * mag, y: ny * mag + 0.15 * mag }, p);
+    }
+    onBody?.(body, falloff, nx, ny);
   }
 }

@@ -2,7 +2,10 @@ export interface PlayerInput {
   moveX: number;
   jump: boolean;
   down: boolean;
+  /** Punch when unarmed, fire when armed. */
   attack: boolean;
+  /** Kick (unarmed only): slower and longer than a punch, and it leans on a raised guard. */
+  kick: boolean;
   block: boolean;
   throw: boolean;
   aimX: number;
@@ -14,6 +17,7 @@ export const EMPTY_INPUT: PlayerInput = {
   jump: false,
   down: false,
   attack: false,
+  kick: false,
   block: false,
   throw: false,
   aimX: 1,
@@ -42,6 +46,7 @@ export function normalizeInput(input: PlayerInput): PlayerInput {
     jump: !!input.jump,
     down: !!input.down,
     attack: !!input.attack,
+    kick: !!input.kick,
     block: !!input.block,
     throw: !!input.throw,
     aimX,

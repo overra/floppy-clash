@@ -7,14 +7,44 @@ import {
   Aim,
   Combat,
   Controller,
+  HazardKind,
   Health,
+  Modifiers,
   Player,
   PrevTransform,
   SpawnPoint,
   Status,
+  Stocks,
   Transform,
 } from '../traits';
+import type { MatchSettings } from '../rules/settings';
+import { moduleForType } from '../hazards';
 import type { LevelDef, LevelObject } from './schema';
+
+/** What survives "hazards off": plain ground, the void, and platforms that merely move. */
+const NEUTRAL_TYPES = new Set(['solid', 'platform.moving', 'void']);
+
+/**
+ * The arena as the match settings want it: with hazards off every object that is not ground or a
+ * moving platform is dropped (unknown types count as solids), and with items off the authored
+ * starting weapons go too. Returns the level itself when nothing changes.
+ */
+export function applyLevelSwitches(level: LevelDef, settings: Pick<MatchSettings, 'hazards' | 'items'>): LevelDef {
+  if (settings.hazards && settings.items !== 'off') return level;
+  let out = level;
+  if (!settings.hazards) {
+    const objects = level.objects.filter((o) => {
+      if (NEUTRAL_TYPES.has(o.type)) return true;
+      const mod = moduleForType(o.type);
+      return !mod || mod.kind === HazardKind.Solid;
+    });
+    out = { ...out, objects };
+  }
+  if (settings.items === 'off' && out.startingWeapons?.length) {
+    out = { ...out, startingWeapons: [] };
+  }
+  return out;
+}
 
 export function loadLevel(world: World, level: LevelDef): void {
   const ctx = getContext(world);
@@ -53,9 +83,11 @@ export function spawnPlayer(world: World, slot: number, x: number, y: number, co
       vy: 0,
     }),
     Aim({ x: slot % 2 === 0 ? 1 : -1, y: 0, holdTicks: 0 }),
-    Health({ hp: ctx.settings.maxHp, maxHp: ctx.settings.maxHp }),
-    Combat({ punchCooldown: 0, punchActive: 0, blockMeter: 1, blockStartTick: -999, blocking: false, refillDelay: 0 }),
-    Status({ burning: 0, slowed: 0, glued: 0, bubbled: 0, pulled: 0 }),
+    Health({ hp: ctx.settings.maxHp, maxHp: ctx.settings.maxHp, percent: 0 }),
+    Stocks({ left: ctx.settings.stocks, respawnIn: 0 }),
+    Modifiers({ speed: 1, jump: 1, knockbackTaken: 1, reflect: 0, ticks: 0, kind: 0 }),
+    Combat({ strikeCooldown: 0, strikeActive: 0, blockMeter: 1, blockStartTick: -999, blocking: false, refillDelay: 0 }),
+    Status({ burning: 0, slowed: 0, glued: 0, bubbled: 0, pulled: 0, invuln: 0 }),
     Transform({ x, y, angle: 0 }),
     PrevTransform({ x, y, angle: 0 }),
   );

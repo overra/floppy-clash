@@ -3,7 +3,8 @@ import { Vec2 } from 'planck';
 import { getContext } from '../context';
 import { rising } from '../input';
 import { raycastClosest, type RayHit } from '../physics/queries';
-import { Aim, Combat, Controller, Dead, Player, Status } from '../traits';
+import { findLedge, grabLedge, stepHang } from './ledge';
+import { Aim, Combat, Controller, Dead, Modifiers, Player, Status } from '../traits';
 
 const movers = createQuery(Player, Controller, Aim);
 
@@ -36,16 +37,43 @@ export function controller(world: World): void {
     const bubbled = (status?.bubbled ?? 0) > 0;
     // In a void well's grip the floor gives no purchase: air accel only, and no skidding to a stop.
     const pulled = (status?.pulled ?? 0) > 0;
+    // Lugging a forced swinger: no wall-kick.
+    const encumbered = (status?.encumbered ?? 0) > 0;
     if (bubbled) return;
+    const skip = (h: RayHit) => ignoreMover(entity as unknown as number, h);
+
+    if (ctrl.regrabLock > 0) ctrl.regrabLock -= 1;
+    // Holding a ledge replaces ordinary movement until an exit lets go.
+    if (ctrl.hangDir !== 0) {
+      stepHang(world, entity, ctrl, body, input, prev, skip);
+      return;
+    }
 
     const vel = body.getLinearVelocity();
     let vx = vel.x;
     let vy = vel.y;
     const pos = body.getPosition();
-    const skip = (h: RayHit) => ignoreMover(entity as unknown as number, h);
 
     const foot = raycastClosest(world, pos.x, pos.y, pos.x, pos.y - t.height * 0.52 - 0.1, skip);
     ctrl.grounded = !!foot && foot.ny > 0.55;
+
+    // Ledge grab: falling (or cresting) past a lip within the hands' reach, the fighter catches it
+    // when pushing toward it, or with any input but down/away when there is no floor to land on
+    // (the recovery case). Wall-sliding and the mantle assist cover lips lower down; hitstun, glue
+    // and a void well's pull all deny the grab.
+    if (!ctrl.grounded && ctrl.regrabLock === 0 && vy <= 3 && !stunned && !glued && !pulled && !input.down) {
+      const first = input.moveX > 0.2 ? 1 : input.moveX < -0.2 ? -1 : ctrl.facing;
+      const landing = raycastClosest(world, pos.x, pos.y, pos.x, pos.y - t.height / 2 - t.ledgeAutoGrabDrop, skip);
+      for (const dir of [first, -first]) {
+        const pushing = input.moveX * dir > 0.2;
+        if (!pushing && (landing || input.moveX * dir < -0.2)) continue;
+        const ledge = findLedge(world, pos, dir, t, skip);
+        if (ledge) {
+          grabLedge(world, entity, ctrl, body, ledge, dir);
+          return;
+        }
+      }
+    }
 
     // Riding a moving surface: run/decay relative to it, then add its velocity back.
     let carryX = 0;
@@ -104,13 +132,17 @@ export function controller(world: World): void {
     else if (ctrl.jumpBuffer > 0) ctrl.jumpBuffer -= 1;
 
     // One held-jump wall-jump per new slide contact (climbing).
-    if (becameSlide && input.jump && ctrl.lockTicks === 0 && ctrl.jumpBuffer <= 0) {
+    if (becameSlide && input.jump && ctrl.lockTicks === 0 && ctrl.jumpBuffer <= 0 && !encumbered) {
       ctrl.jumpBuffer = 1;
     }
 
     ctrl.ducking = input.down && ctrl.grounded;
-    const speed = t.runSpeed * (ctrl.ducking ? t.duckSpeedScale : 1) * (slowed ? 0.45 : 1) * (glued ? 0.15 : 1);
-    const accel = (ctrl.grounded && !pulled ? groundAccel : airAccel) * (glued ? 0.2 : 1);
+    // Pickup effects: a Sprint Charm quickens, a Lead Coat weighs down.
+    const mods = entity.get(Modifiers);
+    const speedMod = mods && mods.ticks > 0 ? mods.speed : 1;
+    const jumpMod = mods && mods.ticks > 0 ? mods.jump : 1;
+    const speed = t.runSpeed * (ctrl.ducking ? t.duckSpeedScale : 1) * (slowed ? 0.45 : 1) * (glued ? 0.15 : 1) * speedMod;
+    const accel = (ctrl.grounded && !pulled ? groundAccel : airAccel) * (glued ? 0.2 : 1) * speedMod;
 
     if (ctrl.lockTicks > 0) {
       ctrl.lockTicks -= 1;
@@ -129,13 +161,13 @@ export function controller(world: World): void {
     }
 
     if (ctrl.jumpBuffer > 0 && (ctrl.grounded || ctrl.coyote > 0)) {
-      vy = t.jumpSpeed;
+      vy = t.jumpSpeed * jumpMod;
       ctrl.jumpBuffer = 0;
       ctrl.coyote = 0;
       ctrl.grounded = false;
-    } else if (ctrl.jumpBuffer > 0 && ctrl.wallSliding) {
+    } else if (ctrl.jumpBuffer > 0 && ctrl.wallSliding && !encumbered) {
       vx = -ctrl.wallDir * t.wallJumpX;
-      vy = t.wallJumpY;
+      vy = t.wallJumpY * jumpMod;
       ctrl.lockTicks = t.wallJumpLockTicks;
       ctrl.jumpBuffer = 0;
       ctrl.wallSliding = false;

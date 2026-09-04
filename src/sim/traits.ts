@@ -23,6 +23,8 @@ export const replication = {
   Static: 'replicated',
   Kinematic: 'replicated',
   Status: 'replicated',
+  Stocks: 'replicated',
+  Modifiers: 'replicated',
   Snake: 'replicated',
   Bot: 'local',
   Shape: 'local',
@@ -47,14 +49,33 @@ export const Controller = trait({
   wallSliding: false,
   vx: 0,
   vy: 0,
+  /** Hanging from a ledge on this side (0 = not hanging), for this many ticks so far. */
+  hangDir: 0,
+  hangTicks: 0,
+  /** Ticks before another ledge can be grabbed after letting go (no stalling on the lip). */
+  regrabLock: 0,
 });
 export const Aim = trait({ x: 1, y: 0, holdTicks: 0 });
-export const Health = trait({ hp: 100, maxHp: 100 });
+/** percent: launch-mode damage, climbing from 0 with no ceiling; hp is untouched by ordinary hits there. */
+export const Health = trait({ hp: 100, maxHp: 100, percent: 0 });
+/** Launch mode: lives left this round, and the ticks until a fallen fighter drops back in (0 = not waiting). */
+export const Stocks = trait({ left: 0, respawnIn: 0 });
+/**
+ * A timed pickup effect on a fighter: run/jump multipliers, how much of every shove lands, whether
+ * projectiles bounce off, and the ticks left before everything snaps back to 1 / 0.
+ */
+export const Modifiers = trait({ speed: 1, jump: 1, knockbackTaken: 1, reflect: 0, ticks: 0, kind: 0 });
+
+/** Which pickup a Modifiers effect came from (for the figure's aura). */
+export const EffectKind = { None: 0, Lead: 1, Sprint: 2, Mirror: 3, Surge: 4 } as const;
 export const Combat = trait({
-  punchCooldown: 0,
-  punchActive: 0,
-  /** Ticks until a thrown punch actually lands; two fighters swinging inside this window clash instead. */
-  punchPending: 0,
+  strikeCooldown: 0,
+  /** Ticks the current strike is shown for (wind-up plus the swing). */
+  strikeActive: 0,
+  /** Ticks until a thrown strike actually lands; two fighters swinging inside this window clash instead. */
+  strikePending: 0,
+  /** StrikeKind of the strike in flight (0 when idle). */
+  strike: 0,
   /** Staggered (blocked or clashed): no attacks, no guard, no steering until it runs out. */
   stun: 0,
   blockMeter: 1,
@@ -68,6 +89,8 @@ export const Weapon = trait({
   pickupCooldown: 0,
   thrown: false,
   thrownHit: false,
+  /** Charge weapons: ticks the trigger has been held toward the big swing. */
+  charge: 0,
 });
 export const Projectile = trait({
   kind: 0,
@@ -86,6 +109,8 @@ export const Projectile = trait({
   phase: 0,
   /** Melee swings: bit per player slot already struck this swing, so one swing lands once per target. */
   hitMask: 0,
+  /** Knockback multiplier for this shot (a charged swing lands harder than a tap). */
+  power: 1,
 });
 export const Hazard = trait({
   kind: 0,
@@ -102,16 +127,25 @@ export const Anchor = trait({ x: 0, y: 0 });
 /** Render-facing geometry of the body's main fixture (derived, never authored). kind: ShapeKind. */
 export const Shape = trait({ kind: 0, hx: 0.5, hy: 0.5, r: 0 });
 export const Lifetime = trait({ ticksLeft: 0 });
-/** Ticks left on each affliction. pulled: in a void well's grip, so footing counts for nothing (controller.ts). */
+/**
+ * Ticks left on each affliction. pulled: in a void well's grip, so footing counts for nothing (controller.ts).
+ * invuln: fresh off a respawn (or a ledge in launch mode), hits and shoves pass straight through.
+ */
 export const Status = trait({
   burning: 0,
   slowed: 0,
   glued: 0,
   bubbled: 0,
   pulled: 0,
+  invuln: 0,
+  /** Lugging a forced swinger: no wall-kick while it lasts (refreshed every tick the weapon is held). */
+  encumbered: 0,
 });
-/** grace: ticks during which a freshly fired snake ignores whoever shot it (and sails ballistically while high). */
-export const Snake = trait({ hp: 0, giant: 0, flying: 0, biteCooldown: 0, grace: 0 });
+/**
+ * grace: ticks during which a freshly fired snake ignores whoever shot it (and sails ballistically while high).
+ * bomb: a walking mine rather than a snake; it goes off on contact, when shot, or when `fuse` runs out.
+ */
+export const Snake = trait({ hp: 0, giant: 0, flying: 0, biteCooldown: 0, grace: 0, bomb: 0, fuse: 0 });
 /** Bot brain state (local only). mode: BotMode. target: slot of the tracked enemy or -1. */
 export const Bot = trait({
   slot: 0,
@@ -147,7 +181,8 @@ export const Static = trait();
 export const Kinematic = trait();
 export const Solid = trait();
 export const Sensor = trait();
-export const Destructible = trait({ hp: 60, maxHp: 60 });
+/** lastHit: the fighter (entity id) whose blow last landed, or -1; a broken Surge Orb goes to them. */
+export const Destructible = trait({ hp: 60, maxHp: 60, lastHit: -1 });
 export const SpawnPoint = trait({ index: 0 });
 
 export const HeldBy = relation({ exclusive: true });
@@ -176,11 +211,26 @@ export const MatchState = trait({
   showWins: 1,
   maxHp: 100,
   round: 0,
+  /** MatchMode as an index: 0 standing, 1 launch. */
+  mode: 0,
+  /** Launch mode: stocks every fighter starts a round with. */
+  stocks: 0,
 });
 
+export const MatchModeIndex = { standing: 0, launch: 1 } as const;
+
+/** Unarmed strikes. Lead limbs (jab, front kick) are quick; rear limbs (cross, roundhouse) are the committed versions. */
+export const StrikeKind = {
+  None: 0,
+  Jab: 1,
+  Cross: 2,
+  FrontKick: 3,
+  Roundhouse: 4,
+} as const;
+
 export const SimClock = trait({ tick: 0, stepScale: 1 });
-/** Weapon rain: `wave` counts the opening volley still to fall (one per fighter, see spawner.ts). */
-export const DropState = trait({ nextDrop: 0, looseCount: 0, wave: 0, waveSize: 0 });
+/** Weapon rain: `wave` counts the opening volley still to fall (one per fighter, see spawner.ts); lastOrb: tick the last Surge Orb fell. */
+export const DropState = trait({ nextDrop: 0, looseCount: 0, wave: 0, waveSize: 0, lastOrb: -100000 });
 
 export const RoundPhase = {
   Loading: 0,
@@ -212,6 +262,10 @@ export const HazardKind = {
   Spikeball: 17,
   Crusher: 18,
   TriggerDrop: 19,
+  /** A planted bumper (Repulsor Puck): shoves whoever touches it away, then fades. */
+  Repulsor: 20,
+  /** A drifting Surge Orb: break it and the super is yours. */
+  SurgeOrb: 21,
 } as const;
 
 export const ProjectileKind = {

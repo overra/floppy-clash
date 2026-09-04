@@ -4,7 +4,7 @@ import { thinkBots } from './ai/bots';
 import { bindContext, getContext, makeContext, type SimContext } from './context';
 import type { SimEvents } from './events';
 import { blankInputs, normalizeInput, type PlayerInput } from './input';
-import { loadLevel, spawnPlayer } from './level/loader';
+import { applyLevelSwitches, loadLevel, spawnPlayer } from './level/loader';
 import type { LevelDef } from './level/schema';
 import { spawnPositions } from './level/spawns';
 import { assignNetId, createBoxBody, registerBody } from './physics/bodies';
@@ -23,7 +23,7 @@ import { hazardsStep } from './systems/hazards';
 import { physicsStep, syncTransforms } from './systems/syncTransforms';
 import { projectiles } from './weapons/projectiles';
 import { weapons } from './weapons/systems';
-import { DropState, MatchState, PrevTransform, RoundPhase, RoundState, SimClock, Transform } from './traits';
+import { DropState, MatchModeIndex, MatchState, PrevTransform, RoundPhase, RoundState, SimClock, Transform } from './traits';
 
 export type CreateSimOptions = {
   level: LevelDef;
@@ -48,10 +48,11 @@ export type SimHandle = {
 
 export function createSimWorld(opts: CreateSimOptions): SimHandle {
   const settings = mergeSettings(opts.settings);
+  const level = applyLevelSwitches(opts.level, settings);
   const ecs = createWorld();
   const g = cloneTuning().gravity;
   const physics = new PhysicsWorld({ gravity: { x: 0, y: -g } });
-  const ctx = makeContext(ecs, physics, opts.level, opts.seed, settings);
+  const ctx = makeContext(ecs, physics, level, opts.seed, settings);
   ctx.extraLevels = opts.extraLevels ?? [];
   bindContext(ecs, ctx);
   physics.on('begin-contact', (contact) => {
@@ -74,16 +75,18 @@ export function createSimWorld(opts: CreateSimOptions): SimHandle {
       showWins: settings.showWins ? 1 : 0,
       maxHp: settings.maxHp,
       round: 0,
+      mode: MatchModeIndex[settings.mode],
+      stocks: settings.stocks,
     }),
     SimClock({ tick: 0, stepScale: 1 }),
     DropState({ nextDrop: 0, looseCount: 0, wave: 0, waveSize: 0 }),
   );
 
-  loadLevel(ecs, opts.level);
+  loadLevel(ecs, level);
 
   if (opts.spawnPlayers !== false) {
     const count = Math.max(1, Math.min(4, settings.playerCount + settings.bots));
-    const spots = spawnPositions(opts.level.spawns, count, ctx.rng);
+    const spots = spawnPositions(level.spawns, count, ctx.rng, settings.fixedSpawns);
     for (let i = 0; i < count; i++) {
       const spawn = spots[i]!;
       spawnPlayer(ecs, i, spawn.x, spawn.y, settings.colors?.[i] ?? i, i);
