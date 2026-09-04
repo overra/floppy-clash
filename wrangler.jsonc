@@ -1,0 +1,32 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "floppy-clash",
+  "main": "worker/index.ts",
+  "compatibility_date": "2026-08-28",
+  "observability": { "enabled": true },
+  "vars": { "ENVIRONMENT": "production" },
+  // The Vite build is served as static assets; only the relay and API paths reach the Worker.
+  "assets": {
+    "directory": "./dist",
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": ["/ws/*", "/api/*"],
+  },
+  // One RoomDO per room code: the WebSocket relay every online match runs through.
+  "durable_objects": {
+    "bindings": [{ "name": "ROOM", "class_name": "RoomDO" }],
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["RoomDO"] }],
+  // Usage and performance statistics (docs/telemetry.md). Browsers post batches to /api/telemetry
+  // and the relay reports room lifecycle; each dataset is one table in the Analytics Engine SQL API.
+  // Datasets are created on first write, nothing to provision. Column layout: src/telemetry/points.ts.
+  "analytics_engine_datasets": [
+    { "binding": "SESSIONS", "dataset": "floppy_clash_sessions" },
+    { "binding": "MATCHES", "dataset": "floppy_clash_matches" },
+    { "binding": "PERF", "dataset": "floppy_clash_perf" },
+    { "binding": "ERRORS", "dataset": "floppy_clash_errors" },
+    { "binding": "RELAY", "dataset": "floppy_clash_relay" },
+  ],
+  // The /stats dashboard also needs three secrets (never in this file): STATS_KEY, CF_ACCOUNT_ID and
+  // CF_ANALYTICS_TOKEN — `npx wrangler secret put <NAME>`; see docs/telemetry.md.
+}

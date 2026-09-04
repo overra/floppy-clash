@@ -1,5 +1,6 @@
 import { builtInMatchLevels } from '../levels/catalog';
 import { DEFAULT_MAP, type PadMap } from '../input/remap';
+import { cleanPeerName, isRoomCode, normalizeRoomCode } from '../net/relay';
 import type { ItemRate, MatchMode } from '../sim/rules/settings';
 import { WEAPON_DEFS, weaponDisplayName } from '../sim/weapons/defs';
 import { DEFAULT_USER_SETTINGS, type UserSettings } from './settingsStore';
@@ -36,6 +37,26 @@ export type Seat = {
   name: string;
 };
 
+export type LobbyPeer = { id: number; name: string; slot: number; color: number; host: boolean; me: boolean };
+
+export type LobbyState = {
+  phase: 'idle' | 'connecting' | 'connected';
+  role: 'host' | 'client';
+  name: string;
+  peers: LobbyPeer[];
+  /** Round trip to the relay in ms; 0 until measured. */
+  ping: number;
+  /** The host is mid-match (and this peer is watching from the lobby until the next one). */
+  inMatch: boolean;
+  shareUrl: string;
+  /** Rules as the host has them, mirrored to clients so the lobby reads the same everywhere. */
+  mode: MatchMode;
+  maxHp: number;
+  stocks: number;
+  firstTo: number;
+  bots: number;
+};
+
 export type MenuState = {
   screen: Screen;
   seats: Seat[];
@@ -48,11 +69,18 @@ export type MenuState = {
   roomCode: string;
   chat: string[];
   draftChat: string;
+  lobby: LobbyState;
+  /** An online match is running behind the pause card (the sim does not stop for one player). */
+  online: boolean;
 };
 
 export type MenuActions = {
   [key: string]: (() => void) | ((payload?: string) => void) | undefined;
 };
+
+export function createLobbyState(): LobbyState {
+  return { phase: 'idle', role: 'client', name: '', peers: [], ping: 0, inMatch: false, shareUrl: '', mode: 'standing', maxHp: 100, stocks: 3, firstTo: 0, bots: 0 };
+}
 
 export function createMenuState(): MenuState {
   return {
@@ -67,6 +95,8 @@ export function createMenuState(): MenuState {
     roomCode: '',
     chat: [],
     draftChat: '',
+    lobby: createLobbyState(),
+    online: false,
   };
 }
 
@@ -202,6 +232,7 @@ export function collectSettings(card: HTMLElement, menus: MenuState, settings: U
     reduceBlood: chk('rb', settings.reduceBlood),
     lighting: chk('lit', settings.lighting),
     includeUserLevels: chk('usr', settings.includeUserLevels),
+    telemetry: chk('tel', settings.telemetry),
     renderer: sel('ren', settings.renderer) as UserSettings['renderer'],
     rotation: sel('rot', settings.rotation) as UserSettings['rotation'],
     sfx: num('sfx', settings.sfx),
@@ -313,11 +344,15 @@ export function renderMenus(
     renderSettings(card, state, settings, maps, actions);
   } else if (state.screen === 'pause') {
     card.classList.add('compact');
-    card.innerHTML = `<h2>Paused</h2><p>Take a breather. The brawl waits.</p>`;
+    if (state.online) {
+      card.innerHTML = `<h2>Online match</h2><p>The fight goes on while this is open — nobody else's game pauses for you.</p>`;
+    } else {
+      card.innerHTML = `<h2>Paused</h2><p>Take a breather. The brawl waits.</p>`;
+    }
     const row = document.createElement('div');
     row.className = 'menu-actions';
     row.append(btn('Resume', () => actions.resume?.(), 'primary'));
-    row.append(btn('Quit', () => actions.quit?.()));
+    row.append(btn(state.online ? (state.lobby.role === 'host' ? 'End match' : 'Leave match') : 'Quit', () => actions.quit?.()));
     card.append(row);
   } else if (state.screen === 'scoreboard') {
     card.innerHTML = `<h2 data-round-over="1">Round over</h2><p>Next level incoming…</p>`;
@@ -409,6 +444,11 @@ function renderSettings(
         </label>
         ${check('lit', '2D lighting (radiance cascades)', settings.lighting)}
       </div>
+      <h3>Privacy</h3>
+      <div class="form-grid">
+        ${check('tel', 'Share anonymous usage &amp; performance stats', settings.telemetry)}
+      </div>
+      <p class="dim">No account, no cookies, nothing that outlives this tab: which modes and levels get played, how long matches last, how smoothly frames run, and errors. Helps keep the game fast on the hardware people actually use.</p>
       <h3>Weapon toggles</h3>
       <div class="chips">${weaponBoxes}</div>
       <h3>Level toggles</h3>
@@ -446,72 +486,207 @@ function renderSettings(
   card.append(row);
 }
 
-function syncLobbyFields(card: HTMLElement, state: MenuState, settings: UserSettings): void {
-  const room = (card.querySelector('#room') as HTMLInputElement | null)?.value.trim().toUpperCase();
-  if (room) state.roomCode = room;
+/** Pull the lobby's editable fields back into state before an action reads them. */
+export function syncLobbyFields(card: HTMLElement, state: MenuState): void {
+  const room = card.querySelector('#room') as HTMLInputElement | null;
+  if (room) state.roomCode = normalizeRoomCode(room.value);
+  const name = card.querySelector('#name') as HTMLInputElement | null;
+  if (name) state.lobby.name = cleanPeerName(name.value, '');
   const hp = card.querySelector('#hp') as HTMLInputElement | null;
-  if (hp) state.maxHp = Number(hp.value) || settings.maxHp;
+  if (hp) state.lobby.maxHp = Math.max(1, Number(hp.value) || state.lobby.maxHp);
   const ft = card.querySelector('#ft') as HTMLInputElement | null;
-  if (ft) state.firstTo = Number(ft.value) || 0;
+  if (ft) state.lobby.firstTo = Math.max(0, Number(ft.value) || 0);
   const mode = card.querySelector('#mode') as HTMLSelectElement | null;
-  if (mode) state.mode = asMode(mode.value);
+  if (mode) state.lobby.mode = asMode(mode.value);
   const stocks = card.querySelector('#stocks') as HTMLInputElement | null;
-  if (stocks) state.stocks = Math.max(1, Math.min(10, Number(stocks.value) || settings.stocks));
+  if (stocks) state.lobby.stocks = Math.max(1, Math.min(10, Math.round(Number(stocks.value)) || state.lobby.stocks));
 }
 
-function renderLobby(card: HTMLElement, state: MenuState, settings: UserSettings, actions: MenuActions): void {
-  card.innerHTML = `<h2>Online lobby</h2>
-    <p>Host-authoritative WebRTC. Signaling is local (<code>npm run server</code>); live WAN STUN/TURN is a hardware path.</p>
-    <div class="form-grid">
-      <label class="row"><span>Room code</span><input id="room" value="${state.roomCode}" placeholder="ABC123" maxlength="8"></label>
-      <label class="row"><span>Mode</span><select id="mode">${options(MODES, state.mode)}</select></label>
-      <label class="row"><span>HP</span><input id="hp" type="number" value="${state.maxHp}"></label>
-      <label class="row"><span>Stocks</span><input id="stocks" type="number" min="1" max="10" value="${state.stocks}"></label>
-      <label class="row"><span>First to</span><input id="ft" type="number" value="${state.firstTo}"></label>
-    </div>
-    <p class="dim">Host-only: mode / HP / stocks / first-to apply when you Host. Chat is reliable-channel text.</p>`;
+function esc(text: string): string {
+  return text.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
+}
+
+function renderLobby(card: HTMLElement, state: MenuState, _settings: UserSettings, actions: MenuActions): void {
+  const lobby = state.lobby;
+  if (lobby.phase === 'idle') {
+    const linked = isRoomCode(state.roomCode);
+    card.innerHTML = `<h2>Online</h2>
+      <p>Host a room and share the code or link — friends join from anywhere. The host's game runs the match; everyone else plays through it.</p>
+      <div class="form-grid">
+        <label class="row"><span>Your name</span><input id="name" value="${esc(lobby.name)}" placeholder="Player" maxlength="20" autocomplete="nickname"></label>
+        <label class="row"><span>Room code</span><input id="room" value="${esc(state.roomCode)}" placeholder="leave blank to make one" maxlength="8" autocapitalize="characters" spellcheck="false"></label>
+      </div>
+      <p class="dim">Steer with the keyboard and mouse, or the first pad you press a button on.</p>`;
+    const room = card.querySelector('#room') as HTMLInputElement;
+    room.addEventListener('input', () => {
+      const at = room.selectionStart;
+      room.value = normalizeRoomCode(room.value);
+      room.setSelectionRange(at, at);
+    });
+    card.querySelector('#name')?.addEventListener('change', () => {
+      syncLobbyFields(card, state);
+      actions.lobbyChanged?.();
+    });
+    const row = document.createElement('div');
+    row.className = 'menu-actions';
+    const host = btn(
+      'Host',
+      () => {
+        syncLobbyFields(card, state);
+        actions.host?.();
+      },
+      linked ? '' : 'primary',
+    );
+    const join = btn(
+      'Join',
+      () => {
+        syncLobbyFields(card, state);
+        actions.joinRoom?.();
+      },
+      linked ? 'primary' : '',
+    );
+    join.id = 'join-room';
+    row.append(host, join, btn('Back', () => actions.back?.()));
+    card.append(row);
+    return;
+  }
+
+  if (lobby.phase === 'connecting') {
+    card.classList.add('compact');
+    card.innerHTML = `<h2>Connecting…</h2><p>Reaching room <b>${esc(state.roomCode)}</b>.</p>`;
+    const row = document.createElement('div');
+    row.className = 'menu-actions';
+    row.append(btn('Cancel', () => actions.leave?.()));
+    card.append(row);
+    return;
+  }
+
+  const isHost = lobby.role === 'host';
+  const hostPeer = lobby.peers.find((p) => p.host);
+  card.innerHTML = `<h2>Room <span class="room-code" id="room-code">${esc(state.roomCode)}</span></h2>
+    <p class="share-row">Invite: <code id="share-url">${esc(lobby.shareUrl)}</code></p>`;
+  const share = card.querySelector('.share-row')!;
+  const copy = btn('Copy link', () => actions.copyLink?.());
+  copy.classList.add('small');
+  share.append(copy);
+
+  // Seats: peers in slot order, then the host's bots, then open chairs.
+  const seats = document.createElement('div');
+  seats.className = 'seats';
+  const bots = isHost ? Math.min(state.bots, MAX_SEATS - lobby.peers.length) : lobby.bots;
+  let botsLeft = bots;
+  for (let i = 0; i < MAX_SEATS; i++) {
+    const peer = lobby.peers.find((p) => p.slot === i);
+    const bot = !peer && botsLeft > 0;
+    if (bot) botsLeft -= 1;
+    const seat = document.createElement('div');
+    seat.className = 'seat';
+    seat.dataset.seat = String(i);
+    seat.dataset.taken = peer ? '1' : '0';
+    if (bot) seat.dataset.bot = '1';
+    if (peer) seat.dataset.ready = '1';
+    if (peer?.me) seat.dataset.me = '1';
+    seat.style.setProperty('--c', peer || bot ? `var(--p${peer?.color ?? i})` : '#5a6170');
+    const face = document.createElement('div');
+    face.className = 'hud-face';
+    const name = document.createElement('div');
+    name.className = 'seat-name';
+    name.textContent = peer ? peer.name : bot ? `Bot ${i + 1}` : 'Open';
+    const status = document.createElement('div');
+    status.className = 'seat-status';
+    status.textContent = peer ? (peer.host ? 'HOST' : peer.me ? 'YOU' : 'READY') : bot ? 'CPU' : 'waiting for a player';
+    const tag = document.createElement('div');
+    tag.className = 'seat-pad';
+    tag.textContent = peer?.me && peer.host ? 'you' : '';
+    seat.append(face, name, status, tag);
+    seats.append(seat);
+  }
+  card.append(seats);
+
+  if (lobby.inMatch) {
+    const p = document.createElement('p');
+    p.className = 'lobby-status';
+    p.textContent = isHost ? 'Your match is still running.' : 'A match is in progress — you are in the next one.';
+    card.append(p);
+  }
+
+  if (isHost) {
+    const grid = document.createElement('div');
+    grid.className = 'form-grid';
+    grid.innerHTML = `
+      <label class="row"><span>Mode</span><select id="mode">${options(MODES, lobby.mode)}</select></label>
+      <label class="row"><span>HP</span><input id="hp" type="number" min="1" value="${lobby.maxHp}"></label>
+      <label class="row"><span>Stocks <small>(launch)</small></span><input id="stocks" type="number" min="1" max="10" value="${lobby.stocks}"></label>
+      <label class="row"><span>First to <small>(0 = endless)</small></span><input id="ft" type="number" min="0" value="${lobby.firstTo}"></label>`;
+    card.append(grid);
+    for (const id of ['#mode', '#hp', '#stocks', '#ft']) {
+      grid.querySelector(id)?.addEventListener('change', () => {
+        syncLobbyFields(card, state);
+        actions.lobbyChanged?.();
+      });
+    }
+  } else {
+    const rules = document.createElement('p');
+    rules.className = 'dim';
+    const ruleset = lobby.mode === 'launch' ? `Launch · ${lobby.stocks} stock${lobby.stocks === 1 ? '' : 's'}` : `HP ${lobby.maxHp}`;
+    rules.textContent = `${ruleset} · first to ${lobby.firstTo || 'endless'} · ${bots} bot${bots === 1 ? '' : 's'} · ${hostPeer ? `${hostPeer.name} starts the match` : 'waiting for the host'}`;
+    card.append(rules);
+  }
+
   const chat = document.createElement('div');
   chat.className = 'chat-log';
-  chat.textContent = state.chat.join('\n') || '(no messages)';
-  const row = document.createElement('div');
-  row.className = 'chat-row';
+  chat.textContent = state.chat.join('\n') || '(say hi)';
+  const chatRow = document.createElement('div');
+  chatRow.className = 'chat-row';
   const input = document.createElement('input');
   input.id = 'chat';
   input.placeholder = 'Type a message';
+  input.maxLength = 200;
   input.value = state.draftChat;
-  row.append(input);
-  row.append(
-    btn('Send', () => {
-      const text = input.value.trim();
-      if (!text) return;
-      syncLobbyFields(card, state, settings);
-      state.draftChat = '';
-      actions.chat?.(text);
-    }),
-  );
-  card.append(chat, row);
-  const actionsRow = document.createElement('div');
-  actionsRow.className = 'menu-actions';
-  actionsRow.append(
-    btn(
-      'Host',
-      () => {
-        syncLobbyFields(card, state, settings);
-        if (!state.roomCode) state.roomCode = Math.random().toString(36).slice(2, 8).toUpperCase();
-        actions.host?.();
-      },
-      'primary',
-    ),
-  );
-  actionsRow.append(
-    btn('Join', () => {
-      syncLobbyFields(card, state, settings);
-      state.roomCode = state.roomCode || 'JOINME';
-      actions.joinRoom?.();
-    }),
-  );
-  actionsRow.append(btn('Back', () => actions.back?.()));
-  card.append(actionsRow);
+  input.addEventListener('input', () => {
+    state.draftChat = input.value;
+  });
+  const sendChat = () => {
+    const text = input.value.trim();
+    if (!text) return;
+    syncLobbyFields(card, state);
+    state.draftChat = '';
+    actions.chat?.(text);
+  };
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      sendChat();
+    }
+  });
+  chatRow.append(input, btn('Send', sendChat));
+  card.append(chat, chatRow);
+  chat.scrollTop = chat.scrollHeight;
+
+  const ping = document.createElement('p');
+  ping.className = 'dim';
+  ping.innerHTML = `Relay ping <span id="ping">${lobby.ping || '–'}</span> ms · ${lobby.peers.length} of ${MAX_SEATS} connected`;
+  card.append(ping);
+
+  const row = document.createElement('div');
+  row.className = 'menu-actions';
+  if (isHost) {
+    row.append(
+      btn(
+        lobby.inMatch ? 'Back to match' : 'Start',
+        () => {
+          syncLobbyFields(card, state);
+          actions.startOnline?.();
+        },
+        'primary',
+      ),
+    );
+    const botsBtn = btn(`Bots: ${bots}`, () => actions.cycleBots?.());
+    botsBtn.id = 'cycle-bots';
+    row.append(botsBtn);
+  }
+  row.append(btn('Leave', () => actions.leave?.()));
+  card.append(row);
 }
 
 function btn(label: string, onClick: () => void, variant = ''): HTMLButtonElement {

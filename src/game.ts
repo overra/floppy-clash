@@ -33,8 +33,7 @@ import {
 } from './ui/menus';
 import { activate, focusedIn, moveFocus, nudge, setFocus, defaultFocus, type NavDir } from './ui/padNav';
 import { DEFAULT_MAP, loadMaps, saveMap } from './input/remap';
-import { gymLevel } from './levels/catalog';
-import { matchLevelPool } from './levels/catalog';
+import { builtInMatchLevels, gymLevel, matchLevelPool } from './levels/catalog';
 import { addShake, createCamera, worldToScreen } from './render/camera';
 import { buildFrame } from './render/buildFrame';
 import type { RenderFrame } from './render/frame';
@@ -42,7 +41,7 @@ import { createCanvasRenderer, type Renderer } from './render/canvas/renderer';
 import { gpuFailureReason, tryCreateGpuRenderer } from './render/gpu/renderer';
 import { createDecalLayerPool, snapDecalToSurface, type PersistentDecalLayer } from './render/fx/decals';
 import { createParticles, emitFromEvents, stepParticles, type Decal } from './render/fx/particles';
-import { blankInputs, type PlayerInput } from './sim/input';
+import { blankInputs, EMPTY_INPUT, type PlayerInput } from './sim/input';
 import { Bot, Combat, Dead, Health, Held, HeldBy, Loose, MatchModeIndex, MatchState, Player, Projectile, RoundPhase, RoundState, Transform, Weapon } from './sim/traits';
 import type { MatchMode } from './sim/rules/settings';
 import { WEAPON_BY_ID, weaponByIndex } from './sim/weapons/defs';
@@ -51,12 +50,19 @@ import { spawnWeapon } from './sim/systems/weapons';
 import { tuning } from './sim/tuning';
 import { loadSettings, saveSettings, type UserSettings } from './ui/settingsStore';
 import { loadStats, recordKos, recordMatch } from './ui/statsStore';
-import { hostContentMessages, lateJoinSnapshotMessage } from './net/protocol';
+import { packInput, unpackInput, type MatchRules, type MatchSlot, type NetMessage, type PackedInput } from './net/protocol';
+import { connectRoom, RoomError, shareUrl, type RoomSession } from './net/room';
+import { cleanPeerName, isRoomCode, MAX_PEERS, normalizeRoomCode, randomRoomCode } from './net/relay';
+import { acceptFrames, checkHash, clientSteps, createOnlineMatch, HASH_EVERY_TICKS, pacingScale, type OnlineMatch } from './net/online';
+import { restoreWorld } from './sim/snapshot';
 import { createEditorState, fromHash, loadLibrary, type EditorState } from './editor/editor';
 import { mountEditor } from './editor/view';
-import { createLocalLoopback } from './net/transport';
 import { createRecorder } from './input/replay';
-import type { LevelDef } from './sim/level/schema';
+import { parseLevel, type LevelDef } from './sim/level/schema';
+import { createTelemetry, privacySignalOptOut } from './telemetry/client';
+import { describeDevice } from './telemetry/device';
+import { createPerfAggregator } from './telemetry/perf';
+import type { GameMode, MatchOutcome, MatchRole } from './telemetry/schema';
 
 export type Game = {
   start: () => Promise<void>;
@@ -67,6 +73,20 @@ type FloppyDebug = {
   rendererKind: 'gpu' | 'canvas';
   lastHash: string;
   tick: number;
+  /** The room this browser is in and how its mirror of the match is doing; null when offline. */
+  online: {
+    code: string;
+    role: 'host' | 'client';
+    peerId: number;
+    peers: number;
+    rtt: number;
+    inMatch: boolean;
+    localSlot: number;
+    buffered: number;
+    lastHashOk: number;
+    desync: boolean;
+    bytesOut: number;
+  } | null;
   countdown: number;
   physicsMs: number;
   gpuMs: number;
@@ -229,13 +249,19 @@ export function createGame(root: HTMLElement): Game {
   let paused = false;
   let editor: EditorState | null = null;
   let pane: Pane | null = null;
-  const net = createLocalLoopback();
   let extraLevels: LevelDef[] = [];
   let debugHud = false;
   let debugDraw = false;
   let freezeCam = false;
   let humanCount = 1;
-  const slotName = (slot: number) => (slot >= humanCount ? `Bot ${slot + 1}` : `P${slot + 1}`);
+  /** The relay connection while in an online room (lobby or match). */
+  let room: RoomSession | null = null;
+  /** Bookkeeping for the online match this browser is part of (host or client). */
+  let online: OnlineMatch | null = null;
+  let pingTimer = 0;
+  const NAME_KEY = 'floppy-clash.name';
+  menus.lobby.name = cleanPeerName(localStorage.getItem(NAME_KEY), '');
+  const slotName = (slot: number) => online?.names[slot] ?? (slot >= humanCount ? `Bot ${slot + 1}` : `P${slot + 1}`);
   // Debug: hold the sim still (rendering continues) and single-step it from the console.
   let frozen = false;
   let frozenSteps = 0;
@@ -257,6 +283,115 @@ export function createGame(root: HTMLElement): Game {
   let hudShown: boolean | null = null;
   let stressTarget = Number(new URLSearchParams(window.location.search).get('stress') ?? 0) || 0;
   const stressRng = makeStressRng();
+
+  // -----------------------------------------------------------------------------------------------
+  // Telemetry: anonymous usage and frame-pacing statistics, batched to the Worker (src/telemetry,
+  // worker/telemetry.ts) and read back on /stats. Everything below is fire-and-forget; the settings
+  // toggle and the browser's Global Privacy Control signal both switch it off.
+  const telemetry = createTelemetry({
+    enabled: settings.telemetry && !privacySignalOptOut(),
+    ctx: describeDevice(),
+    context: () => ({ context: tracked ? tracked.mode : 'menu', renderer: rendererKind }),
+  });
+  const perfAgg = createPerfAggregator();
+  /** How often a perf summary goes out during a long match (endless mode never "ends"). */
+  const PERF_EVERY_MS = 60_000;
+  /** The match this browser is currently reporting on; null between matches. */
+  let tracked: {
+    mode: GameMode;
+    role: MatchRole;
+    level: string;
+    humans: number;
+    bots: number;
+    firstTo: number;
+    maxHp: number;
+    startedAt: number;
+    lastPerfAt: number;
+    kills: number;
+    resyncs: number;
+    longFramesAt: number;
+  } | null = null;
+
+  function trackMatchStart(level: LevelDef, humans: number, bots: number, firstTo: number, maxHp: number) {
+    // A match started over a running one (rematch, editor playtest) ends the old one first.
+    if (tracked) trackMatchEnd('restarted');
+    const now = performance.now();
+    const builtIn = builtInMatchLevels().some((l) => l.id === level.id) || level.id === gymLevel.id;
+    tracked = {
+      mode: online ? 'online' : humans === 1 && bots > 0 ? 'solo' : 'local',
+      role: online ? online.role : 'offline',
+      level: builtIn ? level.id : 'custom',
+      humans,
+      bots,
+      firstTo,
+      maxHp,
+      startedAt: now,
+      lastPerfAt: now,
+      kills: 0,
+      resyncs: 0,
+      longFramesAt: longFrames,
+    };
+    perfAgg.reset();
+    telemetry.match({ phase: 'start', ...matchFields(), seconds: 0, rounds: 0, kills: 0, won: false, longFrames: 0 });
+  }
+
+  /** Close the tracked match; `won` only means anything for a match the rules finished. */
+  function trackMatchEnd(outcome: MatchOutcome, won = false) {
+    if (!tracked) return;
+    const t = tracked;
+    telemetry.match({
+      phase: 'end',
+      ...matchFields(),
+      outcome,
+      seconds: Math.round((performance.now() - t.startedAt) / 1000),
+      rounds: sim?.ecs.get(MatchState)?.round ?? 0,
+      kills: t.kills,
+      won,
+      longFrames: Math.max(0, longFrames - t.longFramesAt),
+    });
+    flushPerf('end');
+    tracked = null;
+  }
+
+  function matchFields() {
+    const t = tracked!;
+    return { mode: t.mode, role: t.role, level: t.level, renderer: rendererKind, humans: t.humans, bots: t.bots, firstTo: t.firstTo, maxHp: t.maxHp };
+  }
+
+  /** Ship the frame-pacing summary gathered since the last one; a second of frames is the minimum worth sending. */
+  function flushPerf(reason: 'periodic' | 'end') {
+    const s = perfAgg.summary();
+    perfAgg.reset();
+    if (!tracked) return;
+    tracked.lastPerfAt = performance.now();
+    if (!s || s.frames < 60) return;
+    telemetry.perf({
+      mode: tracked.mode,
+      role: tracked.role,
+      renderer: rendererKind,
+      reason,
+      lighting: settings.lighting,
+      frames: s.frames,
+      seconds: s.seconds,
+      p50: s.p50,
+      p95: s.p95,
+      p99: s.p99,
+      max: s.max,
+      long12: s.long12,
+      long20: s.long20,
+      long50: s.long50,
+      sim: s.stages.sim ?? 0,
+      build: s.stages.build ?? 0,
+      render: s.stages.render ?? 0,
+      gpu: s.stages.gpu ?? 0,
+      particles: s.stages.particles ?? 0,
+      resScale: renderer?.resolutionScale ?? 1,
+      players: tracked.humans + tracked.bots,
+      rtt: room?.rtt ?? 0,
+      desyncs: tracked.resyncs,
+      heap: usedHeapMb(),
+    });
+  }
 
   // Attract mode: a bots-only brawl plays behind the menus so the title screen is never a dead panel.
   let demo: SimHandle | null = null;
@@ -348,8 +483,9 @@ export function createGame(root: HTMLElement): Game {
           show();
         },
         cycleBots: () => {
-          const cap = maxBots(menus.seats);
+          const cap = room ? Math.max(0, MAX_PEERS - room.peers.size) : maxBots(menus.seats);
           menus.bots = cap > 0 ? (menus.bots + 1) % (cap + 1) : 0;
+          if (room?.role === 'host') broadcastLobby();
           show();
         },
         online: () => {
@@ -374,6 +510,7 @@ export function createGame(root: HTMLElement): Game {
           menus.stocks = settings.stocks;
           mixer.sfx = settings.sfx;
           mixer.music = settings.music;
+          telemetry.setEnabled(settings.telemetry && !privacySignalOptOut());
           menus.screen = 'menu';
           show();
         },
@@ -386,40 +523,32 @@ export function createGame(root: HTMLElement): Game {
         },
         resume: () => setPaused(false),
         quit: () => quitToMenu(),
-        host: () => {
-          if (!menus.roomCode) menus.roomCode = Math.random().toString(36).slice(2, 8).toUpperCase();
-          settings.maxHp = menus.maxHp;
-          settings.firstTo = menus.firstTo;
-          settings.mode = menus.mode;
-          settings.stocks = menus.stocks;
-          saveSettings(settings);
-          const rules = settings.mode === 'launch' ? `launch, ${settings.stocks} stocks` : `HP ${menus.maxHp}`;
-          menus.chat.push(`* hosted room ${menus.roomCode} (${rules}, first-to ${menus.firstTo || 'endless'})`);
-          for (const msg of hostContentMessages(
-            JSON.stringify({
-              mode: settings.mode,
-              maxHp: settings.maxHp,
-              stocks: settings.stocks,
-              firstTo: settings.firstTo,
-              items: settings.items,
-              hazards: settings.hazards,
-              fixedSpawns: settings.fixedSpawns,
-            }),
-            JSON.stringify({ id: 'host-level' }),
-          )) {
-            net.send(msg);
-          }
-          show();
+        host: () => void joinOnline('host'),
+        joinRoom: () => void joinOnline('client'),
+        leave: () => leaveRoom(),
+        startOnline: () => void startOnlineMatch(),
+        lobbyChanged: () => {
+          localStorage.setItem(NAME_KEY, menus.lobby.name);
+          if (room?.role === 'host') broadcastLobby();
         },
-        joinRoom: () => {
-          menus.roomCode = menus.roomCode || 'JOINME';
-          menus.chat.push(`* joined ${menus.roomCode}`);
-          show();
+        copyLink: () => {
+          const url = menus.lobby.shareUrl;
+          if (!url) return;
+          void navigator.clipboard?.writeText(url).then(
+            () => {
+              menus.notice = 'Invite link copied.';
+              show();
+            },
+            () => undefined,
+          );
         },
         chat: (text?: string) => {
-          if (!text) return;
-          menus.chat.push(`you: ${text}`);
-          net.send({ t: 'chat', from: 'you', text });
+          if (!text || !room) return;
+          const from = menus.lobby.name || 'you';
+          pushChat(`${from}: ${text}`);
+          const msg: NetMessage = { t: 'chat', from, text };
+          if (room.role === 'host') room.send('all', msg);
+          else room.send('host', msg);
           show();
         },
       },
@@ -505,6 +634,11 @@ export function createGame(root: HTMLElement): Game {
   /** Same seats, same rules, fresh arena and seed: the "play again" the match-over card promises. */
   function rematch() {
     if (!sim) return;
+    if (online) {
+      // Only the host deals the next match; clients wait for its start message.
+      if (online.role === 'host') void startOnlineMatch();
+      return;
+    }
     const bots = sim.players().filter((p) => p.has(Bot)).length;
     const ms = sim.ecs.get(MatchState);
     const colors = sim.players().map((p) => p.get(Player)?.color ?? 0);
@@ -534,6 +668,8 @@ export function createGame(root: HTMLElement): Game {
     /** Input device per human slot; omitted for editor / debug launches (slot k <- pad k, or the keyboard). */
     devices?: string[];
     colors?: number[];
+    /** Online: the host's rules, so every mirror of the match is created identically. */
+    rules?: MatchRules;
   };
 
   function startSim(level: LevelDef, opts: StartOpts) {
@@ -541,10 +677,11 @@ export function createGame(root: HTMLElement): Game {
     mixer.startMusic();
     const seed = opts.seed ?? (Math.random() * 1e9) | 0;
     humanCount = opts.playerCount;
-    slotDevices = opts.devices ? opts.devices.slice(0, opts.playerCount) : [];
+    slotDevices = opts.devices ? opts.devices.slice(0, Math.max(opts.playerCount, opts.devices.length)) : [];
     recorder = createRecorder(seed, level.id);
     stopDemo();
     sim?.destroy();
+    const rules = opts.rules;
     sim = createSimWorld({
       level,
       seed,
@@ -552,17 +689,17 @@ export function createGame(root: HTMLElement): Game {
       settings: {
         playerCount: opts.playerCount,
         bots: opts.bots,
-        mode: opts.mode ?? settings.mode,
-        maxHp: opts.maxHp ?? settings.maxHp,
-        stocks: opts.stocks ?? settings.stocks,
-        firstTo: opts.firstTo ?? settings.firstTo,
-        items: settings.items,
-        hazards: settings.hazards,
-        fixedSpawns: settings.fixedSpawns,
-        enabledWeapons: settings.enabledWeapons,
-        enabledLevels: settings.enabledLevels,
-        rotation: settings.rotation,
-        showWins: settings.showWins,
+        mode: opts.mode ?? rules?.mode ?? settings.mode,
+        maxHp: opts.maxHp ?? rules?.maxHp ?? settings.maxHp,
+        stocks: opts.stocks ?? rules?.stocks ?? settings.stocks,
+        firstTo: opts.firstTo ?? rules?.firstTo ?? settings.firstTo,
+        items: rules?.items ?? settings.items,
+        hazards: rules?.hazards ?? settings.hazards,
+        fixedSpawns: rules?.fixedSpawns ?? settings.fixedSpawns,
+        enabledWeapons: rules?.enabledWeapons ?? settings.enabledWeapons,
+        enabledLevels: rules?.enabledLevels ?? settings.enabledLevels,
+        rotation: rules?.rotation ?? settings.rotation,
+        showWins: rules?.showWins ?? settings.showWins,
         colors: opts.colors,
       },
     });
@@ -580,9 +717,12 @@ export function createGame(root: HTMLElement): Game {
     decalLayer = decalPool.acquire(level.bounds);
     renderedLevel = level;
     resetBanner();
+    paused = false;
+    hitStop = 0;
     menus.screen = 'play';
     show();
-    net.send(lateJoinSnapshotMessage(sim.snapshot()));
+    const ms = sim.ecs.get(MatchState);
+    trackMatchStart(level, opts.playerCount, opts.bots, ms?.firstTo ?? opts.firstTo ?? settings.firstTo, ms?.maxHp ?? opts.maxHp ?? settings.maxHp);
   }
 
   // Debug/automation: per-slot input overrides that hold for a number of sim ticks, so browser
@@ -609,6 +749,22 @@ export function createGame(root: HTMLElement): Game {
     },
     get tick() {
       return sim?.ctx.tick ?? 0;
+    },
+    get online() {
+      if (!room) return null;
+      return {
+        code: room.code,
+        role: room.role,
+        peerId: room.id,
+        peers: room.peers.size,
+        rtt: room.rtt,
+        inMatch: !!online,
+        localSlot: online?.localSlot ?? -1,
+        buffered: online?.inbox.length ?? 0,
+        lastHashOk: online?.lastHashOk ?? 0,
+        desync: online?.desync ?? false,
+        bytesOut: room.bytesOut,
+      };
     },
     get countdown() {
       return lastFrame?.hud.countdown ?? 0;
@@ -772,6 +928,17 @@ export function createGame(root: HTMLElement): Game {
   }
 
   function quitToMenu() {
+    if (online) {
+      // Online the match belongs to the room: the host ends it for everyone, a client just steps out
+      // of it and waits in the lobby for the next one.
+      if (online.role === 'host') endOnlineMatch('the host ended it');
+      else {
+        room?.send('host', { t: 'input', input: packInput(EMPTY_INPUT) });
+        endOnlineLocal('you left the match', 'left');
+      }
+      return;
+    }
+    trackMatchEnd('quit');
     sim?.destroy();
     sim = null;
     paused = false;
@@ -781,12 +948,347 @@ export function createGame(root: HTMLElement): Game {
     show();
   }
 
+  // -----------------------------------------------------------------------------------------------
+  // Online play. The host's browser runs the authoritative sim and every client mirrors it by
+  // stepping the exact inputs the host stepped (src/net/online.ts). The relay — one Durable Object
+  // per room code — only forwards messages; it knows nothing about the game.
+
+  function pushChat(line: string) {
+    menus.chat.push(line);
+    if (menus.chat.length > 60) menus.chat.splice(0, menus.chat.length - 60);
+  }
+
+  /** Fighter slots for the room: the host first, then everyone else in join order. */
+  function roomSlots(): MatchSlot[] {
+    if (!room) return [];
+    const hostId = room.hostId;
+    const peers = [...room.peers.values()].sort((a, b) => (a.id === hostId ? -1 : b.id === hostId ? 1 : a.id - b.id));
+    return peers.slice(0, MAX_PEERS).map((p, i) => ({ peer: p.id, name: p.name, color: i }));
+  }
+
+  function refreshLobbyPeers(peers?: { id: number; name: string; slot: number; color: number }[]) {
+    const lobby = menus.lobby;
+    if (!room) {
+      lobby.peers = [];
+      return;
+    }
+    const me = room.id;
+    const hostId = room.hostId;
+    const list = peers ?? roomSlots().map((s, i) => ({ id: s.peer!, name: s.name, slot: i, color: s.color }));
+    lobby.peers = list.map((p) => ({ ...p, host: p.id === hostId, me: p.id === me }));
+  }
+
+  /** Host: tell the room what the lobby looks like (peers, rules, whether a match is running). */
+  function broadcastLobby() {
+    if (!room || room.role !== 'host') return;
+    refreshLobbyPeers();
+    const lobby = menus.lobby;
+    lobby.bots = Math.min(menus.bots, Math.max(0, MAX_PEERS - room.peers.size));
+    lobby.inMatch = !!sim && !!online;
+    room.send('all', {
+      t: 'lobby',
+      peers: lobby.peers.map(({ id, name, slot, color }) => ({ id, name, slot, color })),
+      mode: lobby.mode,
+      maxHp: lobby.maxHp,
+      stocks: lobby.stocks,
+      firstTo: lobby.firstTo,
+      bots: lobby.bots,
+      inMatch: lobby.inMatch,
+    });
+    if (menus.screen === 'lobby') show();
+  }
+
+  async function joinOnline(role: 'host' | 'client') {
+    if (room) return;
+    const lobby = menus.lobby;
+    lobby.name = lobby.name || `Player ${Math.floor(100 + Math.random() * 900)}`;
+    localStorage.setItem(NAME_KEY, lobby.name);
+    let code = normalizeRoomCode(menus.roomCode);
+    if (role === 'host' && !code) code = randomRoomCode();
+    if (!isRoomCode(code)) {
+      menus.notice = role === 'host' ? 'Room codes are 4–8 letters and digits.' : 'Enter the room code your host shared (4–8 letters and digits).';
+      show();
+      return;
+    }
+    menus.roomCode = code;
+    lobby.phase = 'connecting';
+    lobby.role = role;
+    menus.notice = '';
+    show();
+    try {
+      const session = await connectRoom({ code, role, name: lobby.name });
+      if (lobby.phase !== 'connecting') {
+        // Cancelled while the socket was opening.
+        session.close();
+        return;
+      }
+      room = session;
+      wireRoom(session);
+      lobby.phase = 'connected';
+      lobby.shareUrl = shareUrl(code);
+      lobby.mode = settings.mode;
+      lobby.maxHp = settings.maxHp;
+      lobby.stocks = settings.stocks;
+      lobby.firstTo = settings.firstTo;
+      lobby.ping = 0;
+      menus.chat = [];
+      history.replaceState(null, '', shareUrl(code));
+      pushChat(role === 'host' ? `* you opened room ${code} — share the link or the code` : `* you joined room ${code}`);
+      refreshLobbyPeers();
+      if (role === 'host') broadcastLobby();
+      pingTimer = window.setInterval(() => {
+        if (!room) return;
+        lobby.ping = room.rtt;
+        const el = menusEl.querySelector('#ping');
+        if (el) el.textContent = String(lobby.ping || '–');
+      }, 2000);
+    } catch (err) {
+      lobby.phase = 'idle';
+      menus.notice = err instanceof RoomError ? err.message : 'Could not connect to the room.';
+      telemetry.error({ kind: 'room', message: err instanceof RoomError ? err.code : 'unknown', source: role, context: 'menu', renderer: rendererKind });
+    }
+    show();
+  }
+
+  function wireRoom(session: RoomSession) {
+    session.on('peer', (peer) => {
+      pushChat(`* ${peer.name} joined`);
+      if (session.role === 'host') broadcastLobby();
+      else refreshLobbyPeers();
+      if (menus.screen === 'lobby') show();
+    });
+    session.on('left', (id) => {
+      const slot = online?.slots.findIndex((s) => s.peer === id) ?? -1;
+      const name = (slot >= 0 ? online?.names[slot] : undefined) ?? menus.lobby.peers.find((p) => p.id === id)?.name ?? 'someone';
+      pushChat(`* ${name} left`);
+      if (online?.role === 'host' && slot >= 0) online.remote.clear(slot);
+      if (session.role === 'host') broadcastLobby();
+      else refreshLobbyPeers();
+      if (menus.screen === 'lobby') show();
+    });
+    session.on('closed', (reason) => {
+      teardownRoom('disconnected');
+      menus.notice = reason === 'host-left' ? 'The host left the room.' : 'Connection to the room was lost.';
+      menus.screen = 'lobby';
+      show();
+    });
+    session.on('message', onNetMessage);
+  }
+
+  /** `outcome` is how a match still running ends up in the statistics. */
+  function teardownRoom(outcome: MatchOutcome = 'left') {
+    window.clearInterval(pingTimer);
+    room?.close();
+    room = null;
+    online = null;
+    menus.online = false;
+    trackMatchEnd(outcome);
+    sim?.destroy();
+    sim = null;
+    paused = false;
+    slotDevices = [];
+    resetBanner();
+    menus.lobby.phase = 'idle';
+    menus.lobby.peers = [];
+    menus.lobby.inMatch = false;
+    menus.chat = [];
+    history.replaceState(null, '', location.pathname);
+  }
+
+  function leaveRoom() {
+    teardownRoom();
+    menus.screen = 'lobby';
+    show();
+  }
+
+  /** Host: deal a match to everyone in the room (also the rematch). */
+  async function startOnlineMatch() {
+    if (!room || room.role !== 'host' || matchStarting) return;
+    if (sim && online && !matchIsOver() && menus.screen === 'lobby') {
+      // "Back to match": the host only peeked at the lobby.
+      menus.screen = 'play';
+      show();
+      return;
+    }
+    matchStarting = true;
+    try {
+      extraLevels = settings.includeUserLevels ? await loadLibrary().catch(() => []) : [];
+      const slots = roomSlots();
+      const bots = Math.min(menus.bots, MAX_PEERS - slots.length);
+      for (let i = 0; i < bots; i++) slots.push({ peer: null, name: `Bot ${slots.length + 1}`, color: slots.length });
+      const rules: MatchRules = {
+        mode: menus.lobby.mode,
+        maxHp: menus.lobby.maxHp,
+        stocks: menus.lobby.stocks,
+        firstTo: menus.lobby.firstTo,
+        showWins: settings.showWins,
+        rotation: settings.rotation,
+        items: settings.items,
+        hazards: settings.hazards,
+        fixedSpawns: settings.fixedSpawns,
+        enabledWeapons: settings.enabledWeapons,
+        enabledLevels: settings.enabledLevels,
+      };
+      const pool = matchLevelPool(rules.enabledLevels, extraLevels, rules.mode);
+      const level = rules.rotation === 'ordered' ? (pool[0] ?? gymLevel) : (pool[Math.floor(Math.random() * pool.length)] ?? gymLevel);
+      const seed = (Math.random() * 1e9) | 0;
+      room.send('all', { t: 'start', seed, levelId: level.id, slots, rules, extraLevels });
+      beginOnlineMatch('host', seed, level, slots, rules);
+      broadcastLobby();
+    } finally {
+      matchStarting = false;
+    }
+  }
+
+  /** Everyone: build this browser's mirror of the match. */
+  function beginOnlineMatch(role: 'host' | 'client', seed: number, level: LevelDef, slots: MatchSlot[], rules: MatchRules) {
+    if (!room) return;
+    const me = room.id;
+    online = createOnlineMatch(role, slots, me, (input) => room?.send('host', { t: 'input', input }));
+    menus.online = true;
+    menus.lobby.inMatch = true;
+    const humans = slots.filter((s) => s.peer !== null).length;
+    startSim(level, {
+      playerCount: humans,
+      bots: slots.length - humans,
+      seed,
+      mode: rules.mode,
+      maxHp: rules.maxHp,
+      stocks: rules.stocks,
+      firstTo: rules.firstTo,
+      devices: slots.map((s) => (s.peer === me ? 'auto' : '')),
+      colors: slots.map((s) => s.color),
+      rules,
+    });
+    if (sim) {
+      online.outboxStart = sim.ctx.tick;
+      online.nextTick = sim.ctx.tick;
+    }
+  }
+
+  /** Host: stop the match for everyone; the room stays open. */
+  function endOnlineMatch(reason: string) {
+    if (room?.role === 'host') room.send('all', { t: 'end', reason });
+    endOnlineLocal(reason, 'host-ended');
+    if (room?.role === 'host') broadcastLobby();
+  }
+
+  /** Drop this browser's copy of the match and go back to the lobby. */
+  function endOnlineLocal(reason: string, outcome: MatchOutcome) {
+    trackMatchEnd(outcome);
+    sim?.destroy();
+    sim = null;
+    online = null;
+    menus.online = false;
+    paused = false;
+    hitStop = 0;
+    slotDevices = [];
+    resetBanner();
+    if (reason) pushChat(`* match over — ${reason}`);
+    menus.screen = 'lobby';
+    show();
+  }
+
+  /** Client: my world disagrees with the host's; ask for its state (at most once every few seconds). */
+  function requestResync(why: string) {
+    if (!online || !room || !sim) return;
+    const now = performance.now();
+    online.desync = true;
+    if (now - online.lastResyncAt < 3000) return;
+    online.lastResyncAt = now;
+    if (tracked) tracked.resyncs += 1;
+    telemetry.error({ kind: 'desync', message: why, source: `tick ${sim.ctx.tick}`, context: 'online', renderer: rendererKind });
+    console.warn(`[online] out of sync (${why}) at tick ${sim.ctx.tick}; asking the host for a snapshot`);
+    room.send('host', { t: 'resync', tick: sim.ctx.tick });
+  }
+
+  function onNetMessage(msg: NetMessage, from: number) {
+    if (!room) return;
+    const isHost = room.role === 'host';
+    switch (msg.t) {
+      case 'lobby': {
+        if (isHost) return;
+        menus.lobby.mode = msg.mode;
+        menus.lobby.maxHp = msg.maxHp;
+        menus.lobby.stocks = msg.stocks;
+        menus.lobby.firstTo = msg.firstTo;
+        menus.lobby.bots = msg.bots;
+        menus.lobby.inMatch = msg.inMatch;
+        refreshLobbyPeers(msg.peers);
+        if (menus.screen === 'lobby') show();
+        return;
+      }
+      case 'start': {
+        if (isHost || from !== room.hostId) return;
+        // The host's custom arenas go through the schema like any other level JSON; a broken one is
+        // dropped rather than let loose in the sim.
+        extraLevels = [];
+        for (const raw of Array.isArray(msg.extraLevels) ? msg.extraLevels : []) {
+          try {
+            extraLevels.push(parseLevel(raw));
+          } catch {
+            // skip
+          }
+        }
+        const pool = matchLevelPool(msg.rules.enabledLevels, extraLevels, msg.rules.mode);
+        const level = pool.find((l) => l.id === msg.levelId);
+        if (!level) {
+          menus.notice = `The host started on a level this build does not have (${msg.levelId}).`;
+          show();
+          return;
+        }
+        beginOnlineMatch('client', msg.seed, level, msg.slots, msg.rules);
+        return;
+      }
+      case 'frames': {
+        if (isHost || !online || !sim || from !== room.hostId) return;
+        if (!acceptFrames(online, msg.start, msg.frames, msg.hash)) requestResync('missed frames');
+        return;
+      }
+      case 'input': {
+        if (!isHost || !online) return;
+        const slot = online.slots.findIndex((s) => s.peer === from);
+        if (slot >= 0 && Array.isArray(msg.input)) online.remote.push(slot, msg.input);
+        return;
+      }
+      case 'end':
+        if (isHost || from !== room.hostId) return;
+        menus.lobby.inMatch = false;
+        if (online) endOnlineLocal(msg.reason, 'host-ended');
+        else if (menus.screen === 'lobby') show();
+        return;
+      case 'chat': {
+        pushChat(`${cleanPeerName(msg.from)}: ${String(msg.text).slice(0, 200)}`);
+        if (isHost) {
+          for (const id of room.peers.keys()) if (id !== from && id !== room.id) room.send(id, msg);
+        }
+        if (menus.screen === 'lobby') show();
+        return;
+      }
+      case 'resync':
+        if (!isHost || !sim || !online) return;
+        room.send(from, { t: 'snapshot', snap: sim.snapshot() });
+        return;
+      case 'snapshot':
+        if (isHost || !online || from !== room.hostId) return;
+        online.pendingSnapshot = msg.snap;
+        return;
+      default:
+        return;
+    }
+  }
+
   /** Screens whose controls are plain DOM the cursor can walk; the others have bespoke pad handling. */
   const NAV_SCREENS = new Set(['menu', 'settings', 'lobby', 'pause', 'disconnect', 'scoreboard']);
 
   function backOut() {
     if (menus.screen === 'pause') setPaused(false);
-    else if (menus.screen === 'join' || menus.screen === 'settings' || menus.screen === 'lobby') {
+    else if (menus.screen === 'lobby') {
+      // Leaving a room is deliberate (the Leave button); Back only closes the empty form.
+      if (menus.lobby.phase !== 'idle') return;
+      menus.screen = 'menu';
+      show();
+    } else if (menus.screen === 'join' || menus.screen === 'settings') {
       menus.screen = 'menu';
       show();
     }
@@ -885,12 +1387,14 @@ export function createGame(root: HTMLElement): Game {
     for (let slot = 0; slot < inputs.length; slot++) {
       const device = deviceForSlot(slot, pads);
       if (!device) continue;
-      if (device === 'keyboard') {
+      // Online, this browser's fighter takes the first pad that has shown itself, else the keyboard.
+      const autoPad = device === 'auto' ? pads.find(Boolean) : undefined;
+      if (device === 'keyboard' || (device === 'auto' && !autoPad)) {
         const p = sim?.players().find((e) => e.get(Player)?.slot === slot);
         const t = p?.get(Transform) ?? { x: 8, y: 6 };
         inputs[slot] = keys.sample({ x: t.x, y: t.y }, cam, view.w, view.h);
       } else {
-        const input = padInputs[padIndexOf(device)];
+        const input = padInputs[autoPad ? autoPad.index : padIndexOf(device)];
         if (input) inputs[slot] = input;
       }
     }
@@ -923,9 +1427,71 @@ export function createGame(root: HTMLElement): Game {
       if (msg !== lastFrameError) {
         lastFrameError = msg;
         console.error('frame error', err);
+        telemetry.error({
+          kind: 'frame',
+          message: msg,
+          source: err instanceof Error ? (err.stack?.split('\n')[1]?.trim() ?? '') : '',
+          context: tracked ? tracked.mode : 'menu',
+          renderer: rendererKind,
+        });
       }
     }
     raf = requestAnimationFrame(tick);
+  }
+
+  /** One sim tick with the given inputs plus everything the presentation hangs off its events. */
+  function simTick(sampled: PlayerInput[]) {
+    if (!sim) return;
+    recorder.push(sampled);
+    const events = sim.step(sampled);
+    if (sim.ctx.level !== renderedLevel) {
+      // The sim rotated to the next arena: last round's blood and embers must not carry over.
+      renderedLevel = sim.ctx.level;
+      rotatedThisFrame = true;
+      particles.clear();
+      decals.length = 0;
+      decalPool.release(decalLayer);
+      decalLayer = decalPool.acquire(renderedLevel.bounds);
+    }
+    mixer.handle(events);
+    emitFromEvents(events, particles, decals);
+    if (stressTarget > 0) {
+      if (sim.ctx.tick % 30 === 0) armFighters(sim, stressRng);
+      if (particles.count < stressTarget) emitFromEvents(stressEvents(sim, stressRng), particles, decals);
+    }
+    const world = sim.ecs;
+    decalLayer.stampNew(decals, (d) => (!settings.reduceBlood || d.kind === 'scorch') && snapDecalToSurface(world, d));
+    // Once stamped into the texture the decal records are dead weight; keeping them for the whole
+    // round only grew the old generation (a long stress round piles up tens of thousands).
+    decals.length = 0;
+    decalLayer.consumed = 0;
+    if (events.some((e) => e.type === 'kill')) {
+      hitStop = 3;
+      const kills = events.filter((e) => e.type === 'kill').length;
+      recordKos(kills);
+      if (tracked) tracked.kills += kills;
+    } else if (events.some((e) => e.type === 'hit' && e.damage >= 15) || events.some((e) => e.type === 'clash')) {
+      // A frame of freeze on a solid hit sells the impact (punches, headshots, clashes), like the kill stop.
+      hitStop = 1;
+    }
+    if (events.some((e) => e.type === 'round-phase' && e.phase === 'match-over')) {
+      const ms = sim.ecs.get(MatchState);
+      // Online, "my" fighter is whichever slot this browser steers; at the couch it is always P1.
+      const mySlot = online ? online.localSlot : 0;
+      const wins = [ms?.wins0 ?? 0, ms?.wins1 ?? 0, ms?.wins2 ?? 0, ms?.wins3 ?? 0];
+      const won = (wins[mySlot] ?? 0) >= (ms?.firstTo || 1);
+      stats = recordMatch(won);
+      trackMatchEnd('finished', won);
+    }
+    if (!settings.reduceShake) {
+      if (events.some((e) => e.type === 'explosion' || e.type === 'kill')) addShake(cam, events.some((e) => e.type === 'explosion') ? 16 : 9);
+      else if (events.some((e) => e.type === 'hit' && e.damage >= 15)) addShake(cam, 4);
+      else if (events.some((e) => e.type === 'clash')) addShake(cam, 3);
+    }
+    if (events.some((e) => e.type === 'explosion')) rumble('boom');
+    else if (events.some((e) => e.type === 'hit')) rumble('hit');
+    latches.forEach(consumeLatch);
+    keys.consume();
   }
 
   function frame(now: number) {
@@ -935,6 +1501,11 @@ export function createGame(root: HTMLElement): Game {
     // A 120 Hz frame is 8.3 ms; anything past 12 ms between rAF callbacks means a missed one. The
     // frame before it is what ran long, so that is the one logged.
     const heapNow = usedHeapMb();
+    if (tracked && sim && menus.screen === 'play') {
+      // Frame pacing while a match is actually being played: not the pause card, not the menus.
+      perfAgg.frame(now - last);
+      if (now - tracked.lastPerfAt >= PERF_EVERY_MS) flushPerf('periodic');
+    }
     if (sim && menus.screen === 'play' && now - last > 12) {
       longFrames += 1;
       if (longFrameLog.length < 64) {
@@ -965,8 +1536,12 @@ export function createGame(root: HTMLElement): Game {
       hudEl.classList.toggle('hidden', !showMatch);
     }
     if (sim && showMatch) {
-      const running = menus.screen === 'play' && !paused;
-      const scale = sim.ecs.get(RoundState)?.phase === RoundPhase.LastKill ? tuning.lastKillSlowmo : 1;
+      // An online match never pauses for one player: the pause card is only a menu over the fight.
+      const running = online ? true : menus.screen === 'play' && !paused;
+      const slowmo = sim.ecs.get(RoundState)?.phase === RoundPhase.LastKill ? tuning.lastKillSlowmo : 1;
+      const isClient = online?.role === 'client';
+      // A client's clock leans toward keeping a few frames in hand (src/net/online.ts).
+      const scale = isClient && online ? slowmo * pacingScale(online.inbox.length) : slowmo;
       let steps = running ? loop.consume(dt, scale) : 0;
       if (frozen) {
         steps = frozenSteps;
@@ -977,55 +1552,60 @@ export function createGame(root: HTMLElement): Game {
         latches.forEach(consumeLatch);
         keys.consume();
       }
+      if (isClient && online) {
+        // My input goes to the host; the sim only advances through frames the host has stepped.
+        if (online.localSlot >= 0 && menus.screen === 'play') online.sender?.update(live[online.localSlot] ?? EMPTY_INPUT, now);
+        steps = clientSteps(steps, online.inbox.length);
+        if (online.inbox.length === 0) online.stalledSince ||= now;
+        else online.stalledSince = 0;
+      }
+      let hostHash: { tick: number; h: string } | undefined;
       for (let i = 0; i < steps; i++) {
         if (hitStop > 0) {
           hitStop -= 1;
           continue;
         }
-        const sampled = applyScriptedInputs(live);
-        recorder.push(sampled);
-        const events = sim.step(sampled);
-        if (sim.ctx.level !== renderedLevel) {
-          // The sim rotated to the next arena: last round's blood and embers must not carry over.
-          renderedLevel = sim.ctx.level;
-          rotatedThisFrame = true;
-          particles.clear();
-          decals.length = 0;
-          decalPool.release(decalLayer);
-          decalLayer = decalPool.acquire(renderedLevel.bounds);
+        let sampled: PlayerInput[];
+        let packed: PackedInput[] | null = null;
+        if (isClient && online) {
+          const next = online.inbox.shift();
+          if (!next) break;
+          const snap = online.pendingSnapshot;
+          if (snap) {
+            // The host's state at tick T applies just before we step T; anything older is stale.
+            if (snap.tick === sim.ctx.tick) {
+              restoreWorld(sim.ecs, snap);
+              online.desync = false;
+              online.pendingSnapshot = null;
+            } else if (snap.tick < sim.ctx.tick) online.pendingSnapshot = null;
+          }
+          sampled = next;
+        } else if (online) {
+          // Host: remote fighters step with what they sent, local ones with what the wire can carry,
+          // so the frame broadcast below reproduces this tick bit for bit on every client.
+          const live2 = applyScriptedInputs(live);
+          const me = room?.id;
+          packed = live2.map((input, s) => {
+            const slot = online!.slots[s];
+            return slot && slot.peer !== null && slot.peer !== me ? online!.remote.take(s) : packInput(input);
+          });
+          sampled = packed.map(unpackInput);
+        } else {
+          sampled = applyScriptedInputs(live);
         }
-        mixer.handle(events);
-        emitFromEvents(events, particles, decals);
-        if (stressTarget > 0) {
-          if (sim.ctx.tick % 30 === 0) armFighters(sim, stressRng);
-          if (particles.count < stressTarget) emitFromEvents(stressEvents(sim, stressRng), particles, decals);
+        simTick(sampled);
+        if (online?.role === 'host' && packed) {
+          online.outbox.push(packed);
+          if (sim.ctx.tick % HASH_EVERY_TICKS === 0) hostHash = { tick: sim.ctx.tick, h: sim.hash() };
+        } else if (isClient && online) {
+          const ok = checkHash(online, sim.ctx.tick, () => sim!.hash());
+          if (ok === false) requestResync('world hash differs');
         }
-        const world = sim.ecs;
-        decalLayer.stampNew(decals, (d) => (!settings.reduceBlood || d.kind === 'scorch') && snapDecalToSurface(world, d));
-        // Once stamped into the texture the decal records are dead weight; keeping them for the whole
-        // round only grew the old generation (a long stress round piles up tens of thousands).
-        decals.length = 0;
-        decalLayer.consumed = 0;
-        if (events.some((e) => e.type === 'kill')) {
-          hitStop = 3;
-          recordKos(events.filter((e) => e.type === 'kill').length);
-        } else if (events.some((e) => e.type === 'hit' && e.damage >= 15) || events.some((e) => e.type === 'clash')) {
-          // A frame of freeze on a solid hit sells the impact (punches, headshots, clashes), like the kill stop.
-          hitStop = 1;
-        }
-        if (events.some((e) => e.type === 'round-phase' && e.phase === 'match-over')) {
-          const ms = sim.ecs.get(MatchState);
-          stats = recordMatch((ms?.wins0 ?? 0) >= (ms?.firstTo || 1));
-        }
-        if (!settings.reduceShake) {
-          if (events.some((e) => e.type === 'explosion' || e.type === 'kill')) addShake(cam, events.some((e) => e.type === 'explosion') ? 16 : 9);
-          else if (events.some((e) => e.type === 'hit' && e.damage >= 15)) addShake(cam, 4);
-          else if (events.some((e) => e.type === 'clash')) addShake(cam, 3);
-        }
-        if (events.some((e) => e.type === 'explosion')) rumble('boom');
-        else if (events.some((e) => e.type === 'hit')) rumble('hit');
-        latches.forEach(consumeLatch);
-        keys.consume();
+      }
+      if (online?.role === 'host' && online.outbox.length && room) {
+        room.send('all', { t: 'frames', start: online.outboxStart, frames: online.outbox, hash: hostHash });
+        online.outboxStart = sim.ctx.tick;
+        online.outbox = [];
       }
       profiler.sample('steps', steps);
       t = profiler.lap('sim', t);
@@ -1046,7 +1626,7 @@ export function createGame(root: HTMLElement): Game {
           decalLayer,
           flash: hitStop,
           // Limbs swing in the sim's time: slowed with the last-kill replay, held while paused.
-          dt: running ? dt * scale : 0,
+          dt: running ? dt * slowmo : 0,
         },
       );
       // Hashing walks every networked entity; it is only ever read from the F3 overlay (which hashes
@@ -1061,6 +1641,8 @@ export function createGame(root: HTMLElement): Game {
       drawHud(frame);
       profiler.lap('hud', t);
       profiler.end();
+      // Stage means for the perf summary; every 8th frame is plenty and keeps the per-frame cost nil.
+      if (tracked && running && (perfAgg.frames & 7) === 0) perfAgg.stages(profiler.last());
       if (rotatedThisFrame) {
         rotatedThisFrame = false;
         if (rotationLog.length < 64) rotationLog.push({ tick: sim.ctx.tick, level: renderedLevel.id, stages: profiler.last() });
@@ -1095,6 +1677,7 @@ export function createGame(root: HTMLElement): Game {
     const sub = mk('hud-sub', top);
     const count = mk('hud-count');
     const level = mk('hud-level');
+    const net = mk('hud-net');
     const dbg = document.createElement('pre');
     dbg.className = 'hidden';
     dbg.style.cssText =
@@ -1108,6 +1691,8 @@ export function createGame(root: HTMLElement): Game {
       sub,
       count,
       level,
+      net,
+      netText: '',
       dbg,
       lastCount: -1,
       /** Which fighters (slot/colour) the cards were built for; cards persist so their CSS transitions play. */
@@ -1357,13 +1942,29 @@ export function createGame(root: HTMLElement): Game {
         hud.title.append(small, big);
         hud.sub.textContent =
           h.phase === RoundPhase.MatchOver
-            ? isPadKey(slotDevices[0] ?? '')
-              ? 'Start — rematch · Select — menu'
-              : 'Start / Enter — rematch · Esc — menu'
+            ? online?.role === 'client'
+              ? 'Waiting for the host to start the next match…'
+              : isPadKey(slotDevices[0] ?? '')
+                ? `Start — rematch · Select — ${online ? 'lobby' : 'menu'}`
+                : `Start / Enter — rematch · Esc — ${online ? 'lobby' : 'menu'}`
             : firstTo
               ? `First to ${firstTo}`
               : 'Next level incoming';
       }
+    }
+
+    // Online status: only shows when something is off (a stall or a desync), so it is normally empty.
+    const netText = !online
+      ? ''
+      : online.desync
+        ? 'Out of sync with the host — resyncing…'
+        : online.role === 'client' && online.stalledSince && performance.now() - online.stalledSince > 1000
+          ? 'Waiting for the host…'
+          : '';
+    if (hud.netText !== netText) {
+      hud.netText = netText;
+      hud.net.textContent = netText;
+      hud.net.classList.toggle('show', netText !== '');
     }
 
     // Debug readout (F3).
@@ -1459,6 +2060,7 @@ export function createGame(root: HTMLElement): Game {
     }
     const why = gpuFailureReason();
     menus.notice = why ? `Canvas fallback — WebGPU ${why}` : 'Canvas fallback';
+    telemetry.error({ kind: 'gpu-fallback', message: why ?? 'unavailable', source: settings.renderer, context: tracked ? tracked.mode : 'menu', renderer: 'canvas' });
     if (menus.screen !== 'play') show();
     // A timed-out attempt is still in flight and will adopt itself if it ever lands; a hard failure is final.
     if (why !== 'timed out') gpuAttemptPending = false;
@@ -1480,7 +2082,28 @@ export function createGame(root: HTMLElement): Game {
 
   return {
     async start() {
+      // An invite link (?room=CODE) opens the lobby with the code filled in; joining still takes a
+      // click so the browser has the user gesture audio needs.
+      const linkedRoom = normalizeRoomCode(new URLSearchParams(location.search).get('room') ?? '');
+      if (isRoomCode(linkedRoom) && menus.screen === 'menu') {
+        menus.roomCode = linkedRoom;
+        menus.screen = 'lobby';
+      }
       show();
+      telemetry.page({
+        renderer: settings.renderer,
+        entry: isRoomCode(linkedRoom) ? 'invite' : 'direct',
+        standalone: window.matchMedia?.('(display-mode: standalone)').matches ?? false,
+        width: window.innerWidth,
+        height: window.innerHeight,
+        dpr: Math.round(window.devicePixelRatio * 100) / 100,
+        cores: navigator.hardwareConcurrency ?? 0,
+        memory: (navigator as Navigator & { deviceMemory?: number }).deviceMemory ?? 0,
+        touch: (navigator.maxTouchPoints ?? 0) > 0,
+        gamepads: pollGamepads().filter(Boolean).length,
+      });
+      // Closing the tab mid-match still yields an end row (with how long it ran) before the last batch goes out.
+      telemetry.onPageHide(() => trackMatchEnd('unload'));
       window.addEventListener('gamepadconnected', (ev) => {
         const pad = (ev as GamepadEvent).gamepad ?? pollGamepads().find(Boolean);
         if (!pad) return;
@@ -1593,12 +2216,13 @@ export function createGame(root: HTMLElement): Game {
           })
           .catch(() => undefined);
       }
-      void net;
-      void MatchState;
     },
     stop() {
       cancelAnimationFrame(raf);
+      trackMatchEnd('unload');
+      teardownRoom();
       stopDemo();
+      telemetry.destroy();
     },
   };
 }

@@ -21,6 +21,8 @@ export type UserSettings = {
   music: number;
   lighting: boolean;
   includeUserLevels: boolean;
+  /** Send anonymous usage and frame-pacing statistics (src/telemetry). */
+  telemetry: boolean;
 };
 
 const KEY = 'floppy-clash.settings';
@@ -46,6 +48,7 @@ export const DEFAULT_USER_SETTINGS: UserSettings = {
   music: 0.25,
   lighting: false,
   includeUserLevels: true,
+  telemetry: true,
 };
 
 export function loadSettings(): UserSettings {
